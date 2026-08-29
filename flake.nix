@@ -12,32 +12,11 @@
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pythonPackages = pkgs.python312Packages;
+          llmLog = pkgs.callPackage ./nix/package.nix { };
         in
-        rec {
-          default = llm-log;
-          llm-log = pythonPackages.buildPythonApplication {
-            pname = "llm-log";
-            version = "0.1.0";
-            src = self;
-            pyproject = true;
-
-            build-system = [ pythonPackages.setuptools ];
-            dependencies = [ pythonPackages.aiohttp ];
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-            nativeCheckInputs = [ pkgs.swiProlog ];
-
-            checkPhase = ''
-              runHook preCheck
-              ${pkgs.python312.interpreter} -m unittest discover -s tests -v
-              runHook postCheck
-            '';
-
-            postInstall = ''
-              wrapProgram "$out/bin/llm-log" \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.swiProlog ]}
-            '';
-          };
+        {
+          default = llmLog;
+          llm-log = llmLog;
         });
 
       homeManagerModules = {
