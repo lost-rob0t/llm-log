@@ -70,12 +70,18 @@
       checks = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          cl = pkgs.sbcl.pkgs;
           python = pkgs.python312.withPackages (ps: [ ps.aiohttp ]);
+          expertLib = self.packages.${system}.llm-log-expert-lib;
           expertService = self.packages.${system}.llm-log-expert;
+          transportTestSbcl = pkgs.sbcl.withPackages (_: [ expertLib cl.rove ]);
         in
         {
           package = self.packages.${system}.default;
-          expert-lib = self.packages.${system}.llm-log-expert-lib;
+          expert-lib = expertLib;
+
+          # Migration-only historical evidence.  This remains Python-backed
+          # until equivalent CL/Prolog black-box contracts replace it.
           expert-service-contract = pkgs.runCommand "llm-log-expert-service-contract" {
             nativeBuildInputs = [ python expertService ];
           } ''
@@ -87,6 +93,21 @@
               tests.test_expert_service_red \
               tests.test_reasoner_result_validation_red \
               -v
+            touch "$out"
+          '';
+
+          # Authoritative zero-Python transport RED/GREEN gate.  The current
+          # pre-HTTP branch is expected to fail specifically because the CL
+          # proxy lifecycle functions do not exist yet.
+          common-lisp-transport-contract = pkgs.runCommand "llm-log-common-lisp-transport-contract" {
+            nativeBuildInputs = [ transportTestSbcl ];
+          } ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            sbcl --noinform --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-asd #P"${self}/expert/llm-log-expert-test.asd")' \
+              --eval '(asdf:test-system "llm-log-expert-test")'
             touch "$out"
           '';
         });
