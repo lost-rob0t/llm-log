@@ -10,4 +10,5 @@
                              (:file "transport-red"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))
-             (uiop:symbol-call :rove :run :llm-log-expert-test)))
+             (unless (uiop:symbol-call :rove :run :llm-log-expert-test)
+               (error "llm-log-expert-test failed"))))
