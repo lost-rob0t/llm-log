@@ -158,9 +158,36 @@ entrypoint rule. RED-first: the config contract is committed and proven failing
 before implementation.
 
 * RED evidence
-(commit: RED config contract — Rove =llm-log/tests= loads =llm-log= system
-which does not implement the configuration surface yet; the contract run
-fails with missing-symbol/load errors, recorded in the commit message.)
+Commits b18dabb + 1a83425 (RED harness fixes): the Rove contract in
+=proxy/tests/config.lisp= defines 32 tests (58 assertions) covering the
+configuration surface while =llm-log= implements nothing. Executed on the
+exact branch head through the Nix gate:
+
+#+begin_example
+  nix build .#checks.x86_64-linux.llm-log-config-contract   # exit 1
+  every assertion failed: unbound contract functions / missing signals
+#+end_example
 
 * GREEN evidence
-(filled when the exact head executes green)
+Commits 6cd7713 (implementation), 5d528be, 78a1f3c, f033550 (binding-order,
+argument-consumption, nil-layer guard fixes), f1b5a84 + d624cad (runner exit
+status via =rove/core/suite:run-system-tests= call-with-suite pass value).
+
+Executed on the exact head:
+
+#+begin_example
+  nix build .#checks.x86_64-linux.llm-log-config-contract   # exit 0
+  all 58 assertions green; derivation
+  /nix/store/vpwi6bl2c241plxw4d2f1i4zgk1pg7cn-llm-log-config-contract
+#+end_example
+
+Environment notes recorded during the cycle:
+- =nix flake check= on the same head still fails on the LEGACY Python gates
+  (=checks.package=: Ran 17 tests, failures=1, errors=2; expert
+  service-contract: failures=3). Both fail identically at base 0b1994a —
+  pre-existing Python-harness debt that slice 9 deletes after CL parity; not
+  expanded per the zero-Python rule.
+- The transport stack closure (woo/lack/clack/fast-http/usocket/cl+ssl/quri/
+  websocket-driver/sento/bordeaux-threads/jsown/clop/rove) loads and a live
+  =woo:run= listener answered =HTTP/1.1 200= under Nix on this machine
+  (=$ASDF= entrypoint rule applied).
