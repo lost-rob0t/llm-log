@@ -71,8 +71,10 @@ preserved) is appended to the configured upstream base URL."
              (base (upstream-base-url config provider)))
         (unless base
           (return-from %resolve-provider (values provider nil nil)))
+        ;; origin-form target: path and query only; the authority is
+        ;; carried separately by the Host header
         (values provider
-                (concatenate 'string base (subseq rest slash) query)
+                (concatenate 'string (subseq rest slash) query)
                 base)))))
 
 (defun %open-upstream (upstream-url)

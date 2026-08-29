@@ -148,21 +148,35 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
     (ignore-errors (usocket:socket-close (fixture-server-listener server)))))
 
 (defun start-fixture-upstream (&key (port +fixture-upstream-port+))
-  (let ((server (make-fixture-server
-                 :listener (usocket:socket-listen "127.0.0.1" port
-                                                  :element-type '(unsigned-byte 8)
-                                                  :reuseaddress t)
-                 :lock (bt:make-lock "fixture-lock")
-                 :response-spec (list :status 200
-                                      :headers '(("Content-Type" . "text/plain"))
-                                      :body-mode (list :fixed
-                                                       (%ascii-octets "fixture"))))))
-    (setf (fixture-server-thread server)
-          (bt:make-thread (lambda () (%fixture-upstream server))
-                          :name "llm-log-fixture-upstream"))
-    server))
+  (let ((listener nil))
+    ;; rebind retry: the previous test's listener may need a moment to be
+    ;; released by the kernel
+    (loop for attempt below 25
+          do (handler-case
+                 (setf listener
+                       (usocket:socket-listen "127.0.0.1" port
+                                              :element-type '(unsigned-byte 8)
+                                              :reuseaddress t))
+               (usocket:address-in-use-error ()
+                 (sleep 0.2)))
+          until listener)
+    (unless listener
+      (error "fixture upstream could not bind port ~A" port))
+    (let ((server (make-fixture-server
+                   :listener listener
+                   :lock (bt:make-lock "fixture-lock")
+                   :response-spec (list :status 200
+                                        :headers '(("Content-Type" . "text/plain"))
+                                        :body-mode (list :fixed
+                                                         (%ascii-octets "fixture"))))))
+      (setf (fixture-server-thread server)
+            (bt:make-thread (lambda () (%fixture-upstream server))
+                            :name "llm-log-fixture-upstream"))
+      server)))
 
 (defun stop-fixture-upstream (server)
+  (when (fixture-server-thread server)
+    (ignore-errors (bt:destroy-thread (fixture-server-thread server))))
   (ignore-errors (usocket:socket-close (fixture-server-listener server)))
   server)
 
