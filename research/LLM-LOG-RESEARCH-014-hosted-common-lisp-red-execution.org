@@ -1,0 +1,65 @@
+#+title: LLM-LOG-RESEARCH-014 — Hosted Common Lisp RED execution
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Depends on: LLM-LOG-RESEARCH-013 common-lisp RED runner
+
+* Analyze
+The active #10 branch has an authoritative Common Lisp/Rove transport contract and a Nix check named =common-lisp-transport-contract=. The current automation container has no =sbcl=, =swipl=, =nix=, or =ros=, so it cannot execute the behavioral RED locally. Merely wiring the check is not RED evidence.
+
+The branch must not add HTTP production behavior until the exact pre-implementation Common Lisp contract is actually executed and fails for the expected missing lifecycle API rather than for bootstrap/dependency failure.
+
+* Research
+GitHub-hosted Ubuntu runners can install Nix using =cachix/install-nix-action@v31=. The existing flake already pins Tek9 and defines the exact Common Lisp transport check, so CI does not need to duplicate SBCL/SWI/Tek9 dependency assembly.
+
+Use the flake as the authority:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
+#+end_src
+
+The hosted runner is execution infrastructure only. It does not become a second test specification and does not replace local Nix/ASDF execution.
+
+* Design
+Add one narrowly scoped workflow on the active #10 branch that:
+
+1. checks out the exact commit;
+2. installs Nix with flakes enabled;
+3. executes only =checks.x86_64-linux.common-lisp-transport-contract=;
+4. preserves the failing log as GitHub Actions evidence;
+5. runs on pushes to =rage/10-expert-runtime-red= and manual dispatch.
+
+Do not run Python tests in this workflow. Do not place credentials or corpus data in workflow inputs. The workflow is expected to be red until the Common Lisp proxy lifecycle exists.
+
+The expected behavioral RED is an undefined/missing Common Lisp proxy lifecycle surface: =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, and/or =PROXY-LISTEN-PORT=. A failure while installing Nix, evaluating the flake, fetching dependencies, loading ASDF, or loading Rove is an infrastructure RED and does not authorize implementation.
+
+* Adversarial review
+** False RED from dependency bootstrap
+Treat bootstrap/evaluation/load failures as blockers, not behavioral evidence.
+
+** Workflow becomes a Python backdoor
+The workflow executes only the Common Lisp Nix check. No Python runner is introduced.
+
+** Hosted CI becomes canonical architecture
+The flake/ASDF test remains canonical. GitHub Actions only supplies an executable environment.
+
+** Secret leakage
+No provider credentials, corpus paths, API keys, or captured traffic are supplied to the job. GitHub token use is restricted to ordinary checkout/Nix GitHub fetch rate-limit support.
+
+** Accidental merge on expected failure
+PR #18 remains draft. An expected RED is not green merge evidence.
+
+* Decision
+GO. Add the hosted Common Lisp RED executor as test infrastructure. Observe its first run before mutating production transport code. Only an expected lifecycle-missing failure counts as the required behavioral RED.
+
+* Acceptance
+- [ ] workflow exists on the active #10 branch;
+- [ ] exact branch head produces a hosted workflow run;
+- [ ] Nix bootstrap succeeds;
+- [ ] flake evaluation and dependency loading succeed;
+- [ ] =common-lisp-transport-contract= executes;
+- [ ] first failure is the expected missing CL proxy lifecycle surface;
+- [ ] exact command/run URL/commit are recorded before HTTP implementation begins.
