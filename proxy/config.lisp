@@ -138,24 +138,24 @@ CONFIG-FILE is one of:
 - :DEFAULT: use default-config-file when present; a missing default file
   is not an error;
 - an explicit path designator: a missing explicit file is an error."
-  (let ((file-config
-          (cond
-            ((null config-file) nil)
-            ((eq config-file :default)
-             (let ((path (default-config-file)))
-               (when (uiop:file-exists-p path)
-                 (load-config-file path))))
-            (t (load-config-file config-file))))
-        (listen
-          (or listen (runtime-config-listen-address file-config)
-              +default-listen-address+))
-        (port
-          (%validate-port
-           (or port (runtime-config-port file-config) +default-port+)))
-        (data-directory
-          (uiop:ensure-directory-pathname
-           (or data-directory (runtime-config-data-directory file-config)
-               (default-data-directory)))))
+  (let* ((file-config
+           (cond
+             ((null config-file) nil)
+             ((eq config-file :default)
+              (let ((path (default-config-file)))
+                (when (uiop:file-exists-p path)
+                  (load-config-file path))))
+             (t (load-config-file config-file))))
+         (listen
+           (or listen (runtime-config-listen-address file-config)
+               +default-listen-address+))
+         (port
+           (%validate-port
+            (or port (runtime-config-port file-config) +default-port+)))
+         (data-directory
+           (uiop:ensure-directory-pathname
+            (or data-directory (runtime-config-data-directory file-config)
+                (default-data-directory)))))
     (unless (and (stringp listen) (plusp (length listen)))
       (%invalid "listen address must be a non-empty string, got ~S" listen))
     (make-runtime-config

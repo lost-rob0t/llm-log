@@ -62,58 +62,58 @@ openai = \"https://api.openai.com/\"
     (ok (equal (upstream-base-url config "openai") "https://api.openai.com"))))
 
 (deftest toml-config-rejects-unknown-keys
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "log_level = \"debug\""))))
+  (ok (signals (parse-toml-config "log_level = \"debug\"")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-non-integer-port
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "port = \"abc\""))))
+  (ok (signals (parse-toml-config "port = \"abc\"")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-out-of-range-port
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "port = 70000")))
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "port = 0"))))
+  (ok (signals (parse-toml-config "port = 70000")
+        'invalid-configuration))
+  (ok (signals (parse-toml-config "port = 0")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-non-string-listen
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "listen = 42"))))
+  (ok (signals (parse-toml-config "listen = 42")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-non-string-data-dir
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "data_dir = 5"))))
+  (ok (signals (parse-toml-config "data_dir = 5")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-non-string-upstream-value
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "[upstreams]
+  (ok (signals (parse-toml-config "[upstreams]
 openai = 5
-"))))
+")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-empty-upstream-name
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "[upstreams]
+  (ok (signals (parse-toml-config "[upstreams]
 \"\" = \"http://127.0.0.1:11434\"
-"))))
+")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-empty-upstream-value
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "[upstreams]
+  (ok (signals (parse-toml-config "[upstreams]
 openai = \"\"
-"))))
+")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-non-http-scheme
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "[upstreams]
+  (ok (signals (parse-toml-config "[upstreams]
 local = \"ftp://127.0.0.1:21\"
-"))))
+")
+        'invalid-configuration)))
 
 (deftest toml-config-rejects-invalid-toml-syntax
-  (ok (signals 'invalid-configuration
-        (parse-toml-config "port ="))))
+  (ok (signals (parse-toml-config "port =")
+        'invalid-configuration)))
 
 (deftest config-file-missing-explicit-path-is-an-error
-  (ok (signals 'invalid-configuration
-        (load-config-file #P"/nonexistent/llm-log/config.toml"))))
+  (ok (signals (load-config-file #P"/nonexistent/llm-log/config.toml")
+        'invalid-configuration)))
 
 (deftest config-file-layer-overrides-defaults
   (uiop:with-temporary-file (:pathname config :suffix ".toml")
@@ -186,42 +186,43 @@ port = 9001
            1)))
 
 (deftest serve-arguments-reject-missing-port-value
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--port")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--port"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-non-integer-port
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--port" "abc")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--port" "abc"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-out-of-range-port
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--port" "65536")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--port" "65536"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-unknown-argument
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--wat")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--wat"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-unknown-command
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "run")))))
+  (ok (signals (parse-serve-arguments (list "run"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-empty-invocation
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments nil))))
+  (ok (signals (parse-serve-arguments nil)
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-upstream-without-value-separator
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--upstream" "openai")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--upstream" "openai"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-upstream-with-empty-name
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--upstream" "=https://api.openai.com")))))
+  (ok (signals (parse-serve-arguments
+                (list "serve" "--upstream" "=https://api.openai.com"))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-upstream-with-empty-url
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments (list "serve" "--upstream" "openai=")))))
+  (ok (signals (parse-serve-arguments (list "serve" "--upstream" "openai="))
+        'invalid-configuration)))
 
 (deftest serve-arguments-reject-explicit-missing-config-file
-  (ok (signals 'invalid-configuration
-        (parse-serve-arguments
-         (list "serve" "--config" "/nonexistent/llm-log/config.toml")))))
+  (ok (signals (parse-serve-arguments
+                (list "serve" "--config" "/nonexistent/llm-log/config.toml"))
+        'invalid-configuration)))

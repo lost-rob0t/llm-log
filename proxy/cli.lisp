@@ -6,9 +6,9 @@
 ;;               [--port N] [--upstream NAME=URL]...
 
 (defun %require-value (flag rest)
+  "Validate that FLAG has a remaining value; the caller pops REST itself."
   (unless (consp rest)
-    (%invalid "~A requires a value" flag))
-  (pop rest))
+    (%invalid "~A requires a value" flag)))
 
 (defun %parse-integer-argument (flag value)
   (handler-case
@@ -44,18 +44,20 @@
           for argument = (pop rest)
           do (cond
                ((equal argument "--data-dir")
-                (setf data-directory (%require-value "--data-dir" rest)))
+                (%require-value "--data-dir" rest)
+                (setf data-directory (pop rest)))
                ((equal argument "--config")
-                (setf config-file (%require-value "--config" rest)))
+                (%require-value "--config" rest)
+                (setf config-file (pop rest)))
                ((equal argument "--listen")
-                (setf listen (%require-value "--listen" rest)))
+                (%require-value "--listen" rest)
+                (setf listen (pop rest)))
                ((equal argument "--port")
-                (setf port (%parse-integer-argument
-                            "--port" (%require-value "--port" rest))))
+                (%require-value "--port" rest)
+                (setf port (%parse-integer-argument "--port" (pop rest))))
                ((equal argument "--upstream")
-                (push (%parse-upstream-argument
-                       (%require-value "--upstream" rest))
-                      upstreams))
+                (%require-value "--upstream" rest)
+                (push (%parse-upstream-argument (pop rest)) upstreams))
                (t
                 (%invalid "unknown argument: ~S" argument))))
     (resolve-config
