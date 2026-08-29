@@ -147,14 +147,19 @@ CONFIG-FILE is one of:
                   (load-config-file path))))
              (t (load-config-file config-file))))
          (listen
-           (or listen (runtime-config-listen-address file-config)
+           (or listen
+               (and file-config (runtime-config-listen-address file-config))
                +default-listen-address+))
          (port
            (%validate-port
-            (or port (runtime-config-port file-config) +default-port+)))
+            (or port
+                (and file-config (runtime-config-port file-config))
+                +default-port+)))
          (data-directory
            (uiop:ensure-directory-pathname
-            (or data-directory (runtime-config-data-directory file-config)
+            (or data-directory
+                (and file-config
+                     (runtime-config-data-directory file-config))
                 (default-data-directory)))))
     (unless (and (stringp listen) (plusp (length listen)))
       (%invalid "listen address must be a non-empty string, got ~S" listen))
