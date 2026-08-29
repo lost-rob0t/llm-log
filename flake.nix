@@ -56,6 +56,15 @@
             lispLibs = [ llmLogClLib cl.rove cl.bordeaux-threads cl.usocket ];
           };
           sbclWithClTests = pkgs.sbcl.withPackages (_: [ llmLogClTests ]);
+          sbclWithClRuntime = pkgs.sbcl.withPackages (_: [ llmLogClLib ]);
+          llmLogCl = pkgs.writeShellApplication {
+            name = "llm-log";
+            runtimeInputs = [ sbclWithClRuntime ];
+            text = ''
+              exec sbcl --noinform --no-userinit --no-sysinit --non-interactive \
+                --load ${./proxy/entrypoint.lisp} "$@"
+            '';
+          };
         in
         {
           default = llmLog;
@@ -64,6 +73,7 @@
           llm-log-expert = expertService;
           llm-log-cl-lib = llmLogClLib;
           llm-log-cl-tests = llmLogClTests;
+          llm-log-cl = llmLogCl;
           # Standalone SBCL closure carrying the Common Lisp runtime system;
           # also the interpreter used by the CL contract checks.
           llm-log-cl-sbcl = sbclWithClTests;
