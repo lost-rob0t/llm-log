@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-log"
+version = "0.1.0"
+description = "Transparent LLM request/response capture with a Prolog sidecar KB"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = ["aiohttp>=3.10,<4"]
+
+[project.scripts]
+llm-log = "llm_log.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["llm_log*"]
+
+[tool.setuptools.package-data]
+llm_log = ["prolog/*.pl"]
