@@ -98,6 +98,38 @@ def _intent_atom(value: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class WebSocketFrame:
+    event_id: str
+    timestamp: str
+    direction: str
+    frame_type: str
+    payload: dict[str, str]
+    payload_sha256: str
+
+    @classmethod
+    def from_bytes(
+        cls,
+        *,
+        event_id: str,
+        direction: str,
+        frame_type: str,
+        payload: bytes,
+        timestamp: str,
+    ) -> "WebSocketFrame":
+        return cls(
+            event_id=event_id,
+            timestamp=timestamp,
+            direction=direction,
+            frame_type=frame_type,
+            payload=_body(payload),
+            payload_sha256=_sha256(payload),
+        )
+
+    def as_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class CaptureEvent:
     event_id: str
     provider: str
@@ -194,9 +226,12 @@ class CaptureEvent:
 class RecorderActor:
     def __init__(self, root: str | Path):
         self.root = Path(root)
-        self._queue: asyncio.Queue[tuple[str, CaptureEvent | None, asyncio.Future[None]]] = asyncio.Queue()
+        self._queue: asyncio.Queue[
+            tuple[str, CaptureEvent | WebSocketFrame | None, asyncio.Future[None] | None]
+        ] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
+        self._failure: BaseException | None = None
 
     async def start(self) -> None:
         async with self._state_lock:
@@ -210,6 +245,10 @@ class RecorderActor:
         future = asyncio.get_running_loop().create_future()
         await self._queue.put(("record", event, future))
         await future
+
+    async def journal_frame(self, frame: WebSocketFrame) -> None:
+        await self.start()
+        await self._queue.put(("frame", frame, None))
 
     async def flush(self) -> None:
         if self._task is None:
@@ -231,34 +270,61 @@ class RecorderActor:
 
     async def _run(self) -> None:
         jsonl_path = self.root / "events.jsonl"
+        frames_path = self.root / "frames.jsonl"
         prolog_path = self.root / "events.pl"
-        with jsonl_path.open("a", encoding="utf-8", buffering=1) as jsonl, prolog_path.open(
-            "a", encoding="utf-8", buffering=1
-        ) as prolog:
+        with (
+            jsonl_path.open("a", encoding="utf-8", buffering=1) as jsonl,
+            frames_path.open("a", encoding="utf-8", buffering=1) as frames,
+            prolog_path.open("a", encoding="utf-8", buffering=1) as prolog,
+        ):
             while True:
-                op, event, future = await self._queue.get()
+                op, payload, future = await self._queue.get()
                 try:
+                    if self._failure is not None and op != "close":
+                        raise self._failure
                     if op == "record":
-                        assert event is not None
-                        jsonl.write(json.dumps(event.as_json(), ensure_ascii=False, separators=(",", ":")) + "\n")
-                        prolog.write(event.as_prolog())
+                        assert isinstance(payload, CaptureEvent)
+                        jsonl.write(
+                            json.dumps(
+                                payload.as_json(),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                        prolog.write(payload.as_prolog())
                         jsonl.flush()
                         prolog.flush()
+                    elif op == "frame":
+                        assert isinstance(payload, WebSocketFrame)
+                        frames.write(
+                            json.dumps(
+                                payload.as_json(),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                        frames.flush()
                     elif op == "flush":
                         jsonl.flush()
+                        frames.flush()
                         prolog.flush()
                     elif op == "close":
                         jsonl.flush()
+                        frames.flush()
                         prolog.flush()
-                        future.set_result(None)
+                        if future is not None:
+                            future.set_result(None)
                         return
                     else:
                         raise RuntimeError(f"unknown recorder message: {op}")
                 except BaseException as exc:
-                    if not future.done():
+                    self._failure = exc
+                    if future is not None and not future.done():
                         future.set_exception(exc)
                 else:
-                    if not future.done():
+                    if future is not None and not future.done():
                         future.set_result(None)
                 finally:
                     self._queue.task_done()
