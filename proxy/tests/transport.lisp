@@ -241,7 +241,7 @@ response to EOF; return (VALUES status headers-list body-octets)."
                    for n = (read-sequence buffer stream)
                    do (loop for i below n
                             do (vector-push-extend (aref buffer i) response))
-                   until (< n (length buffer)))
+                   until (zerop n))
              (let* ((head-end (loop for i from 3 below (length response)
                                     when (and (= (aref response (- i 3)) 13)
                                               (= (aref response (- i 2)) 10)
