@@ -7,7 +7,7 @@ from llm_log.config import default_config_path, default_data_dir, load_config
 
 
 class XdgDefaultsTest(unittest.TestCase):
-    def test_default_paths_follow_xdg_environment(self):
+    def test_default_config_path_follows_xdg_environment(self):
         env = {
             "HOME": "/home/tester",
             "XDG_CONFIG_HOME": "/tmp/xdg-config",
@@ -15,13 +15,13 @@ class XdgDefaultsTest(unittest.TestCase):
         }
 
         self.assertEqual(default_config_path(env), Path("/tmp/xdg-config/llm-log/config.toml"))
-        self.assertEqual(default_data_dir(env), Path("/tmp/xdg-data/llm-log"))
+        self.assertEqual(default_data_dir(env), Path("/home/tester/.llm-proxy"))
 
     def test_default_paths_fall_back_under_home(self):
         env = {"HOME": "/home/tester"}
 
         self.assertEqual(default_config_path(env), Path("/home/tester/.config/llm-log/config.toml"))
-        self.assertEqual(default_data_dir(env), Path("/home/tester/.local/share/llm-log"))
+        self.assertEqual(default_data_dir(env), Path("/home/tester/.llm-proxy"))
 
 
 class TomlConfigTest(unittest.TestCase):
@@ -47,7 +47,7 @@ openrouter = "https://router.example"
         self.assertFalse(config.enable_prolog_classifier)
         self.assertEqual(config.upstreams["openrouter"], "https://router.example")
         self.assertEqual(config.upstreams["openai"], "https://api.openai.com")
-        self.assertEqual(config.data_dir, Path("/home/tester/.local/share/llm-log"))
+        self.assertEqual(config.data_dir, Path("/home/tester/.llm-proxy"))
 
     def test_explicit_missing_config_is_an_error(self):
         with self.assertRaises(FileNotFoundError):
@@ -106,7 +106,7 @@ anthropic = "https://file-anthropic.example"
             }
             config = resolve_serve_config(["serve"], environ=env)
 
-        self.assertEqual(config.data_dir, Path(tmp) / "data" / "llm-log")
+        self.assertEqual(config.data_dir, Path(tmp) / ".llm-proxy")
         self.assertEqual(config.port, 8787)
         self.assertTrue(config.enable_prolog_classifier)
 
