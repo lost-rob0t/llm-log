@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
 import subprocess
 import tempfile
@@ -61,10 +62,9 @@ class ExpertServiceRedContractTests(unittest.TestCase):
         self.stop_service()
         self.start_service()
 
-    def rpc(self, operation: str, *, event_id: str | None, payload: dict) -> dict:
+    def _write_rpc(self, operation: str, *, event_id: str | None, payload: dict) -> None:
         assert self.proc is not None
         assert self.proc.stdin is not None
-        assert self.proc.stdout is not None
         message = {
             "version": 1,
             "operation": operation,
@@ -75,6 +75,28 @@ class ExpertServiceRedContractTests(unittest.TestCase):
         }
         self.proc.stdin.write(json.dumps(message) + "\n")
         self.proc.stdin.flush()
+
+    def rpc(self, operation: str, *, event_id: str | None, payload: dict) -> dict:
+        assert self.proc is not None
+        assert self.proc.stdout is not None
+        self._write_rpc(operation, event_id=event_id, payload=payload)
+        line = self.proc.stdout.readline()
+        self.assertNotEqual(line, "", "expert service exited without a typed reply")
+        return json.loads(line)
+
+    def rpc_with_deadline(
+        self,
+        operation: str,
+        *,
+        event_id: str | None,
+        payload: dict,
+        timeout: float,
+    ) -> dict:
+        assert self.proc is not None
+        assert self.proc.stdout is not None
+        self._write_rpc(operation, event_id=event_id, payload=payload)
+        ready, _, _ = select.select([self.proc.stdout], [], [], timeout)
+        self.assertTrue(ready, "expert service exceeded the bounded reply deadline")
         line = self.proc.stdout.readline()
         self.assertNotEqual(line, "", "expert service exited without a typed reply")
         return json.loads(line)
@@ -211,6 +233,37 @@ class ExpertServiceRedContractTests(unittest.TestCase):
 
         self.assertEqual(crashed["status"], "error")
         self.assertEqual(crashed["error"]["code"], "reasoner_unavailable")
+        self.assertEqual(recovered["status"], "ok")
+        self.assertTrue(recovered["result"]["prolog_session_id"])
+        self.assertEqual(
+            recovered["result"]["prolog_session_id"],
+            stable["result"]["prolog_session_id"],
+        )
+
+    def test_reasoner_timeout_returns_error_then_next_request_recovers(self) -> None:
+        self.stop_service()
+        marker = Path(self.tmp.name) / "reasoner-hung"
+        fixture = Path(__file__).parent / "fixtures" / "hang_once_worker.pl"
+        self.service_env = {
+            "LLM_LOG_PROLOG_WORKER": str(fixture),
+            "LLM_LOG_REASONER_HANG_MARKER": str(marker),
+            "LLM_LOG_PROLOG_TIMEOUT_SECONDS": "0.20",
+        }
+        self.start_service()
+
+        timed_out = self.rpc_with_deadline(
+            "health", event_id=None, payload={}, timeout=1.5
+        )
+        recovered = self.rpc_with_deadline(
+            "health", event_id=None, payload={}, timeout=1.5
+        )
+        stable = self.rpc_with_deadline(
+            "health", event_id=None, payload={}, timeout=1.5
+        )
+
+        self.assertEqual(timed_out["status"], "error")
+        self.assertEqual(timed_out["error"]["code"], "reasoner_unavailable")
+        self.assertIn("reasoner_timeout", timed_out["error"]["message"])
         self.assertEqual(recovered["status"], "ok")
         self.assertTrue(recovered["result"]["prolog_session_id"])
         self.assertEqual(
