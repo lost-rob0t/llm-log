@@ -261,7 +261,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (%client-request +fixture-proxy-port+ "GET"
                             "/fixture/v1/models?foo=bar&x=1")
            (let ((request (first (fixture-server-requests upstream))))
@@ -275,7 +274,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
          (payload (random-binary 65536)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (setf (fixture-server-response-spec upstream)
                  (list :status 200
                        :headers '(("Content-Type" . "application/octet-stream"))
@@ -300,7 +298,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (setf (fixture-server-response-spec upstream)
                  (list :status 418
                        :reason "I'm a teapot"
@@ -320,7 +317,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (setf (fixture-server-response-spec upstream)
                  (list :status 200
                        :headers '(("Set-Cookie" . "first=1; Path=/")
@@ -342,7 +338,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (setf (fixture-server-response-spec upstream)
                  (list :status 200
                        :headers '(("Content-Type" . "text/event-stream"))
@@ -391,7 +386,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
          (payload (random-binary (* 8 1024 1024))))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (setf (fixture-server-response-spec upstream)
                  (list :status 200
                        :headers '(("Content-Type" . "application/octet-stream"))
@@ -408,7 +402,6 @@ response to EOF; return (VALUES status headers-list body-octets)."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (declare (ignore proxy))
            (multiple-value-bind (status body)
                (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
              (declare (ignore body))
