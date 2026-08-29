@@ -36,13 +36,53 @@ def _body(raw: bytes) -> dict[str, str]:
         return {"encoding": "base64", "data": base64.b64encode(raw).decode("ascii")}
 
 
+def _find_model(value: Any) -> str | None:
+    if isinstance(value, dict):
+        model = value.get("model")
+        if isinstance(model, str):
+            return model
+        for child in value.values():
+            found = _find_model(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_model(child)
+            if found is not None:
+                return found
+    return None
+
+
 def _model(request_body: bytes) -> str | None:
     try:
         parsed = json.loads(request_body)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    value = parsed.get("model") if isinstance(parsed, dict) else None
-    return value if isinstance(value, str) else None
+        parsed = None
+
+    found = _find_model(parsed)
+    if found is not None:
+        return found
+
+    # WebSocket captures are newline-delimited frame envelopes. Text frames may
+    # themselves contain JSON request objects with the selected model.
+    for raw_line in request_body.splitlines():
+        try:
+            frame = json.loads(raw_line)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(frame, dict) or frame.get("type") != "text":
+            continue
+        text = frame.get("text")
+        if not isinstance(text, str):
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        found = _find_model(payload)
+        if found is not None:
+            return found
+    return None
 
 
 def _sha256(raw: bytes) -> str:
@@ -77,6 +117,7 @@ class CaptureEvent:
     request_sha256: str
     response_sha256: str
     intents: list[str]
+    transport: str
 
     @classmethod
     def from_bytes(
@@ -97,6 +138,7 @@ class CaptureEvent:
         completed_at: str,
         latency_ms: int,
         intents: Sequence[str] = (),
+        transport: str = "http",
     ) -> "CaptureEvent":
         return cls(
             event_id=event_id,
@@ -117,6 +159,7 @@ class CaptureEvent:
             request_sha256=_sha256(request_body),
             response_sha256=_sha256(response_body),
             intents=sorted(set(intents)),
+            transport=transport,
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -138,11 +181,14 @@ class CaptureEvent:
             f"{_prolog_atom(self.response_sha256)}, "
             "jsonl('events.jsonl')).\n"
         )
+        transport = (
+            f"transport({_prolog_atom(self.event_id)}, {_intent_atom(self.transport)}).\n"
+        )
         intents = "".join(
             f"intent({_prolog_atom(self.event_id)}, {_intent_atom(label)}).\n"
             for label in self.intents
         )
-        return fact + intents
+        return fact + transport + intents
 
 
 class RecorderActor:
