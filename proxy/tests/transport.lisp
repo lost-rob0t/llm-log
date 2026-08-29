@@ -308,7 +308,7 @@ sockets from one test can never affect the next."
 
 (deftest http-request-and-response-bodies-round-trip-binary-identically
   (with-fixture-proxy (proxy upstream)
-    (let ((payload (random-binary 65536)))
+    (let ((payload (%random-binary 65536)))
       (setf (fixture-server-response-spec upstream)
             (list :status 200
                   :headers '(("Content-Type" . "application/octet-stream"))
@@ -388,7 +388,7 @@ sockets from one test can never affect the next."
                        #\Return #\Linefeed))
               stream)
              (force-output stream)
-             (let ((buffer (make-array 65536 :element-type '(unsigned-byte 8)))
+             (let ((buffer (make-array 16 :element-type '(unsigned-byte 8)))
                    (first-read-at nil)
                    (done nil)
                    (total 0))
@@ -398,7 +398,7 @@ sockets from one test can never affect the next."
                             (unless first-read-at
                               (setf first-read-at (get-internal-real-time)))
                             (incf total n))
-                          (when (< n (length buffer))
+                          (when (< n 16)
                             (setf done t))))
                (let ((gap (/ (- (get-internal-real-time) first-read-at)
                              internal-time-units-per-second)))
@@ -409,7 +409,7 @@ sockets from one test can never affect the next."
 
 (deftest large-bodies-stream-without-full-buffering-deadlock
   (with-fixture-proxy (proxy upstream)
-    (let ((payload (random-binary (* 8 1024 1024))))
+    (let ((payload (%random-binary (* 8 1024 1024))))
       (setf (fixture-server-response-spec upstream)
             (list :status 200
                   :headers '(("Content-Type" . "application/octet-stream"))
