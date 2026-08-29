@@ -140,7 +140,7 @@ def load_config(
         raise ConfigError(f"unknown config key(s): {', '.join(unknown)}")
 
     version = data.get("version", 1)
-    if isinstance(version, bool) or version != 1:
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise ConfigError(f"unsupported config version: {version!r}")
 
     return RuntimeConfig(
