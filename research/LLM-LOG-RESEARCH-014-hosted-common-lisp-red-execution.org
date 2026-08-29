@@ -2,7 +2,7 @@
 #+startup: overview
 
 * Status
-- Lifecycle: DECISION / ACTIVE
+- Lifecycle: DECISION / RED CONFIRMED
 - Parent: https://github.com/lost-rob0t/llm-log/issues/10
 - PR: https://github.com/lost-rob0t/llm-log/pull/18
 - Depends on: LLM-LOG-RESEARCH-013 common-lisp RED runner
@@ -10,12 +10,12 @@
 * Analyze
 The active #10 branch has an authoritative Common Lisp/Rove transport contract and a Nix check named =common-lisp-transport-contract=. The automation container has no =sbcl=, =swipl=, =nix=, or =ros=, so local execution cannot establish behavioral RED.
 
-A hosted GitHub runner was added only to supply an executable Nix environment. The first hosted execution exposed a second gate defect: the Rove assertions visibly execute, but the ASDF =test-op= ignored Rove's boolean result. Therefore failed Rove assertions could yield a successful Nix derivation.
+A hosted GitHub runner was added only to supply an executable Nix environment. The first hosted execution exposed a second gate defect: Rove assertions executed, but the ASDF =test-op= ignored Rove's boolean result. Failed Rove assertions therefore yielded a successful Nix derivation.
 
-This is a false-green harness bug. It does not authorize HTTP implementation.
+That false-green harness defect is now corrected and a subsequent exact-head hosted run has independently confirmed the intended behavioral RED.
 
 * Research
-GitHub-hosted Ubuntu runners can install Nix using =cachix/install-nix-action@v31=. The existing flake pins Tek9 and defines the exact Common Lisp transport check, so CI does not duplicate dependency assembly.
+The existing flake pins Tek9 and defines the exact Common Lisp transport check, so CI does not duplicate SBCL/SWI/Tek9 dependency assembly.
 
 Canonical command:
 
@@ -23,16 +23,16 @@ Canonical command:
 nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
 #+end_src
 
-Rove's =run= ultimately returns two values from =call-with-suite=; the primary value is =(passedp *stats*)=. It does not signal an error merely because assertions failed. The previous ASDF performer called =rove:run= and discarded that boolean, so ASDF/Nix observed normal completion.
+Rove's =run= ultimately returns two values from =call-with-suite=; the primary value is =(passedp *stats*)=. It does not signal merely because assertions failed. The original ASDF performer discarded that boolean.
 
-The test-system performer must convert false into a Common Lisp condition:
+The corrected test-system performer converts false into a Common Lisp condition:
 
 #+begin_src lisp
 (unless (uiop:symbol-call :rove :run :llm-log-expert-test)
   (error "llm-log-expert-test failed"))
 #+end_src
 
-This keeps Rove as the test framework while making ASDF/Nix failure semantics truthful.
+The hosted verifier then requires all three expected lifecycle assertion messages to be present before classifying the run as the required RED.
 
 * Design
 Hosted executor:
@@ -40,19 +40,20 @@ Hosted executor:
 1. checkout exact commit;
 2. install Nix;
 3. execute only =checks.x86_64-linux.common-lisp-transport-contract=;
-4. preserve GitHub Actions logs as execution evidence;
-5. run on pushes to =rage/10-expert-runtime-red= and manual dispatch.
+4. require the Nix contract itself to fail;
+5. require explicit assertion evidence for =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, and =PROXY-LISTEN-PORT=;
+6. run on pushes to =rage/10-expert-runtime-red= and manual dispatch.
 
 Do not run Python tests in this workflow.
 
-The expected behavioral RED is a failed assertion for the absent Common Lisp proxy lifecycle surface: =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, and =PROXY-LISTEN-PORT=. Bootstrap, flake-evaluation, dependency-load, ASDF-load, or Rove-load failures are infrastructure failures and do not authorize production implementation.
+Bootstrap, flake-evaluation, dependency-load, ASDF-load, or Rove-load failures are infrastructure failures and do not count as behavioral RED.
 
 * Adversarial review
 ** False RED from dependency bootstrap
-Treat bootstrap/evaluation/load failures as blockers, not behavioral evidence.
+Resolved by matching the expected assertion evidence rather than accepting any non-zero command.
 
 ** False GREEN because the test framework returns a boolean
-Resolved by making ASDF signal when Rove's primary return value is false. The exact hosted contract must be rerun after this correction.
+Resolved by making ASDF signal when Rove's primary return value is false.
 
 ** Workflow becomes a Python backdoor
 The workflow executes only the Common Lisp Nix check. No Python runner is introduced.
@@ -63,11 +64,11 @@ The flake/ASDF test remains canonical. GitHub Actions only supplies an executabl
 ** Secret leakage
 No provider credentials, corpus paths, API keys, or captured traffic are supplied to the job.
 
-** Accidental merge on expected failure
-PR #18 remains draft. Expected RED is not merge evidence.
+** Weak RED accidentally authorizes fake HTTP stubs
+The confirmed RED proves only the lifecycle surface is absent. It does not prove forwarding fidelity. Production transport work must not merely define stubs to satisfy these symbols. Before implementing real forwarding semantics, extend the Common Lisp contract with a black-box HTTP fixture covering method/path/query/body/status and duplicate-header preservation.
 
 * Decision
-GO. Keep the hosted executor and repair ASDF/Rove failure propagation. Do not mutate HTTP production code until the corrected exact-head run is genuinely RED for the missing lifecycle API.
+GO for the #10 transport slice. The execution-infrastructure blocker is resolved and the Common Lisp lifecycle baseline is genuinely RED. The next production-capable step is a stronger black-box Common Lisp HTTP forwarding RED, followed by the minimum real implementation. Do not introduce lifecycle stubs solely to turn the current surface test green.
 
 * Evidence
 ** Hosted run 1 — false green
@@ -77,12 +78,29 @@ GO. Keep the hosted executor and repair ASDF/Rove failure propagation. Do not mu
 - authoritative Common Lisp Nix check: process reported success
 - interpretation: INVALID GREEN; =rove:run= failure boolean was discarded by ASDF =test-op=
 
+** Hosted run 2 — failure propagation fixed
+- Run: https://github.com/lost-rob0t/llm-log/actions/runs/33280590903
+- Head: =1f7ebc93eccf6cd5a2923f1dae8490673935a6b7=
+- Nix install: success
+- Common Lisp transport contract: failure
+- interpretation: ASDF/Rove failure propagation is now truthful; a follow-up verifier was required to distinguish expected behavioral RED from unrelated failure.
+
+** Hosted run 3 — expected behavioral RED confirmed
+- Run: https://github.com/lost-rob0t/llm-log/actions/runs/33280631648
+- Head: =5e51c3ef87def61c9853935714b73271a9d289de=
+- Nix install: success
+- authoritative Common Lisp transport contract: failed as expected
+- verifier: success only after matching all three expected missing lifecycle assertions
+- expected missing symbols: =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, =PROXY-LISTEN-PORT=
+- interpretation: VALID RED for the pre-implementation Common Lisp lifecycle surface.
+
 * Acceptance
 - [x] hosted workflow exists on active #10 branch;
-- [x] exact branch head produced a hosted run;
-- [x] Nix bootstrap succeeded;
-- [x] flake/dependency loading reached the Common Lisp contract;
-- [x] false-green propagation defect identified from Rove semantics;
-- [ ] ASDF test-op signals on failed Rove suite;
-- [ ] corrected exact-head run fails for missing CL proxy lifecycle assertions;
-- [ ] exact RED run/commit recorded before HTTP implementation begins.
+- [x] Nix bootstrap succeeds;
+- [x] flake/dependency loading reaches the Common Lisp contract;
+- [x] false-green propagation defect identified and repaired;
+- [x] ASDF test-op signals on failed Rove suite;
+- [x] corrected exact-head run fails for the expected CL proxy lifecycle assertions;
+- [x] immutable RED run URL and commit recorded before production HTTP implementation;
+- [ ] black-box forwarding RED covers method/path/query/body/status + duplicate headers;
+- [ ] minimum Common Lisp HTTP forwarding implementation turns that stronger contract GREEN.
