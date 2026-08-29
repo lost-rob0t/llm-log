@@ -423,7 +423,6 @@ sockets from one test can never affect the next."
 
 (deftest unknown-provider-is-rejected
   (with-fixture-proxy (proxy upstream)
-    (declare (ignore upstream))
     (multiple-value-bind (status body)
         (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
       (declare (ignore body))
