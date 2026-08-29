@@ -11,6 +11,12 @@
                 #:put*
                 #:with-write-transaction)
   (:export
+   #:runtime-config
+   #:runtime-config-data-directory
+   #:runtime-config-listen-address
+   #:runtime-config-port
+   #:default-data-directory
+   #:make-default-runtime-config
    #:expert-host
    #:expert-host-data-directory
    #:expert-host-database
