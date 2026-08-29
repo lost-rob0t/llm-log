@@ -5,6 +5,10 @@
 ;;; prebuilt nixpkgs fasls are treated as stale and ASDF tries to recompile
 ;;; them into the read-only store. See
 ;;; research/LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org.
+;;;
+;;; Rove symbols are resolved at runtime (find-symbol/symbol-call) because
+;;; SBCL reads a whole --load file before executing any form, and the ROVE
+;;; package only exists after ASDF loads the test system.
 
 (let ((asdf-fasl (sb-unix::posix-getenv "ASDF")))
   (when (and asdf-fasl (plusp (length asdf-fasl)))
@@ -13,8 +17,18 @@
 
 (in-package #:cl-user)
 
-(asdf:load-system :llm-log/tests)
+(asdf:load-system :llm-log-tests)
 
-(setf rove:*enable-colors* nil)
-(rove:run-system :llm-log/tests)
-(uiop:quit (if (rove:failed-p) 1 0))
+(let ((colors (find-symbol "*ENABLE-COLORS*" :rove)))
+  (when colors
+    (setf (symbol-value colors) nil)))
+
+(let* ((results (uiop:symbol-call :rove :run-system :llm-log-tests))
+       (passedp (find-symbol "PASSEDP" :rove))
+       (all-passed
+        (and passedp
+             (listp results)
+             (plusp (length results))
+             (every (lambda (result) (funcall passedp result))
+                    results))))
+  (uiop:quit (if all-passed 0 1)))

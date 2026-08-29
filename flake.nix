@@ -51,7 +51,7 @@
             pname = "llm-log-tests";
             version = "0.1.0";
             src = ./proxy;
-            systems = [ "llm-log/tests" ];
+            systems = [ "llm-log-tests" ];
             lispLibs = [ llmLogClLib cl.rove ];
           };
           sbclWithClTests = pkgs.sbcl.withPackages (_: [ llmLogClTests ]);
@@ -63,6 +63,9 @@
           llm-log-expert = expertService;
           llm-log-cl-lib = llmLogClLib;
           llm-log-cl-tests = llmLogClTests;
+          # Standalone SBCL closure carrying the Common Lisp runtime system;
+          # also the interpreter used by the CL contract checks.
+          llm-log-cl-sbcl = sbclWithClTests;
         });
 
       homeManagerModules = {
@@ -133,7 +136,7 @@
           '';
 
           llm-log-config-contract = pkgs.runCommand "llm-log-config-contract" {
-            nativeBuildInputs = [ self.packages.${system}.llm-log-cl-tests ];
+            nativeBuildInputs = [ self.packages.${system}.llm-log-cl-sbcl ];
           } ''
             export HOME="$TMPDIR/home"
             mkdir -p "$HOME"
