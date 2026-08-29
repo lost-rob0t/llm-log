@@ -1,0 +1,31 @@
+#+title: LLM-LOG-RESEARCH-001 Capture Proxy and Symbolic Corpus
+#+status: IMPLEMENTING
+#+issue: 1
+
+* Question
+How should llm-log capture model traffic now so the same corpus can later support fine-tuning, failure mining, expert-system design, retrieval/tool injection, and request routing without locking the project into a provider-specific format?
+
+* Decision
+Use a transparent HTTP reverse proxy as the capture boundary.
+
+The lossless record is append-only JSONL. A single-writer recorder actor serializes completed exchanges so concurrent requests cannot corrupt the corpus. Each record keeps request/response bytes, timing, provider/upstream metadata, model when discoverable, hashes, and redacted headers.
+
+Prolog is an append-only symbolic projection, not the primary blob store. The KB stores compact event metadata, stable references back to events.jsonl, and classifier predicates. This lets later expert systems reason over traffic without duplicating every large completion into Prolog source.
+
+* Initial classification
+The first classifier is intentionally coarse and deterministic. SWI-Prolog labels request text with intents such as coding, research, search, writing, analysis, or chat. These labels are seeds, not ground truth. Later ARADR slices can learn richer taxonomies and failure-path predicates from the captured corpus.
+
+* Security boundary
+Authorization, cookie, and API-key header values must never be persisted. They still pass through to the selected upstream. Logging raw prompt/response bodies is deliberate because the project goal is corpus construction; the proxy should therefore bind to localhost by default and the data directory must not be committed.
+
+* Deferred slices
+- training/export transformations and dataset versioning
+- embeddings and semantic failure retrieval
+- symbolic request routing
+- tool/search injection on behalf of callers
+- prompt mutation / context injection
+- UI and corpus browser
+- retention, encryption-at-rest, selective capture policies
+
+* RAGE gate
+Implementation is user-approved by the request to start this ARADR slice with auto-RAGE. Tests are committed red before the implementation. Development is local-first; no GitHub Actions loop is introduced in this slice.
