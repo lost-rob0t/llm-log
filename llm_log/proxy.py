@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Mapping, Protocol
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
-from .recorder import CaptureEvent, RecorderActor
+from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
     "connection",
@@ -22,6 +24,12 @@ _HOP_BY_HOP = {
 }
 _REQUEST_DROP = _HOP_BY_HOP | {"host", "content-length"}
 _RESPONSE_DROP = _HOP_BY_HOP
+_WS_REQUEST_DROP = _REQUEST_DROP | {
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
+    "sec-websocket-protocol",
+}
 _SESSION_KEY = web.AppKey("session", ClientSession)
 
 
@@ -37,8 +45,44 @@ def _request_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {name: value for name, value in headers.items() if name.lower() not in _REQUEST_DROP}
 
 
+def _websocket_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() not in _WS_REQUEST_DROP
+    }
+
+
 def _response_headers(headers: Mapping[str, str]) -> list[tuple[str, str]]:
     return [(name, value) for name, value in headers.items() if name.lower() not in _RESPONSE_DROP]
+
+
+def _websocket_protocols(headers: Mapping[str, str]) -> tuple[str, ...]:
+    raw = headers.get("Sec-WebSocket-Protocol", "")
+    return tuple(protocol.strip() for protocol in raw.split(",") if protocol.strip())
+
+
+def _websocket_url(url: str) -> str:
+    if url.startswith("https://"):
+        return "wss://" + url.removeprefix("https://")
+    if url.startswith("http://"):
+        return "ws://" + url.removeprefix("http://")
+    return url
+
+
+def _websocket_frame(message_type: WSMsgType, data: str | bytes) -> bytes:
+    if message_type == WSMsgType.TEXT:
+        frame = {"type": "text", "text": data}
+    elif message_type == WSMsgType.BINARY:
+        assert isinstance(data, bytes)
+        frame = {
+            "type": "binary",
+            "encoding": "base64",
+            "data": base64.b64encode(data).decode("ascii"),
+        }
+    else:
+        raise ValueError(f"unsupported websocket capture type: {message_type}")
+    return (json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 async def _classify(classifier: Classifier | None, request_body: bytes) -> list[str]:
@@ -49,6 +93,172 @@ async def _classify(classifier: Classifier | None, request_body: bytes) -> list[
         return await asyncio.to_thread(classifier.classify, text)
     except Exception:
         return []
+
+
+async def _relay_websocket(
+    source,
+    target,
+    captured: bytearray,
+    *,
+    recorder: RecorderActor,
+    event_id: str,
+    direction: str,
+) -> None:
+    async for message in source:
+        if message.type == WSMsgType.TEXT:
+            raw = message.data.encode("utf-8")
+            captured.extend(_websocket_frame(message.type, message.data))
+            await recorder.journal_frame(
+                WebSocketFrame.from_bytes(
+                    event_id=event_id,
+                    direction=direction,
+                    frame_type="text",
+                    payload=raw,
+                    timestamp=_now(),
+                )
+            )
+            await target.send_str(message.data)
+        elif message.type == WSMsgType.BINARY:
+            captured.extend(_websocket_frame(message.type, message.data))
+            await recorder.journal_frame(
+                WebSocketFrame.from_bytes(
+                    event_id=event_id,
+                    direction=direction,
+                    frame_type="binary",
+                    payload=message.data,
+                    timestamp=_now(),
+                )
+            )
+            await target.send_bytes(message.data)
+        elif message.type == WSMsgType.ERROR:
+            error = source.exception()
+            if error is not None:
+                raise error
+            raise RuntimeError("websocket relay failed")
+
+
+async def _proxy_websocket(
+    request: web.Request,
+    *,
+    provider: str,
+    upstream: str,
+    upstream_url: str,
+    tail: str,
+    recorder: RecorderActor,
+    classifier: Classifier | None,
+    session: ClientSession,
+) -> web.StreamResponse:
+    event_id = str(uuid.uuid4())
+    started_at = _now()
+    started = time.perf_counter()
+    client_frames = bytearray()
+    server_frames = bytearray()
+    protocols = _websocket_protocols(request.headers)
+
+    try:
+        upstream_socket = await session.ws_connect(
+            _websocket_url(upstream_url),
+            headers=_websocket_request_headers(request.headers),
+            protocols=protocols,
+            autoping=True,
+        )
+    except Exception as exc:
+        completed_at = _now()
+        failure = str(exc).encode("utf-8", errors="replace")
+        event = CaptureEvent.from_bytes(
+            event_id=event_id,
+            provider=provider,
+            upstream=upstream,
+            method=request.method,
+            path="/" + tail,
+            query=request.query_string,
+            request_headers=request.headers,
+            request_body=b"",
+            response_status=502,
+            response_headers={},
+            response_body=failure,
+            started_at=started_at,
+            completed_at=completed_at,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            transport="websocket",
+        )
+        await recorder.record(event)
+        return web.Response(status=502, text="upstream websocket connection failed")
+
+    selected_protocol = upstream_socket.protocol
+    downstream = web.WebSocketResponse(
+        protocols=(selected_protocol,) if selected_protocol is not None else (),
+        autoping=True,
+    )
+
+    try:
+        await downstream.prepare(request)
+        client_to_upstream = asyncio.create_task(
+            _relay_websocket(
+                downstream,
+                upstream_socket,
+                client_frames,
+                recorder=recorder,
+                event_id=event_id,
+                direction="client_to_upstream",
+            ),
+            name="llm-log-ws-client-to-upstream",
+        )
+        upstream_to_client = asyncio.create_task(
+            _relay_websocket(
+                upstream_socket,
+                downstream,
+                server_frames,
+                recorder=recorder,
+                event_id=event_id,
+                direction="upstream_to_client",
+            ),
+            name="llm-log-ws-upstream-to-client",
+        )
+        tasks = {client_to_upstream, upstream_to_client}
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+        await upstream_socket.close()
+        await downstream.close()
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    finally:
+        if not upstream_socket.closed:
+            await upstream_socket.close()
+        if not downstream.closed:
+            await downstream.close()
+
+    request_body = bytes(client_frames)
+    response_body = bytes(server_frames)
+    intents = await _classify(classifier, request_body)
+    completed_at = _now()
+    response_headers = (
+        {"Sec-WebSocket-Protocol": selected_protocol}
+        if selected_protocol is not None
+        else {}
+    )
+    event = CaptureEvent.from_bytes(
+        event_id=event_id,
+        provider=provider,
+        upstream=upstream,
+        method=request.method,
+        path="/" + tail,
+        query=request.query_string,
+        request_headers=request.headers,
+        request_body=request_body,
+        response_status=101,
+        response_headers=response_headers,
+        response_body=response_body,
+        started_at=started_at,
+        completed_at=completed_at,
+        latency_ms=round((time.perf_counter() - started) * 1000),
+        intents=intents,
+        transport="websocket",
+    )
+    await recorder.record(event)
+    return downstream
 
 
 def build_app(
@@ -85,11 +295,23 @@ def build_app(
         if request.query_string:
             upstream_url = f"{upstream_url}?{request.query_string}"
 
+        session = request.app[_SESSION_KEY]
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return await _proxy_websocket(
+                request,
+                provider=provider,
+                upstream=upstream,
+                upstream_url=upstream_url,
+                tail=tail,
+                recorder=recorder,
+                classifier=classifier,
+                session=session,
+            )
+
         request_body = await request.read()
         started_at = _now()
         started = time.perf_counter()
         classify_task = asyncio.create_task(_classify(classifier, request_body))
-        session = request.app[_SESSION_KEY]
         response_body = bytearray()
         response_status = 502
         response_headers: Mapping[str, str] = {}

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, WSMsgType, web
 
 from llm_log.classifier import PrologClassifier
 from llm_log.proxy import build_app
@@ -121,6 +121,7 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         self.upstream = web.Application()
         self.upstream.router.add_post("/v1/chat/completions", self.non_stream)
         self.upstream.router.add_post("/v1/stream", self.stream)
+        self.upstream.router.add_get("/v1/ws", self.websocket)
         self.runner = web.AppRunner(self.upstream)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -157,6 +158,17 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         await response.write_eof()
         return response
 
+    async def websocket(self, request):
+        self.assertEqual(request.headers["Authorization"], "Bearer ws-forwarded-secret")
+        response = web.WebSocketResponse(protocols=("responses",))
+        await response.prepare(request)
+        message = await response.receive()
+        self.assertEqual(message.type, WSMsgType.TEXT)
+        self.assertIn('"model":"ws-model"', message.data)
+        await response.send_str('{"type":"response.output_text.delta","delta":"captured websocket"}')
+        await response.close()
+        return response
+
     async def test_non_streaming_response_is_forwarded_and_logged(self):
         async with ClientSession() as session:
             async with session.post(
@@ -188,6 +200,30 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         event = json.loads((self.root / "events.jsonl").read_text().splitlines()[-1])
         self.assertIn('"delta":"one"', event["response_body"]["text"])
         self.assertIn('"delta":"two"', event["response_body"]["text"])
+
+    async def test_websocket_frames_are_forwarded_and_logged(self):
+        async with ClientSession() as session:
+            async with session.ws_connect(
+                f"{self.proxy_url}/test/v1/ws",
+                headers={"Authorization": "Bearer ws-forwarded-secret"},
+                protocols=("responses",),
+            ) as socket:
+                await socket.send_str('{"model":"ws-model","input":"hello"}')
+                message = await socket.receive()
+
+        self.assertEqual(message.type, WSMsgType.TEXT)
+        self.assertIn("captured websocket", message.data)
+        self.assertEqual(socket.protocol, "responses")
+        await self.recorder.flush()
+        line = (self.root / "events.jsonl").read_text().splitlines()[-1]
+        event = json.loads(line)
+        self.assertEqual(event["transport"], "websocket")
+        self.assertEqual(event["response_status"], 101)
+        self.assertEqual(event["model"], "ws-model")
+        self.assertNotIn("ws-forwarded-secret", line)
+        self.assertIn('"type":"text"', event["request_body"]["text"])
+        self.assertIn('"model":"ws-model"', event["request_body"]["text"])
+        self.assertIn("captured websocket", event["response_body"]["text"])
 
 
 if __name__ == "__main__":
