@@ -1,0 +1,49 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1787736819,
+        "narHash": "sha256-cV5xEJJK3BvhU8rEd4mC9UsmDi5qscv/kzGPhBRC5WA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "9fbb54b33e91ee4ca368e35a78e0613c720600b3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "tek9": "tek9"
+      }
+    },
+    "tek9": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788012948,
+        "narHash": "sha256-iW/KOddxJjcDQh8i+xiybzrM2tjyrIXvHphZDagsz/8=",
+        "owner": "lost-rob0t",
+        "repo": "tek9",
+        "rev": "a9f5b595f5d965163d2b7c518c72a2efd9be13fe",
+        "type": "github"
+      },
+      "original": {
+        "owner": "lost-rob0t",
+        "repo": "tek9",
+        "rev": "a9f5b595f5d965163d2b7c518c72a2efd9be13fe",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
