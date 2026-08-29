@@ -1,0 +1,78 @@
+#+title: LLM-LOG-RESEARCH-006 — Expert Runtime Reconciliation
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION -> RAGE-IN-PROGRESS
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Runtime issue: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Supersedes stale dependency/storage wording in earlier runtime notes where this file is more specific.
+
+* Remote-state reconciliation
+On 2026-08-29 the Tek9 packaging transaction was merged to Tek9 master as commit =a9f5b595f5d965163d2b7c518c72a2efd9be13fe= (merge of PR #9). The llm-log expert flake should consume this immutable merged revision rather than the pre-merge PR head.
+
+No new Tek9 storage primitive is required for the current substrate slice. Existing public document/database APIs remain the selected boundary.
+
+* Mutable-state correction
+The reusable llm-log default mutable state root is =~/.llm-proxy=.
+
+The expert service default is derived from that configured root:
+
+#+begin_example
+~/.llm-proxy/expert/
+#+end_example
+
+This is a default, not a hard-coded personal location. Standalone config/CLI and Home Manager may override the llm-log data root. The consumer dotfiles intentionally configure:
+
+#+begin_example
+~/Documents/AI/proxy
+#+end_example
+
+so that machine's expert state may resolve beneath =~/Documents/AI/proxy/expert/= without changing reusable defaults.
+
+No mutable state belongs in the Nix store.
+
+* Current bounded RAGE slice
+The private Common Lisp -> SWI-Prolog boundary is a persistent JSON-lines worker. The RED-first worker contract was committed before implementation:
+
+- RED: =5aeedb3d3690fd0171869776a82a79b885567f07= — =tests/test_prolog_worker_red.py=
+- implementation: =443f703daa9d4935b65d5900199ee91394f78921= — =expert/prolog/worker.pl=
+
+The contract is intentionally tiny:
+- one process handles multiple requests;
+- declared operation =health=;
+- declared fixture operation =event_transport=;
+- arbitrary =call=/goal execution returns =unknown_operation=;
+- model/user strings remain JSON data and are never parsed as executable Prolog terms.
+
+No GREEN execution is claimed from the current tool environment because SWI-Prolog/Nix execution is unavailable here. The commits preserve RED-before-production chronology for execution by a capable worker.
+
+* Next integration boundary
+The next implementation step remains Common Lisp ownership of the worker process:
+1. launch exactly one SWI-Prolog worker per =expert-host=;
+2. retain a process/session identity across queries;
+3. send only closed typed operations;
+4. validate structured replies;
+5. mark crash/timeout explicitly rather than manufacturing empty success;
+6. then connect one bounded Tek9 point lookup to =event_transport=.
+
+The full black-box service RED in =tests/test_expert_service_red.py= remains authoritative. #12, #13, #15 and #17 stay blocked until #10 is GREEN.
+
+* Adversarial review
+** Stale storage defaults
+Mitigation: derive expert state from the configurable llm-log root; reusable default is =~/.llm-proxy= and personal paths remain consumer configuration.
+
+** Temporary dependency becomes permanent
+Mitigation: pin the merged Tek9 master commit, not an unmerged branch head.
+
+** Prolog becomes an execution escape hatch
+Mitigation: closed dispatch table on both sides; no generic goal operation, =call/1= input, =term_string/2= input, or model-controlled callable term.
+
+** Worker becomes durable authority
+Mitigation: worker remains disposable inference state. Tek9 owns durable facts, revisions and provenance.
+
+** False GREEN
+Mitigation: do not claim SWI/Nix execution evidence until an environment actually runs the RED contracts against the exact head.
+
+* Decision
+GO only for the persistent Common Lisp supervisor and fixture path. Do not start domain expert implementation in this cycle.
