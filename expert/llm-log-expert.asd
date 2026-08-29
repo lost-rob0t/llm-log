@@ -6,4 +6,8 @@
   :serial t
   :depends-on (#:tek9 #:jsown #:uiop)
   :components ((:file "package")
-               (:file "host")))
+               (:file "host")
+               (:file "prolog-supervisor")
+               (:file "storage")
+               (:file "service")
+               (:static-file "prolog/worker.pl")))
