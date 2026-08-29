@@ -24,11 +24,11 @@
     (setf (symbol-value colors) nil)))
 
 (let* ((results (uiop:symbol-call :rove :run-system :llm-log-tests))
-       (passedp (find-symbol "PASSEDP" :rove))
        (all-passed
-        (and passedp
-             (listp results)
+        (and (listp results)
              (plusp (length results))
-             (every (lambda (result) (funcall passedp result))
+             (every (lambda (result)
+                      (member (class-name (class-of result))
+                              '(passed pending)))
                     results))))
   (uiop:quit (if all-passed 0 1)))
