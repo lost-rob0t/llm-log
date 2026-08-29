@@ -116,7 +116,7 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
                             stream))))
        (write-sequence (%ascii-octets
                         (format nil "0~C~C~C~C" #\Return #\Linefeed #\Return #\Linefeed))
-                       stream))))
+                       stream)))
     (force-output stream)))
 
 (defstruct fixture-server
@@ -413,4 +413,4 @@ response to EOF; return (VALUES status headers-list body-octets)."
                (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
              (declare (ignore body))
              (ok (eql status 404))))
-      (stop-fixture-upstream upstream))))
+      (stop-fixture-upstream upstream)))))
