@@ -1,0 +1,96 @@
+#+title: LLM-LOG-RESEARCH-010 — Reasoner Result Validation
+#+startup: overview
+
+* Status
+- Lifecycle: DESIGN -> AUTO-RAGE
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Branch: =rage/10-expert-runtime-red=
+
+* Analyze
+The #10 substrate already validates the private SWI-Prolog reply envelope for JSON-object shape, request correlation, operation correlation, and top-level status. The =event_transport= consumer then reads =result.transport= and =rule_version= without validating their types, presence, or agreement with the bounded Tek9 fact materialized for the query.
+
+That leaves a false-success path: a worker can return a correctly correlated =status=ok= reply whose result is missing, malformed, or contradicts the input fact. Common Lisp could then publish a typed-looking expert result containing NIL or an unvalidated value.
+
+This is inside the existing #10 acceptance item that malformed/unauthorized Prolog results fail explicitly. It does not require a new expert, a Python rule engine, or a Tek9 API change.
+
+* Research
+The trust boundary remains:
+
+#+begin_example
+Tek9 event:<id> point lookup
+        |
+        | bounded normalized fact
+        v
+Common Lisp supervisor
+        |
+        | closed JSON-lines operation
+        v
+SWI-Prolog worker
+        |
+        | untrusted until shape validation
+        v
+Common Lisp typed result validator
+        |
+        v
+public expert-service reply
+#+end_example
+
+SWI-Prolog is the inference engine, but its process output is still an IPC boundary. Correlation validation alone proves which request a reply claims to answer; it does not prove the operation-specific payload is well formed.
+
+* Design
+** Closed result contract for =event_transport=
+For a successful =event_transport= worker reply, Common Lisp MUST require:
+
+- =result= is a JSON object;
+- =result.transport= is a non-empty string;
+- returned transport exactly equals the normalized transport fact materialized from the referenced Tek9 event;
+- =rule_version= is a non-empty string;
+- no successful public result is emitted if any of those checks fail.
+
+The fixture is deliberately strict because =event_transport= is a substrate proof, not a probabilistic classifier. A contradiction is a reasoner/protocol fault, not a second interpretation of evidence.
+
+** Failure semantics
+Malformed or contradictory successful worker output becomes an explicit =invalid_reasoner_result= failure at the CL boundary. The current worker session is discarded because a worker violating its declared operation contract is no longer trusted for subsequent requests. The failed inference is not replayed automatically. The next independent request may start one fresh worker using the existing bounded recovery semantics.
+
+** Tek9
+No Tek9 mutation occurs during result validation. Raw capture and the existing =event:<id>= projection remain unchanged. KB revision does not advance because an invalid derivation is not durable knowledge.
+
+** Public protocol
+The public fixture query returns =status=error= rather than an OK reply containing NIL/forged data. The error must be distinguishable from =unknown_event= and from a timeout/crash. No arbitrary Prolog term or caller-selected validator is introduced.
+
+* Adversarial review
+** Correct envelope, malformed result
+A compromised/buggy worker may preserve request ID and operation while returning =result={}=: reject.
+
+** Forged transport
+A worker may return =websocket= after CL materialized =http=: reject. The fixture cannot rewrite evidence.
+
+** Missing rule version
+A derivation without rule provenance is not dataset-safe: reject.
+
+** Worker continues after contract violation
+Keeping the same worker would allow repeated malformed answers or protocol state ambiguity. Invalidate it; recovery happens only on the next request.
+
+** Accidental Python policy
+The test harness may inject a fixture worker, but production validation remains Common Lisp-owned. Python only observes black-box service behavior.
+
+** Database contamination
+No assertion or KB revision is written for malformed reasoner output.
+
+* RED-first acceptance
+Before production mutation, add a worker fixture that:
+1. accepts the declared =event_transport= operation;
+2. returns a correctly correlated =status=ok= envelope;
+3. supplies a malformed/contradictory operation result.
+
+The black-box contract must prove the current implementation does NOT satisfy all of:
+- malformed result is rejected;
+- no forged value is exposed as success;
+- the bad worker session is invalidated;
+- the next independent request can recover through a fresh worker/session when the fixture becomes valid.
+
+No GREEN execution is claimed unless the packaged SBCL/SWI/Nix service contract actually runs.
+
+* Decision
+GO for this bounded #10 hardening slice only. Do not start #12/#13/#15/#17. Do not touch dotfiles consumer wiring or PR #5. Existing Tek9 public APIs are sufficient and no Tek9 change is justified.
