@@ -28,11 +28,21 @@
             systems = [ "llm-log-expert" ];
             lispLibs = [ tek9Package cl.jsown ];
           };
+          sbclWithExpert = pkgs.sbcl.withPackages (_: [ expertLib ]);
+          expertService = pkgs.writeShellApplication {
+            name = "llm-log-expert";
+            runtimeInputs = [ sbclWithExpert pkgs.swi-prolog ];
+            text = ''
+              export LLM_LOG_PROLOG_WORKER="${./expert/prolog/worker.pl}"
+              exec sbcl --noinform --script ${./expert/entrypoint.lisp} "$@"
+            '';
+          };
         in
         {
           default = llmLog;
           llm-log = llmLog;
           llm-log-expert-lib = expertLib;
+          llm-log-expert = expertService;
         });
 
       homeManagerModules = {
@@ -52,13 +62,30 @@
               pkgs.sbcl
               pkgs.swi-prolog
               tek9.packages.${system}.tek9
+              self.packages.${system}.llm-log-expert
             ];
           };
         });
 
-      checks = eachSystem (system: {
-        package = self.packages.${system}.default;
-        expert-lib = self.packages.${system}.llm-log-expert-lib;
-      });
+      checks = eachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ]);
+          expertService = self.packages.${system}.llm-log-expert;
+        in
+        {
+          package = self.packages.${system}.default;
+          expert-lib = self.packages.${system}.llm-log-expert-lib;
+          expert-service-contract = pkgs.runCommand "llm-log-expert-service-contract" {
+            nativeBuildInputs = [ python expertService ];
+          } ''
+            export HOME="$TMPDIR/home"
+            export LLM_LOG_EXPERT_BIN="${expertService}/bin/llm-log-expert"
+            mkdir -p "$HOME"
+            cd ${self}
+            python -m unittest tests.test_expert_service_red -v
+            touch "$out"
+          '';
+        });
     };
 }
