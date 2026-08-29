@@ -5,10 +5,23 @@
 * Problem
 llm-log already exposes a Nix package and a Home Manager module that can enable a systemd user service, but the standalone CLI is configured only through command-line flags and defaults its capture directory to a relative =data/= path.
 
-That creates two configuration experiences and two different storage defaults. The proxy runtime should have one configuration model regardless of whether it is launched by Home Manager, =nix run=, pip/pipx, or a checkout.
+That creates two configuration experiences and risks coupling reusable product defaults to one consumer's filesystem. The proxy runtime should have one configuration model regardless of whether it is launched by Home Manager, =nix run=, pip/pipx, or a checkout, while personal corpus placement remains an explicit consumer override.
 
 * Decision
 Use one runtime configuration model with two frontends.
+
+** State root
+The product default mutable state/corpus root is =~/.llm-proxy=. This is deliberately independent of =XDG_DATA_HOME=: llm-log owns a stable, obvious state directory by default.
+
+The state root remains configurable. A TOML =data_dir= value, CLI =--log-dir= value, or Home Manager =services.llm-log.dataDir= overrides =~/.llm-proxy=. No personal directory such as =~/Documents/AI/proxy= belongs in reusable llm-log defaults.
+
+A consumer may therefore configure:
+
+#+begin_src nix
+services.llm-log.dataDir = "${config.home.homeDirectory}/Documents/AI/proxy";
+#+end_src
+
+without changing llm-log's portable default.
 
 ** Nix / Home Manager
 Keep =services.llm-log.enable = true= as the service gate. Existing module options remain the declarative source for listener address, port, data directory, classifier state, upstream mapping, package selection, and extra arguments. The module owns the systemd user-service definition.
@@ -16,24 +29,20 @@ Keep =services.llm-log.enable = true= as the service gate. Existing module optio
 ** Standalone
 Add TOML configuration using Python's standard-library =tomllib=; do not add a configuration dependency.
 
-Default path:
+Default config path:
 - =$XDG_CONFIG_HOME/llm-log/config.toml= when =XDG_CONFIG_HOME= is set.
 - =~/.config/llm-log/config.toml= otherwise.
 
 An absent default file is valid. An explicitly requested =--config PATH= that does not exist is an error.
 
-Standalone capture data defaults to:
-- =$XDG_DATA_HOME/llm-log= when =XDG_DATA_HOME= is set.
-- =~/.local/share/llm-log= otherwise.
-
-This makes the standalone default agree with the Home Manager module's XDG intent.
+Standalone capture/state data defaults to =~/.llm-proxy=.
 
 * Configuration schema
 #+begin_src toml
 version = 1
 listen = "127.0.0.1"
 port = 8787
-data_dir = "/path/to/corpus"
+data_dir = "~/.llm-proxy"
 prolog_classifier = true
 
 [upstreams]
@@ -65,6 +74,9 @@ Add =apps.default= and =apps.llm-log= pointing at the packaged executable so a u
 Configuration stores routing and runtime settings only. It does not become a credential store. Provider credentials remain owned by clients and are forwarded transparently; persisted request headers remain redacted by the capture layer.
 
 * Adversarial review
+- A reusable default must never encode one user's personal corpus path.
+- =~/.llm-proxy= is the portable default state root; consumer modules may redirect it explicitly.
+- =XDG_DATA_HOME= must not unexpectedly relocate llm-log's default state root.
 - A config file must not silently replace all default upstreams merely because it defines one provider; configuration should merge over runtime defaults.
 - CLI provider overrides must be per-key to avoid making one debugging override remove other providers.
 - Explicit missing config paths must fail; otherwise operators may believe a file is active when it is not.
@@ -74,7 +86,10 @@ Configuration stores routing and runtime settings only. It does not become a cre
 - Home Manager service behavior must remain a user service, not unexpectedly become a privileged system daemon.
 
 * RED-first target
-Before production changes, add tests demonstrating that current main cannot load TOML, does not use XDG standalone defaults, and cannot resolve CLI-over-file precedence / per-provider upstream overrides.
+Before production changes, add tests demonstrating the default state root is exactly =$HOME/.llm-proxy= regardless of =XDG_DATA_HOME=, while TOML, CLI, and Home Manager overrides remain explicit and higher-precedence.
+
+RED contract commit for this correction: =1eacad43a5d2303daf790eeec08c416f56975ed9=.
+Implementation commit: =dd493e34c9a1702395cfa5c7776b045745ac2696=.
 
 * Auto-RAGE gate
-GO for the bounded configuration-parity slice in issue #4. The requested behavior is additive, uses only the Python standard library, preserves transparent proxy semantics, and has deterministic tests.
+GO for the bounded configuration-parity slice in issue #4. The requested behavior is additive, preserves transparent proxy semantics, keeps personal storage placement in the consumer, and has deterministic tests.
