@@ -10,7 +10,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
-from .recorder import CaptureEvent, RecorderActor
+from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
     "connection",
@@ -95,13 +95,40 @@ async def _classify(classifier: Classifier | None, request_body: bytes) -> list[
         return []
 
 
-async def _relay_websocket(source, target, captured: bytearray) -> None:
+async def _relay_websocket(
+    source,
+    target,
+    captured: bytearray,
+    *,
+    recorder: RecorderActor,
+    event_id: str,
+    direction: str,
+) -> None:
     async for message in source:
         if message.type == WSMsgType.TEXT:
+            raw = message.data.encode("utf-8")
             captured.extend(_websocket_frame(message.type, message.data))
+            await recorder.journal_frame(
+                WebSocketFrame.from_bytes(
+                    event_id=event_id,
+                    direction=direction,
+                    frame_type="text",
+                    payload=raw,
+                    timestamp=_now(),
+                )
+            )
             await target.send_str(message.data)
         elif message.type == WSMsgType.BINARY:
             captured.extend(_websocket_frame(message.type, message.data))
+            await recorder.journal_frame(
+                WebSocketFrame.from_bytes(
+                    event_id=event_id,
+                    direction=direction,
+                    frame_type="binary",
+                    payload=message.data,
+                    timestamp=_now(),
+                )
+            )
             await target.send_bytes(message.data)
         elif message.type == WSMsgType.ERROR:
             error = source.exception()
@@ -121,6 +148,7 @@ async def _proxy_websocket(
     classifier: Classifier | None,
     session: ClientSession,
 ) -> web.StreamResponse:
+    event_id = str(uuid.uuid4())
     started_at = _now()
     started = time.perf_counter()
     client_frames = bytearray()
@@ -138,7 +166,7 @@ async def _proxy_websocket(
         completed_at = _now()
         failure = str(exc).encode("utf-8", errors="replace")
         event = CaptureEvent.from_bytes(
-            event_id=str(uuid.uuid4()),
+            event_id=event_id,
             provider=provider,
             upstream=upstream,
             method=request.method,
@@ -166,11 +194,25 @@ async def _proxy_websocket(
     try:
         await downstream.prepare(request)
         client_to_upstream = asyncio.create_task(
-            _relay_websocket(downstream, upstream_socket, client_frames),
+            _relay_websocket(
+                downstream,
+                upstream_socket,
+                client_frames,
+                recorder=recorder,
+                event_id=event_id,
+                direction="client_to_upstream",
+            ),
             name="llm-log-ws-client-to-upstream",
         )
         upstream_to_client = asyncio.create_task(
-            _relay_websocket(upstream_socket, downstream, server_frames),
+            _relay_websocket(
+                upstream_socket,
+                downstream,
+                server_frames,
+                recorder=recorder,
+                event_id=event_id,
+                direction="upstream_to_client",
+            ),
             name="llm-log-ws-upstream-to-client",
         )
         tasks = {client_to_upstream, upstream_to_client}
@@ -198,7 +240,7 @@ async def _proxy_websocket(
         else {}
     )
     event = CaptureEvent.from_bytes(
-        event_id=str(uuid.uuid4()),
+        event_id=event_id,
         provider=provider,
         upstream=upstream,
         method=request.method,
