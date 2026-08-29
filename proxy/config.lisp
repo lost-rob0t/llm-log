@@ -169,5 +169,5 @@ CONFIG-FILE is one of:
      :port port
      :upstreams (%merge-upstreams
                  +default-upstreams+
-                 (runtime-config-upstreams file-config)
+                 (and file-config (runtime-config-upstreams file-config))
                  upstreams))))
