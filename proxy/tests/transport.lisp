@@ -260,24 +260,37 @@ response to EOF; return (VALUES status headers-list body-octets)."
                     response)))))
       (ignore-errors (usocket:socket-close socket)))))
 
+(defparameter +fixture-port-counter+ 0)
+
+(defun %next-fixture-ports ()
+  "Each test gets its own fixture/proxy port pair so lingering connection
+sockets from one test can never affect the next."
+  (let ((n (incf +fixture-port-counter+)))
+    (values (+ 18770 (* n 2)) (+ 18771 (* n 2)))))
+
 (defmacro with-fixture-proxy ((proxy-var) &body body)
-  `(let ((,proxy-var nil))
-     (unwind-protect
-          (locally
-            (setf ,proxy-var
-                  (start-proxy
-                   (resolve-config
-                    :config-file nil
-                    :port +fixture-proxy-port+
-                    :upstreams (list (validate-upstream
-                                      "fixture"
-                                      (format nil "http://127.0.0.1:~A"
-                                              +fixture-upstream-port+))))))
-            (unless (%wait-for-port +fixture-proxy-port+)
-              (error "llm-log proxy did not start"))
-            ,@body)
-       (when ,proxy-var
-         (stop-proxy ,proxy-var)))))
+  (let ((upstream-port (gensym "UPSTREAM-PORT"))
+        (proxy-port (gensym "PROXY-PORT")))
+    `(multiple-value-bind (,upstream-port ,proxy-port) (%next-fixture-ports)
+       (let ((+fixture-upstream-port+ ,upstream-port)
+             (+fixture-proxy-port+ ,proxy-port)
+             (,proxy-var nil))
+         (unwind-protect
+              (locally
+                (setf ,proxy-var
+                      (start-proxy
+                       (resolve-config
+                        :config-file nil
+                        :port +fixture-proxy-port+
+                        :upstreams (list (validate-upstream
+                                          "fixture"
+                                          (format nil "http://127.0.0.1:~A"
+                                                  +fixture-upstream-port+))))))
+                (unless (%wait-for-port +fixture-proxy-port+)
+                  (error "llm-log proxy did not start"))
+                ,@body)
+           (when ,proxy-var
+             (stop-proxy ,proxy-var)))))))
 
 (deftest http-method-path-and-query-are-preserved
   (let ((upstream (start-fixture-upstream)))
