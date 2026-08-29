@@ -211,6 +211,23 @@ Connection: close~C~CContent-Length: ~A~C~C~C~C"
                                     condition)))
       (ignore-errors (woo.ev.socket:close-socket io)))))
 
+(defun %request-body-octets (raw-body)
+  "Return the request body as an octet vector. Woo provides :raw-body as an
+octet vector or an input stream depending on the build."
+  (etypecase raw-body
+    (vector raw-body)
+    (null (make-array 0 :element-type '(unsigned-byte 8)))
+    (stream
+     (let ((out (make-array 0 :element-type '(unsigned-byte 8)
+                            :fill-pointer 0 :adjustable t)))
+       (loop with buffer = (make-array +relay-buffer-size+
+                                       :element-type '(unsigned-byte 8))
+             for n = (read-sequence buffer raw-body)
+             until (zerop n)
+             do (loop for i below n
+                      do (vector-push-extend (aref buffer i) out)))
+       out))))
+
 (defun %make-proxy-app (config)
   (lambda (env)
     (let ((io (getf env :clack.io)))
@@ -222,8 +239,7 @@ Connection: close~C~CContent-Length: ~A~C~C~C~C"
           (getf env :request-method)
           (getf env :request-uri)
           (getf env :headers)
-          (or (getf env :raw-body)
-              (make-array 0 :element-type '(unsigned-byte 8)))))
+          (%request-body-octets (getf env :raw-body))))
        :name "llm-log-relay")
       (lambda (respond)
         (declare (ignore respond))))))

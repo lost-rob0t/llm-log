@@ -123,15 +123,17 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
   listener thread lock (requests nil) response-spec)
 
 (defun %fixture-serve-connection (server stream)
-  (unwind-protect
-       (let ((request (%fixture-parse-request stream))
-             (spec (with-slots (lock response-spec) server
-                     (bt:with-lock-held (lock) response-spec))))
-         (with-slots (lock requests) server
-           (bt:with-lock-held (lock)
-             (setf requests (append requests (list request)))))
-         (%fixture-write-response stream spec))
-    (ignore-errors (close stream))))
+  ;; A misbehaving peer must not take down the test process.
+  (ignore-errors
+   (unwind-protect
+        (let ((request (%fixture-parse-request stream))
+              (spec (with-slots (lock response-spec) server
+                      (bt:with-lock-held (lock) response-spec))))
+          (with-slots (lock requests) server
+            (bt:with-lock-held (lock)
+              (setf requests (append requests (list request)))))
+          (%fixture-write-response stream spec))
+     (ignore-errors (close stream)))))
 
 (defun %fixture-upstream (server)
   (unwind-protect
