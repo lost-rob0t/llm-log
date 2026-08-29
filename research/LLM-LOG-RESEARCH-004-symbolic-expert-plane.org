@@ -24,6 +24,8 @@ Use Tek9 as the canonical durable KB.
 
 Tek9 is an embedded Common Lisp document/graph database over LMDB. The expert plane should use Tek9 documents for typed state/assertions and graph edges for provenance/relationships. Keep one Tek9 environment open for the expert-service lifetime and add explicit secondary indexes for hot expert queries.
 
+The reusable llm-log mutable-state root defaults to =~/.llm-proxy=. Expert-plane state defaults beneath that root (for example =~/.llm-proxy/expert/=), but the root is configuration, not a hardcoded machine-specific path. Standalone TOML/CLI and Home Manager =services.llm-log.dataDir= overrides take precedence. Consumer configuration may therefore place the corpus elsewhere without changing llm-log's reusable default.
+
 The runtime boundary is:
 
 #+begin_example
@@ -161,7 +163,7 @@ The existing llm-log flake should eventually package:
 - Tek9 dependency;
 - SWI-Prolog rules/runtime.
 
-Home Manager should be able to enable/disable the expert service and configure its Tek9 path/mode. Credentials must not enter the Nix store.
+Home Manager should be able to enable/disable the expert service and configure its Tek9 path/mode. The default state root remains =~/.llm-proxy=; Home Manager and standalone configuration may override it. Credentials must not enter the Nix store.
 
 Non-Nix users need a normal configuration/launch path for the same service.
 
