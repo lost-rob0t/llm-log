@@ -54,9 +54,7 @@ def default_config_path(env: Mapping[str, str] | None = None) -> Path:
 
 def default_data_dir(env: Mapping[str, str] | None = None) -> Path:
     environment = _environment(env)
-    root = environment.get("XDG_DATA_HOME")
-    base = Path(root).expanduser() if root else _home(environment) / ".local" / "share"
-    return base / "llm-log"
+    return _home(environment) / ".llm-proxy"
 
 
 def default_runtime_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
