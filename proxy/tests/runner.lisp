@@ -23,12 +23,7 @@
   (when colors
     (setf (symbol-value colors) nil)))
 
-(let* ((results (uiop:symbol-call :rove :run-system :llm-log-tests))
-       (all-passed
-        (and (listp results)
-             (plusp (length results))
-             (every (lambda (result)
-                      (member (class-name (class-of result))
-                              '(passed pending)))
-                    results))))
-  (uiop:quit (if all-passed 0 1)))
+;; run-system-tests returns (values passed-p results) from call-with-suite.
+(let ((passed (uiop:symbol-call :rove/core/suite :run-system-tests
+                                :llm-log-tests)))
+  (uiop:quit (if passed 0 1)))
