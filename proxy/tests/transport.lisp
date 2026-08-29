@@ -140,8 +140,6 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
        (loop
          (let ((client (usocket:socket-accept (fixture-server-listener server)
                                               :element-type '(unsigned-byte 8))))
-           (format t "DIAG-FIXTURE: accepted connection~%")
-           (force-output)
            (bt:make-thread
             (lambda ()
               (%fixture-serve-connection
@@ -174,8 +172,6 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
       (setf (fixture-server-thread server)
             (bt:make-thread (lambda () (%fixture-upstream server))
                             :name "llm-log-fixture-upstream"))
-      (format t "DIAG-FIXTURE: listening on ~A thread live~%" port)
-      (force-output)
       server)))
 
 (defun stop-fixture-upstream (server)
