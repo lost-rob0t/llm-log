@@ -137,20 +137,14 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
 
 (defun %fixture-upstream (server)
   (unwind-protect
-       (loop until (fixture-server-stop server)
-             do (let ((client (handler-case
-                                  (usocket:socket-accept
-                                   (fixture-server-listener server)
-                                   :element-type '(unsigned-byte 8)
-                                   :wait nil)
-                                (error () nil))))
-                  (if client
-                      (bt:make-thread
-                       (lambda ()
-                         (%fixture-serve-connection
-                          server (usocket:socket-stream client)))
-                       :name "llm-log-fixture-connection")
-                      (sleep 0.05))))
+       (loop
+         (let ((client (usocket:socket-accept (fixture-server-listener server)
+                                              :element-type '(unsigned-byte 8))))
+           (bt:make-thread
+            (lambda ()
+              (%fixture-serve-connection
+               server (usocket:socket-stream client)))
+            :name "llm-log-fixture-connection")))
     (ignore-errors (usocket:socket-close (fixture-server-listener server)))))
 
 (defun start-fixture-upstream (&key (port +fixture-upstream-port+))
@@ -181,8 +175,8 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
       server)))
 
 (defun stop-fixture-upstream (server)
-  (setf (fixture-server-stop server) t)
-  (sleep 0.1)
+  (when (fixture-server-thread server)
+    (ignore-errors (bt:destroy-thread (fixture-server-thread server))))
   (ignore-errors (usocket:socket-close (fixture-server-listener server)))
   server)
 
