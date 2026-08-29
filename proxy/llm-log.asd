@@ -5,4 +5,6 @@
   :version "0.1.0"
   :serial t
   :depends-on (#:uiop #:clop)
-  :components ((:file "package")))
+  :components ((:file "package")
+               (:file "config")
+               (:file "cli")))
