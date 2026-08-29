@@ -406,4 +406,4 @@ response to EOF; return (VALUES status headers-list body-octets)."
                (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
              (declare (ignore body))
              (ok (eql status 404))))
-      (stop-fixture-upstream upstream)))))
+      (stop-fixture-upstream upstream))))
