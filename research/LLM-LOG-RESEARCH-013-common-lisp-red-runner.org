@@ -1,0 +1,67 @@
+#+title: LLM-LOG-RESEARCH-013 — Executable Common Lisp RED runner
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION / RED HARNESS
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- Architecture: https://github.com/lost-rob0t/llm-log/issues/20
+- Transport contract: =research/LLM-LOG-RESEARCH-012-common-lisp-transport-red.org=
+- Active branch: =rage/10-expert-runtime-red=
+
+* Analyze
+The branch already contains =llm-log-expert-test= and =expert/tests/transport-red.lisp=. The transport test intentionally fails because the Common Lisp runtime does not yet define =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, or =PROXY-LISTEN-PORT=.
+
+However, the Nix check graph does not execute that Common Lisp test system. =checks.<system>.expert-service-contract= still invokes Python unittest modules. Therefore =nix flake check= on the current branch cannot establish the required Common Lisp HTTP RED even when SBCL is available.
+
+This is a gate defect, not permission to implement HTTP.
+
+* Research
+ASDF already provides the required test-operation boundary. The repository's =llm-log-expert-test.asd= declares =rove= and defines =asdf:test-op= to invoke Rove. The minimal reproducible runner should therefore load the packaged Common Lisp systems and call =asdf:test-system "llm-log-expert-test"= under SBCL.
+
+The Nix check must supply the same source/system closure used by production packaging plus Rove. It must not use Python as the runner for the Common Lisp transport contract.
+
+Python-based historical expert protocol/service tests remain migration evidence only. They may stay in a separate legacy check while migration is incomplete, but they cannot satisfy or substitute for the Common Lisp transport RED/GREEN gate.
+
+* Design
+Add a dedicated =common-lisp-transport-contract= Nix check.
+
+The check SHALL:
+1. use SBCL with =llm-log-expert=, Tek9, JSOWN, UIOP/ASDF and Rove available;
+2. load =expert/llm-log-expert-test.asd= from repository source;
+3. execute =asdf:test-system "llm-log-expert-test"=;
+4. fail on the current pre-HTTP implementation for the expected missing Common Lisp proxy lifecycle surface;
+5. become GREEN later using the exact same test operation after HTTP implementation;
+6. never invoke Python.
+
+The existing Python-backed =expert-service-contract= must be explicitly described as migration/legacy evidence until replaced by equivalent Common Lisp/Prolog black-box contracts. Final zero-Python acceptance removes that check and all Python runtime dependencies.
+
+* Adversarial review
+** False RED via missing dependencies
+A test that fails because Rove/Tek9 cannot load is not the required behavioral RED.
+
+Decision: the runner must package/load all declared Common Lisp dependencies. The accepted RED is specifically the Rove assertion failure for the absent proxy lifecycle symbols, not ASDF/package-resolution failure.
+
+** Test exists but is outside =nix flake check=
+Decision: a dedicated flake check is mandatory so the reproducible package graph owns the contract.
+
+** Python test accidentally treated as authority
+Decision: name the CL check independently and keep its runner Python-free. Historical Python checks do not authorize production mutation.
+
+** RED check permanently makes the branch's whole flake red
+This is intentional during a RED-first implementation transaction. Once the expected RED is independently observed and recorded, the minimum HTTP implementation may make the same check GREEN. Do not weaken or remove the assertion to obtain green.
+
+* Exact expected RED
+Baseline commit is the exact parent immediately before the runner wiring commit. The expected behavioral failure is Rove reporting that the following required Common Lisp functions are absent:
+- =START-HTTP-PROXY=
+- =STOP-HTTP-PROXY=
+- =PROXY-LISTEN-PORT=
+
+A missing SBCL/Nix/Rove/Tek9 dependency is an environment/harness failure and does not count as RED evidence.
+
+* Execution environment observation
+The current automation container is Debian 13 and has no =sbcl=, =swipl=, =nix=, or =ros=. DNS/network access from the container is unavailable, so dependencies cannot be installed here. This observation is implementation evidence only; it is not behavioral RED.
+
+No GREEN or executed RED claim is made by this document.
+
+* Decision
+GO for RED-runner wiring only. Do not add Common Lisp HTTP production behavior until the dedicated CL test system has been executed on the pre-implementation head and failed for the expected missing lifecycle functions.
