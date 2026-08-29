@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 from aiohttp import web
 
 from .classifier import PrologClassifier
-from .config import ConfigError, RuntimeConfig, default_config_path, load_config
+from .config import RuntimeConfig, default_config_path, load_config
 from .proxy import build_app
 from .recorder import RecorderActor
 
@@ -87,7 +87,7 @@ def resolve_serve_config(
 def main() -> None:
     try:
         config = resolve_serve_config()
-    except (ConfigError, FileNotFoundError, OSError) as exc:
+    except (ValueError, FileNotFoundError, OSError) as exc:
         raise SystemExit(f"llm-log: {exc}") from exc
 
     recorder = RecorderActor(config.data_dir)
