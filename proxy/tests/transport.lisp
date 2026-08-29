@@ -420,10 +420,11 @@ sockets from one test can never affect the next."
             (list :status 200
                   :headers '(("Content-Type" . "application/octet-stream"))
                   :body-mode (list :fixed payload)))
-      (multiple-value-bind (status body)
+      (multiple-value-bind (status headers body)
           (%client-request +fixture-proxy-port+ "PUT" "/fixture/v1/large"
                            :headers '(("Content-Type" . "application/octet-stream"))
                            :body payload)
+        (declare (ignore headers))
         (ok (eql status 200))
         (ok (equalp body payload))))))
 
