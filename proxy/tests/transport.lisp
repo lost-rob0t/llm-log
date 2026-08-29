@@ -140,6 +140,8 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
        (loop
          (let ((client (usocket:socket-accept (fixture-server-listener server)
                                               :element-type '(unsigned-byte 8))))
+           (format t "DIAG-FIXTURE: accepted connection~%")
+           (force-output)
            (bt:make-thread
             (lambda ()
               (%fixture-serve-connection
@@ -172,6 +174,8 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
       (setf (fixture-server-thread server)
             (bt:make-thread (lambda () (%fixture-upstream server))
                             :name "llm-log-fixture-upstream"))
+      (format t "DIAG-FIXTURE: listening on ~A thread live~%" port)
+      (force-output)
       server)))
 
 (defun stop-fixture-upstream (server)
@@ -290,8 +294,14 @@ sockets from one test can never affect the next."
   (let ((upstream (start-fixture-upstream)))
     (unwind-protect
          (with-fixture-proxy (proxy)
-           (%client-request +fixture-proxy-port+ "GET"
-                            "/fixture/v1/models?foo=bar&x=1")
+           (multiple-value-bind (status headers body)
+               (%client-request +fixture-proxy-port+ "GET"
+                                "/fixture/v1/models?foo=bar&x=1")
+             (format t "DIAG: status=~S headers=~S body=~S requests=~S~%"
+                     status headers
+                     (and body (%octets-to-string body))
+                     (fixture-server-requests upstream))
+             (force-output))
            (let ((request (first (fixture-server-requests upstream))))
              (ok (equal (getf request :method) "GET"))
              (ok (equal (getf request :path) "/v1/models"))
