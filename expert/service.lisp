@@ -69,6 +69,8 @@
             (cons "kb_revision" revision)
             (cons "evidence_ids" (list event-id))
             (cons "prolog_session_id" (expert-host-prolog-session-id host)))))
+      (invalid-reasoner-result (condition)
+        (%reply-error "invalid_reasoner_result" (princ-to-string condition)))
       (error (condition)
         (%reply-error "fixture_error" (princ-to-string condition))))))
 
