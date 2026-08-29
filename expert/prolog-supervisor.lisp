@@ -2,6 +2,7 @@
 
 (defparameter +prolog-worker-protocol-version+ 1)
 (defparameter +prolog-worker-operations+ '("health" "event_transport"))
+(defparameter +default-prolog-timeout-seconds+ 5.0)
 
 (defun %json-object (&rest pairs)
   (cons :obj pairs))
@@ -18,6 +19,21 @@
         (asdf:system-relative-pathname
          #:llm-log-expert
          #P"prolog/worker.pl"))))
+
+(defun %prolog-timeout-seconds ()
+  "Return the finite operator-configured reasoner timeout.
+
+Untrusted request data cannot alter this value. Invalid/non-positive overrides
+fall back to the bounded substrate default rather than disabling the deadline."
+  (let ((configured (uiop:getenv "LLM_LOG_PROLOG_TIMEOUT_SECONDS")))
+    (if (and configured (plusp (length configured)))
+        (handler-case
+            (let ((value (read-from-string configured)))
+              (if (and (realp value) (plusp value))
+                  (float value 1.0)
+                  +default-prolog-timeout-seconds+))
+          (error () +default-prolog-timeout-seconds+))
+        +default-prolog-timeout-seconds+)))
 
 (defun %prolog-process-alive-p (host)
   (let ((process (expert-host-prolog-process host)))
@@ -76,12 +92,26 @@
       (error "invalid_reasoner_reply: invalid status")))
   reply)
 
+(defun %read-prolog-reply-line (output)
+  "Read one worker reply with a hard deadline.
+
+The packaged expert runtime is SBCL. Timing out invalidates the entire worker;
+callers must not reuse its streams or retry the in-flight inference."
+  #+sbcl
+  (handler-case
+      (sb-ext:with-timeout (%prolog-timeout-seconds)
+        (read-line output nil nil))
+    (sb-ext:timeout ()
+      (error "reasoner_timeout")))
+  #-sbcl
+  (error "reasoner_timeout_requires_supported_runtime"))
+
 (defun prolog-worker-request (host operation data)
   "Send one declared typed request through HOST's persistent worker.
 
-A crashed worker invalidates the current request and is not retried implicitly.
-The next request may start one fresh worker/session, keeping recovery bounded and
-avoiding duplicate inference side effects."
+A crashed or timed-out worker invalidates the current request and is not retried
+implicitly. The next request may start one fresh worker/session, keeping recovery
+bounded and avoiding duplicate inference side effects."
   (unless (member operation +prolog-worker-operations+ :test #'equal)
     (error "unknown_reasoner_operation: ~A" operation))
   (%ensure-prolog-worker host)
@@ -98,7 +128,7 @@ avoiding duplicate inference side effects."
         (progn
           (write-line (jsown:to-json request) input)
           (force-output input)
-          (let ((line (read-line output nil nil)))
+          (let ((line (%read-prolog-reply-line output)))
             (unless line
               (error "reasoner_crashed"))
             (%validate-prolog-reply (jsown:parse line) request-id operation)))
