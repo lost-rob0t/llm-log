@@ -31,7 +31,7 @@
         in
         {
           default = pkgs.mkShell {
-            packages = [ python pkgs.swiProlog ];
+            packages = [ python pkgs.swi-prolog ];
           };
         });
 

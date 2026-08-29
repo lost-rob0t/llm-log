@@ -1,9 +1,12 @@
 { lib
 , python312Packages
-, swiProlog
+, swi-prolog
 , makeWrapper
 }:
 
+let
+  swiProlog = swi-prolog;
+in
 python312Packages.buildPythonApplication {
   pname = "llm-log";
   version = "0.1.0";
