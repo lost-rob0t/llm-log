@@ -51,6 +51,14 @@
         (expert-host-prolog-session-id host) nil)
   host)
 
+(defun %ensure-prolog-worker (host)
+  "Ensure HOST owns one live worker, restarting only after a prior failure/crash."
+  (unless (%prolog-process-alive-p host)
+    (start-prolog-worker host))
+  (unless (%prolog-process-alive-p host)
+    (error "reasoner_unavailable"))
+  host)
+
 (defun %next-prolog-request-id (host)
   (format nil "~A:~D"
           (expert-host-prolog-session-id host)
@@ -69,11 +77,14 @@
   reply)
 
 (defun prolog-worker-request (host operation data)
-  "Send one declared typed request through HOST's persistent worker."
+  "Send one declared typed request through HOST's persistent worker.
+
+A crashed worker invalidates the current request and is not retried implicitly.
+The next request may start one fresh worker/session, keeping recovery bounded and
+avoiding duplicate inference side effects."
   (unless (member operation +prolog-worker-operations+ :test #'equal)
     (error "unknown_reasoner_operation: ~A" operation))
-  (unless (%prolog-process-alive-p host)
-    (error "reasoner_unavailable"))
+  (%ensure-prolog-worker host)
   (let* ((process (expert-host-prolog-process host))
          (input (uiop:process-info-input process))
          (output (uiop:process-info-output process))
