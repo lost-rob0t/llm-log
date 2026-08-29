@@ -168,6 +168,60 @@ exact branch head through the Nix gate:
   every assertion failed: unbound contract functions / missing signals
 #+end_example
 
+* Transport decision record (slice 2)
+- Woo is the inbound acceptor and HTTP/1.1 request framer; it buffers the
+  whole request body and exposes it as =:raw-body= (vector or vector-input
+  stream) plus the raw =:request-uri=, method keyword and lowercase header
+  hash. The provider prefix is stripped from the raw URI so encodings and
+  query strings survive; the upstream request target is origin-form
+  (path+query) with a rebuilt Host header.
+- Each request spawns one relay thread that owns the upstream connection
+  (usocket TCP, cl+ssl for HTTPS) and the client descriptor. Hop-by-hop
+  headers are dropped per proxy semantics on both sides; the upstream
+  response head is relayed verbatim except the Connection header, so the
+  reason phrase, duplicate response headers and chunked/content-length
+  framing survive unchanged. Response body octets are streamed through a
+  64 KiB relay buffer.
+- Adversarial finding: Woo's output buffers only flush from the event-loop
+  thread (=write-socket-data= from a foreign thread buffers forever), so the
+  relay thread clears =O_NONBLOCK= on the client descriptor, wraps it in a
+  blocking fd-stream, disables Woo's per-connection idle timeout and closes
+  the descriptor exactly once. Follow-up (slice 4+ hardening): replace the
+  thread-per-request model with loop-integrated watchers and an actor-owned
+  connection pool; fast-http is deliberately not used for the outbound
+  response head because hash-based header storage would coalesce duplicates.
+
+* Slice 2 RED/GREEN evidence
+RED (commit dda440d): the Rove transport contract in =proxy/tests/transport.lisp=
+defines 7 tests (21 assertions) with a raw-octet fixture upstream and a
+raw-octet client; =start-proxy= did not exist and the Nix gate failed:
+
+#+begin_example
+  nix build .#checks.x86_64-linux.llm-log-config-contract   # exit 1
+  all 7 transport tests ×; the 58 config assertions stayed green
+#+end_example
+
+GREEN (commits a530a7a..d8cf785): implementation plus fixes for the raw-body
+stream coercion, origin-form request target, and client fixture framing.
+Executed on the exact head:
+
+#+begin_example
+  nix build .#checks.x86_64-linux.llm-log-config-contract   # exit 0
+  79 assertions green; contract covers method/path/query preservation,
+  binary body round-trips (64 KiB and 8 MiB), status + Content-Type
+  preservation, duplicate Set-Cookie headers, incremental chunked
+  streaming (>=0.3s gap observed between chunks) and 404 for unknown
+  providers.
+#+end_example
+
+Packaged executable smoke test (=llm-log-cl=, commit 45d3e5b/dd96702):
+
+#+begin_example
+  ./result/bin/llm-log serve --data-dir /tmp/... --port 18799
+  -> "listening on 127.0.0.1:18799"
+  GET /nosuch/x -> HTTP/1.1 404 Not Found
+#+end_example
+
 * GREEN evidence
 Commits 6cd7713 (implementation), 5d528be, 78a1f3c, f033550 (binding-order,
 argument-consumption, nil-layer guard fixes), f1b5a84 + d624cad (runner exit
