@@ -12,7 +12,12 @@
           (random most-positive-fixnum)))
 
 (defun %prolog-worker-path ()
-  (asdf:system-relative-pathname #:llm-log-expert #P"prolog/worker.pl"))
+  (let ((configured (uiop:getenv "LLM_LOG_PROLOG_WORKER")))
+    (if (and configured (plusp (length configured)))
+        (pathname configured)
+        (asdf:system-relative-pathname
+         #:llm-log-expert
+         #P"prolog/worker.pl"))))
 
 (defun %prolog-process-alive-p (host)
   (let ((process (expert-host-prolog-process host)))
