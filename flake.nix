@@ -52,7 +52,7 @@
             version = "0.1.0";
             src = ./proxy;
             systems = [ "llm-log-tests" ];
-            lispLibs = [ llmLogClLib cl.rove ];
+            lispLibs = [ llmLogClLib cl.rove cl.bordeaux-threads cl.usocket ];
           };
           sbclWithClTests = pkgs.sbcl.withPackages (_: [ llmLogClTests ]);
         in
