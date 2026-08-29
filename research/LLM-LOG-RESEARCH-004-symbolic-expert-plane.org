@@ -197,3 +197,18 @@ Mitigation: host invokes only declared expert predicates with typed facts/result
 
 * Decision
 GO for RED-first implementation of #10 only. The four domain experts remain dependent on the shared substrate. Beagle begins in shadow mode; apply mode is deliberately not part of the first Beagle implementation slice.
+
+* 2026-08-29 packaging boundary update
+The first Common Lisp host skeleton now exists on the active #10 branch and intentionally opens exactly one Tek9 environment for the host lifetime. The Python-side envelope implementation also exists, but the black-box CL/Tek9/SWI-Prolog service contract remains RED until a runnable Nix/SBCL environment executes it.
+
+A concrete reproducibility blocker was confirmed in Tek9 itself: the Tek9 flake exposed only an x86_64 development shell, so llm-log could not consume Tek9 as a package without assuming a developer-local Quicklisp/source checkout. That violates the expert-plane packaging contract.
+
+Upstream resolution transaction:
+- Tek9 issue: https://github.com/lost-rob0t/tek9/issues/7
+- Tek9 draft PR: https://github.com/lost-rob0t/tek9/pull/8
+- RED contract commit: =dd596fc= requires =.#tek9= / =.#default= and downstream =asdf:load-system :tek9= outside the source checkout.
+- implementation commit: =c4f8489= exposes Tek9 with current nixpkgs =pkgs.sbcl.buildASDFSystem= for x86_64-linux and aarch64-linux, declaring Lisp dependencies and LMDB as the native dependency.
+
+The Tek9 PR is not treated as GREEN until its exact head runs the Nix smoke and normal Tek9 correctness gate. llm-log #10 should not pin/consume that branch as a permanent dependency until the package contract is verified; temporary branch pinning is acceptable only for integration testing with explicit provenance.
+
+The selected boundary remains unchanged: packaging is an upstream Tek9 concern; storage semantics stay untouched. No Tek9 graph/document primitive change has been justified by the expert plane yet.
