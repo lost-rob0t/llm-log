@@ -348,7 +348,7 @@ response to EOF; return (VALUES status headers-list body-octets)."
                                         0.5
                                         (%ascii-octets
                                          (format nil "data: second~C~C"
-                                                 #\Return #\Linefeed))))
+                                                 #\Return #\Linefeed)))))
            (let ((socket (usocket:socket-connect "127.0.0.1" +fixture-proxy-port+
                                                  :element-type '(unsigned-byte 8)
                                                  :timeout 30)))
