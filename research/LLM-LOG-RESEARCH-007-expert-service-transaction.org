@@ -1,0 +1,138 @@
+#+title: LLM-LOG-RESEARCH-007 — Expert Service Transaction
+#+startup: overview
+
+* Status
+- Lifecycle: DESIGN -> RAGE-IN-PROGRESS
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Substrate issue: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Active branch: =rage/10-expert-runtime-red=
+
+* Remote-state audit
+The bounded cycle recovered the existing #10 transaction rather than creating a new branch.
+
+At the start of this cycle:
+- =llm-log= default branch was =main=;
+- PR #18 was open, draft, and mergeable at =1a663f77a8d8ad467d9a5b73b50c2a949fb39a97=;
+- PR #18 had no submitted reviews and no review threads;
+- GitHub exposed no commit-status checks for that exact head;
+- PR #5 remained the independent configuration transaction and was not modified;
+- =dotfiles= default branch was =master= and had no open LLM-proxy integration PR;
+- consumer configuration continued to set =services.llm-log.dataDir= to the user's explicit corpus directory while reusable llm-log state remained =~/.llm-proxy=;
+- Tek9 default branch was =master= and its reusable Nix package support was already merged.
+
+No applicable repository =AGENTS.md= was found in the llm-log root. Repository-local source, issues, tests and canonical Org design remain the controlling project evidence.
+
+* Baseline RED evidence
+The immutable llm-log baseline for PR #18 is:
+
+=3e957799d842f058a8ce53b8f675773fc2cde5ef=
+
+A remote source lookup for =expert/host.lisp= at that exact revision returns not-found. This independently verifies that the untouched baseline has no Common Lisp expert-service substrate.
+
+This is source-level RED evidence only. The current execution environment does not provide SBCL, SWI-Prolog or Nix and cannot execute the black-box contract. No executed GREEN or RED command is claimed here.
+
+* RED-first hardening in this cycle
+Before adding the new service implementation, the black-box contract was strengthened at:
+
+=37d2f8d1e3ab1330e143a9ab479cf44717822335=
+
+New required behavior:
+1. contradictory replay of the same stable event ID returns =event_conflict=;
+2. contradictory replay cannot overwrite the first durable projection;
+3. KB revision does not advance for the rejected conflict;
+4. service restart creates a new Prolog session identity;
+5. durable KB revision survives restart;
+6. replay after restart remains =existing= rather than creating a duplicate.
+
+These tests extend the existing service RED instead of creating a second test authority.
+
+* Tek9 transaction decision
+No new Tek9 primitive is required for this slice.
+
+Tek9's existing public =with-write-transaction= composes nested =fetch*= and =put*= calls on the same database into one LMDB write transaction. Therefore event projection and KB-revision mutation can be atomic without modifying Tek9.
+
+The substrate uses stable keys:
+- =event:<event-id>= for projected events;
+- =meta:kb-revision= for the durable revision counter.
+
+Replay semantics:
+- missing event -> create projection and increment revision once;
+- equivalent event -> return =existing= and leave revision unchanged;
+- contradictory event -> =event_conflict= and abort without overwriting evidence.
+
+The event projection deliberately stores only bounded metadata and raw-corpus references/hashes. Prompt and response bodies remain in append-only capture evidence.
+
+* Common Lisp supervisor decision
+One =expert-host= owns exactly one SWI-Prolog child process at a time.
+
+Implementation commits in this transaction include:
+- =580f80b3= initial Common Lisp Prolog supervisor;
+- =63f0cfae= explicit packaged worker-path override;
+- =730c7874= host lifecycle owns Tek9 plus the persistent worker.
+
+The CL -> Prolog protocol remains JSON-lines over private stdio and has a closed operation set:
+- =health=
+- =event_transport=
+
+There is no generic goal operation. Model/user-controlled values are serialized as JSON data and never converted into callable Prolog terms.
+
+Each worker request carries a generated correlation ID. Common Lisp validates correlation ID, operation and status before accepting a reply. A broken/malformed worker exchange invalidates the current worker rather than manufacturing a successful inference.
+
+* Bounded storage and fixture implementation
+Implementation commits:
+- =94acaead= idempotent Tek9 event projection and durable KB revision;
+- =ddafa9fa= closed public expert-service dispatcher;
+- =862e5496= exported typed substrate boundary;
+- =46c4f067= ASDF load order and packaged worker resource;
+- =ff3f8c8c= script entrypoint.
+
+The first derivation remains fixture-only:
+
+#+begin_example
+query_classification(fixture=event_transport, event_id)
+  -> CL point-fetches exactly event:<id> from Tek9
+  -> CL sends only normalized transport data to declared Prolog operation event_transport
+  -> Prolog returns fixture.event_transport/v1
+  -> CL returns value + rule_version + kb_revision + evidence_ids + prolog_session_id
+#+end_example
+
+This does not become the #12 classifier and does not grant authority.
+
+* Packaging decision
+The existing flake is retained.
+
+Commit =4701758d= adds:
+- =packages.<system>.llm-log-expert= executable;
+- SBCL closure containing =llm-log-expert= + Tek9;
+- SWI-Prolog runtime dependency;
+- immutable packaged =worker.pl= path through =LLM_LOG_PROLOG_WORKER=;
+- =checks.<system>.expert-service-contract= that executes the authoritative Python black-box service contract against the packaged executable.
+
+Mutable state remains outside the Nix store. The service default is =~/.llm-proxy/expert/= and =--data-dir= overrides it. Consumer dotfiles may set a different root without changing reusable defaults.
+
+* Adversarial review
+** Duplicate/racing evidence
+Projection + revision mutation uses one Tek9 write transaction. Equivalent replay is non-mutating; contradictory replay fails closed.
+
+** Process-local state masquerading as truth
+Rejected. The Prolog session ID is ephemeral. Event projections and KB revision are durable Tek9 state and survive worker/service restart.
+
+** Arbitrary Prolog execution
+Rejected twice: public service operations are closed, and private worker operations are closed. No =call_prolog= / arbitrary goal path exists.
+
+** Whole-corpus materialization
+Rejected. =event_transport= does one exact Tek9 point lookup and supplies one normalized value to Prolog.
+
+** Nix source-tree dependency
+Rejected. Packaging supplies an explicit immutable worker path. Mutable state is never written into the Nix store.
+
+** False success claims
+No local SBCL/SWI/Nix execution is available in this cycle. The new flake check defines the executable gate but is not claimed GREEN until actually run on the exact head.
+
+* Decision
+GO for the current #10 substrate implementation to the executable validation gate only.
+
+Do not start #12, #13, #15 or #17 until =expert-service-contract= is executed GREEN on the exact PR #18 head and the existing proxy/capture regression gates remain green.
+
+If the executable gate exposes compile/runtime failures, repair #10 in place. Crash/timeout recovery beyond the current minimum must receive its own RED-first tests before implementation.
