@@ -223,6 +223,12 @@ response to EOF; return (VALUES status headers-list body-octets)."
               (%ascii-octets
                (format nil "~A: ~A~C~C" (car entry) (cdr entry) #\Return #\Linefeed))
               stream))
+           (when body
+             (write-sequence
+              (%ascii-octets
+               (format nil "Content-Length: ~A~C~C" (length body)
+                       #\Return #\Linefeed))
+              stream))
            (write-sequence (%ascii-octets
                             (format nil "~C~C" #\Return #\Linefeed))
                            stream)
