@@ -120,7 +120,7 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
     (force-output stream)))
 
 (defstruct fixture-server
-  listener thread lock (requests nil) response-spec)
+  listener thread lock (stop nil) (requests nil) response-spec)
 
 (defun %fixture-serve-connection (server stream)
   ;; A misbehaving peer must not take down the test process.
@@ -137,14 +137,20 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
 
 (defun %fixture-upstream (server)
   (unwind-protect
-       (loop
-         (let ((client (usocket:socket-accept (fixture-server-listener server)
-                                              :element-type '(unsigned-byte 8))))
-           (bt:make-thread
-            (lambda ()
-              (%fixture-serve-connection
-               server (usocket:socket-stream client)))
-            :name "llm-log-fixture-connection")))
+       (loop until (fixture-server-stop server)
+             do (let ((client (handler-case
+                                  (usocket:socket-accept
+                                   (fixture-server-listener server)
+                                   :element-type '(unsigned-byte 8)
+                                   :wait nil)
+                                (error () nil))))
+                  (if client
+                      (bt:make-thread
+                       (lambda ()
+                         (%fixture-serve-connection
+                          server (usocket:socket-stream client)))
+                       :name "llm-log-fixture-connection")
+                      (sleep 0.05))))
     (ignore-errors (usocket:socket-close (fixture-server-listener server)))))
 
 (defun start-fixture-upstream (&key (port +fixture-upstream-port+))
@@ -175,8 +181,8 @@ the byte sequence CRLF CRLF has been seen, return the raw octets."
       server)))
 
 (defun stop-fixture-upstream (server)
-  (when (fixture-server-thread server)
-    (ignore-errors (bt:destroy-thread (fixture-server-thread server))))
+  (setf (fixture-server-stop server) t)
+  (sleep 0.1)
   (ignore-errors (usocket:socket-close (fixture-server-listener server)))
   server)
 
