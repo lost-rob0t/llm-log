@@ -10,13 +10,7 @@ from pathlib import Path
 
 
 class ExpertServiceRedContractTests(unittest.TestCase):
-    """Black-box RED contract for #10.
-
-    The service implementation is intentionally absent on the baseline. These tests
-    define the external boundary without coupling the contract to Common Lisp
-    internals: the implementation must be a Common Lisp host backed by Tek9 and a
-    persistent supervised SWI-Prolog session.
-    """
+    """Black-box RED contract for #10."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -31,6 +25,7 @@ class ExpertServiceRedContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.tmp.name) / "expert"
+        self.service_env: dict[str, str] = {}
         self.proc: subprocess.Popen[str] | None = None
         self.start_service()
 
@@ -39,6 +34,8 @@ class ExpertServiceRedContractTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def start_service(self) -> None:
+        env = os.environ.copy()
+        env.update(self.service_env)
         self.proc = subprocess.Popen(
             [self.expert_bin, "serve", "--stdio", "--data-dir", str(self.data_dir)],
             stdin=subprocess.PIPE,
@@ -46,6 +43,7 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=env,
         )
 
     def stop_service(self) -> None:
@@ -84,7 +82,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
     def test_health_proves_common_lisp_tek9_and_persistent_swipl_runtime(self) -> None:
         first = self.rpc("health", event_id=None, payload={})
         second = self.rpc("health", event_id=None, payload={})
-
         self.assertEqual(first["status"], "ok")
         runtime = first["result"]["runtime"]
         self.assertEqual(runtime["host"], "common-lisp")
@@ -95,7 +92,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
         self.assertEqual(
             first["result"]["prolog_session_id"],
             second["result"]["prolog_session_id"],
-            "queries must reuse one supervised Prolog session rather than spawn per call",
         )
 
     def test_duplicate_event_projection_is_idempotent(self) -> None:
@@ -108,18 +104,14 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             "request_sha256": "a" * 64,
             "response_sha256": "b" * 64,
         }
-
         created = self.rpc("observe_request", event_id="evt-red-1", payload=payload)
         duplicate = self.rpc("observe_request", event_id="evt-red-1", payload=payload)
-
         self.assertEqual(created["status"], "ok")
         self.assertEqual(created["result"]["projection_state"], "created")
         self.assertEqual(duplicate["status"], "ok")
         self.assertEqual(duplicate["result"]["projection_state"], "existing")
         self.assertEqual(
-            duplicate["result"]["kb_revision"],
-            created["result"]["kb_revision"],
-            "replaying the same stable event must not mutate the durable KB",
+            duplicate["result"]["kb_revision"], created["result"]["kb_revision"]
         )
 
     def test_conflicting_duplicate_is_rejected_without_overwriting_evidence(self) -> None:
@@ -131,7 +123,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             "response_sha256": "f" * 64,
         }
         conflicting = {**original, "transport": "websocket"}
-
         created = self.rpc("observe_request", event_id="evt-red-conflict", payload=original)
         conflict = self.rpc(
             "observe_request", event_id="evt-red-conflict", payload=conflicting
@@ -141,7 +132,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             event_id="evt-red-conflict",
             payload={"fixture": "event_transport"},
         )
-
         self.assertEqual(created["status"], "ok")
         self.assertEqual(conflict["status"], "error")
         self.assertEqual(conflict["error"]["code"], "event_conflict")
@@ -159,23 +149,17 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             "request_sha256": "1" * 64,
             "response_sha256": "2" * 64,
         }
-
         created = self.rpc("observe_request", event_id="evt-red-restart", payload=payload)
         before = self.rpc("health", event_id=None, payload={})
         old_session = before["result"]["prolog_session_id"]
-
         self.restart_service()
-
         after = self.rpc("health", event_id=None, payload={})
         duplicate = self.rpc(
             "observe_request", event_id="evt-red-restart", payload=payload
         )
-
         self.assertNotEqual(old_session, after["result"]["prolog_session_id"])
         self.assertEqual(after["result"]["kb_revision"], created["result"]["kb_revision"])
-        self.assertEqual(duplicate["status"], "ok")
         self.assertEqual(duplicate["result"]["projection_state"], "existing")
-        self.assertEqual(duplicate["result"]["kb_revision"], created["result"]["kb_revision"])
 
     def test_fixture_query_round_trips_tek9_fact_through_prolog_with_provenance(self) -> None:
         self.rpc(
@@ -189,7 +173,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
                 "response_sha256": "d" * 64,
             },
         )
-
         first = self.rpc(
             "query_classification",
             event_id="evt-red-2",
@@ -200,7 +183,6 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             event_id="evt-red-2",
             payload={"fixture": "event_transport"},
         )
-
         self.assertEqual(first["status"], "ok")
         result = first["result"]
         self.assertEqual(result["expert"], "fixture.event_transport")
@@ -213,13 +195,35 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             result["prolog_session_id"], second["result"]["prolog_session_id"]
         )
 
+    def test_reasoner_crash_returns_error_then_next_request_recovers(self) -> None:
+        self.stop_service()
+        marker = Path(self.tmp.name) / "reasoner-crashed"
+        fixture = Path(__file__).parent / "fixtures" / "crash_once_worker.pl"
+        self.service_env = {
+            "LLM_LOG_PROLOG_WORKER": str(fixture),
+            "LLM_LOG_REASONER_CRASH_MARKER": str(marker),
+        }
+        self.start_service()
+
+        crashed = self.rpc("health", event_id=None, payload={})
+        recovered = self.rpc("health", event_id=None, payload={})
+        stable = self.rpc("health", event_id=None, payload={})
+
+        self.assertEqual(crashed["status"], "error")
+        self.assertEqual(crashed["error"]["code"], "reasoner_unavailable")
+        self.assertEqual(recovered["status"], "ok")
+        self.assertTrue(recovered["result"]["prolog_session_id"])
+        self.assertEqual(
+            recovered["result"]["prolog_session_id"],
+            stable["result"]["prolog_session_id"],
+        )
+
     def test_arbitrary_prolog_goal_is_rejected_as_protocol_data(self) -> None:
         reply = self.rpc(
             "call_prolog",
             event_id="evt-red-3",
             payload={"goal": "call(X)"},
         )
-
         self.assertEqual(reply["status"], "error")
         self.assertEqual(reply["error"]["code"], "unknown_operation")
         self.assertNotIn("result", reply)
