@@ -25,13 +25,15 @@ Initial operations are named and closed: health, observations, and declared expe
 
 * Mutable state
 
-Runtime state belongs below the configured llm-log data root, conventionally:
+The reusable llm-log default mutable state root is:
 
 #+begin_example
-$XDG_DATA_HOME/llm-log/expert/
+~/.llm-proxy/
 #+end_example
 
-or below the Home Manager configured =services.llm-log.dataDir=. No mutable database state belongs in the Nix store.
+Expert runtime state therefore defaults below =~/.llm-proxy/expert/=.
+
+This is a default, not a hardcoded machine path. Standalone configuration/CLI and Home Manager =services.llm-log.dataDir= may override the root. Consumer configuration such as dotfiles may point it at a personal corpus directory without changing the reusable llm-log default. No mutable database state belongs in the Nix store.
 
 * Packaging dependency
 
