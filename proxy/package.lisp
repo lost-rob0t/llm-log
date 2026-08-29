@@ -21,5 +21,11 @@
    #:load-config-file
    #:resolve-config
    #:parse-serve-arguments
-   ;; CLI entry point (transport wiring follows in slice 2)
+   ;; transport surface (zero-Python rewrite slice 2)
+   #:start-proxy
+   #:stop-proxy
+   #:proxy-server
+   #:proxy-server-thread
+   #:proxy-server-config
+   ;; CLI entry point
    #:main))
