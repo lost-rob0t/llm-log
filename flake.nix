@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     tek9 = {
-      url = "github:lost-rob0t/tek9/5931490eee6f160edf37830fbe96e7142fe68533";
+      url = "github:lost-rob0t/tek9/a9f5b595f5d965163d2b7c518c72a2efd9be13fe";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
