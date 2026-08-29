@@ -241,7 +241,7 @@ response to EOF; return (VALUES status headers-list body-octets)."
 (defmacro with-fixture-proxy ((proxy-var) &body body)
   `(let ((,proxy-var nil))
      (unwind-protect
-          (progn
+          (locally
             (setf ,proxy-var
                   (start-proxy
                    (resolve-config
