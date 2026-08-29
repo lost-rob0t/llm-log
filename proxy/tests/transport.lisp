@@ -266,15 +266,17 @@ sockets from one test can never affect the next."
   (let ((n (incf +fixture-port-counter+)))
     (values (+ 18770 (* n 2)) (+ 18771 (* n 2)))))
 
-(defmacro with-fixture-proxy ((proxy-var) &body body)
+(defmacro with-fixture-proxy ((proxy-var upstream-var) &body body)
   (let ((upstream-port (gensym "UPSTREAM-PORT"))
         (proxy-port (gensym "PROXY-PORT")))
     `(multiple-value-bind (,upstream-port ,proxy-port) (%next-fixture-ports)
        (let ((+fixture-upstream-port+ ,upstream-port)
              (+fixture-proxy-port+ ,proxy-port)
-             (,proxy-var nil))
+             (,proxy-var nil)
+             (,upstream-var nil))
          (unwind-protect
               (locally
+                (setf ,upstream-var (start-fixture-upstream))
                 (setf ,proxy-var
                       (start-proxy
                        (resolve-config
@@ -288,161 +290,141 @@ sockets from one test can never affect the next."
                   (error "llm-log proxy did not start"))
                 ,@body)
            (when ,proxy-var
-             (stop-proxy ,proxy-var)))))))
+             (stop-proxy ,proxy-var))
+           (when ,upstream-var
+             (stop-fixture-upstream ,upstream-var)))))))
 
 (deftest http-method-path-and-query-are-preserved
-  (let ((upstream (start-fixture-upstream)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (multiple-value-bind (status headers body)
-               (%client-request +fixture-proxy-port+ "GET"
-                                "/fixture/v1/models?foo=bar&x=1")
-             (format t "DIAG: status=~S headers=~S body=~S requests=~S~%"
-                     status headers
-                     (and body (%octets-to-string body))
-                     (fixture-server-requests upstream))
-             (force-output))
-           (let ((request (first (fixture-server-requests upstream))))
-             (ok (equal (getf request :method) "GET"))
-             (ok (equal (getf request :path) "/v1/models"))
-             (ok (equal (getf request :query) "foo=bar&x=1"))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (multiple-value-bind (status headers body)
+        (%client-request +fixture-proxy-port+ "GET"
+                         "/fixture/v1/models?foo=bar&x=1")
+      (declare (ignore headers body))
+      (ok (eql status 200))
+      (let ((request (first (fixture-server-requests upstream))))
+        (ok (equal (getf request :method) "GET"))
+        (ok (equal (getf request :path) "/v1/models"))
+        (ok (equal (getf request :query) "foo=bar&x=1"))))))
 
 (deftest http-request-and-response-bodies-round-trip-binary-identically
-  (let* ((upstream (start-fixture-upstream))
-         (payload (random-binary 65536)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (setf (fixture-server-response-spec upstream)
-                 (list :status 200
-                       :headers '(("Content-Type" . "application/octet-stream"))
-                       :body-mode (list :fixed payload)))
-           (multiple-value-bind (status headers body)
-               (%client-request +fixture-proxy-port+ "POST"
-                                "/fixture/v1/embeddings"
-                                :headers '(("Content-Type" . "application/octet-stream"))
-                                :body payload)
-             (ok (eql status 200))
-             (ok (equalp body payload))
-             (let ((request (first (fixture-server-requests upstream))))
-               (ok (equalp (getf request :body) payload))
-               (ok (equal (%head-header
-                           (mapcar (lambda (entry) (format nil "~A: ~A" (car entry) (cdr entry)))
-                                   (getf request :headers))
-                           "Content-Type")
-                          "application/octet-stream")))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (let ((payload (random-binary 65536)))
+      (setf (fixture-server-response-spec upstream)
+            (list :status 200
+                  :headers '(("Content-Type" . "application/octet-stream"))
+                  :body-mode (list :fixed payload)))
+      (multiple-value-bind (status headers body)
+          (%client-request +fixture-proxy-port+ "POST"
+                           "/fixture/v1/embeddings"
+                           :headers '(("Content-Type" . "application/octet-stream"))
+                           :body payload)
+        (declare (ignore headers))
+        (ok (eql status 200))
+        (ok (equalp body payload))
+        (let ((request (first (fixture-server-requests upstream))))
+          (ok (equalp (getf request :body) payload))
+          (ok (equal (%head-header
+                      (mapcar (lambda (entry) (format nil "~A: ~A" (car entry) (cdr entry)))
+                              (getf request :headers))
+                      "Content-Type")
+                     "application/octet-stream")))))))
 
 (deftest http-status-is-preserved
-  (let ((upstream (start-fixture-upstream)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (setf (fixture-server-response-spec upstream)
-                 (list :status 418
-                       :reason "I'm a teapot"
-                       :headers '(("Content-Type" . "text/plain"))
-                       :body-mode (list :fixed (%ascii-octets "short and stout"))))
-           (multiple-value-bind (status headers body)
-               (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/pot")
-             (ok (eql status 418))
-             (ok (equalp body (%ascii-octets "short and stout")))
-             (ok (%head-header
-                  (mapcar (lambda (entry) (format nil "~A: ~A" (car entry) (cdr entry)))
-                          headers)
-                  "Content-Type"))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (setf (fixture-server-response-spec upstream)
+          (list :status 418
+                :reason "I'm a teapot"
+                :headers '(("Content-Type" . "text/plain"))
+                :body-mode (list :fixed (%ascii-octets "short and stout"))))
+    (multiple-value-bind (status headers body)
+        (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/pot")
+      (ok (eql status 418))
+      (ok (equalp body (%ascii-octets "short and stout")))
+      (ok (%head-header
+           (mapcar (lambda (entry) (format nil "~A: ~A" (car entry) (cdr entry)))
+                   headers)
+           "Content-Type")))))
 
 (deftest duplicate-response-headers-are-preserved
-  (let ((upstream (start-fixture-upstream)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (setf (fixture-server-response-spec upstream)
-                 (list :status 200
-                       :headers '(("Set-Cookie" . "first=1; Path=/")
-                                  ("Set-Cookie" . "second=2; Path=/")
-                                  ("Content-Type" . "text/plain"))
-                       :body-mode (list :fixed (%ascii-octets "ok"))))
-           (multiple-value-bind (status headers body)
-               (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/login")
-             (declare (ignore status body))
-             (let ((cookies (loop for entry in headers
-                                  when (string-equal (car entry) "Set-Cookie")
-                                    collect (cdr entry))))
-               (ok (= (length cookies) 2))
-               (ok (member "first=1; Path=/" cookies :test #'equal))
-               (ok (member "second=2; Path=/" cookies :test #'equal)))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (setf (fixture-server-response-spec upstream)
+          (list :status 200
+                :headers '(("Set-Cookie" . "first=1; Path=/")
+                           ("Set-Cookie" . "second=2; Path=/")
+                           ("Content-Type" . "text/plain"))
+                :body-mode (list :fixed (%ascii-octets "ok"))))
+    (multiple-value-bind (status headers body)
+        (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/login")
+      (declare (ignore status body))
+      (let ((cookies (loop for entry in headers
+                           when (string-equal (car entry) "Set-Cookie")
+                             collect (cdr entry))))
+        (ok (= (length cookies) 2))
+        (ok (member "first=1; Path=/" cookies :test #'equal))
+        (ok (member "second=2; Path=/" cookies :test #'equal))))))
 
 (deftest chunked-responses-stream-incrementally
-  (let ((upstream (start-fixture-upstream)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (setf (fixture-server-response-spec upstream)
-                 (list :status 200
-                       :headers '(("Content-Type" . "text/event-stream"))
-                       :body-mode (list :chunked
-                                        (%ascii-octets
-                                         (format nil "data: first~C~C"
-                                                 #\Return #\Linefeed))
-                                        0.5
-                                        (%ascii-octets
-                                         (format nil "data: second~C~C"
-                                                 #\Return #\Linefeed)))))
-           (let ((socket (usocket:socket-connect "127.0.0.1" +fixture-proxy-port+
-                                                 :element-type '(unsigned-byte 8)
-                                                 :timeout 30)))
-             (unwind-protect
-                  (let ((stream (usocket:socket-stream socket)))
-                    (write-sequence
-                     (%ascii-octets
-                      (format nil "GET /fixture/v1/stream HTTP/1.1~C~CHost: t~C~CConnection: close~C~C~C~C"
-                              #\Return #\Linefeed #\Return #\Linefeed #\Return #\Linefeed
-                              #\Return #\Linefeed))
-                     stream)
-                    (force-output stream)
-                    (let ((buffer (make-array 65536 :element-type '(unsigned-byte 8)))
-                          (first-read-at nil)
-                          (done nil)
-                          (total 0))
-                      (loop until done
-                            do (let ((n (read-sequence buffer stream)))
-                                 (when (plusp n)
-                                   (unless first-read-at
-                                     (setf first-read-at (get-internal-real-time)))
-                                   (incf total n))
-                                 (when (< n (length buffer))
-                                   (setf done t))))
-                      (let ((gap (/ (- (get-internal-real-time) first-read-at)
-                                    internal-time-units-per-second)))
-                        (ok (>= total 20))
-                        (ok (>= gap 0.3))
-                        (ok (<= gap 5.0)))))
-               (ignore-errors (usocket:socket-close socket)))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (setf (fixture-server-response-spec upstream)
+          (list :status 200
+                :headers '(("Content-Type" . "text/event-stream"))
+                :body-mode (list :chunked
+                                 (%ascii-octets
+                                  (format nil "data: first~C~C"
+                                          #\Return #\Linefeed))
+                                 0.5
+                                 (%ascii-octets
+                                  (format nil "data: second~C~C"
+                                          #\Return #\Linefeed)))))
+    (let ((socket (usocket:socket-connect "127.0.0.1" +fixture-proxy-port+
+                                          :element-type '(unsigned-byte 8)
+                                          :timeout 30)))
+      (unwind-protect
+           (let ((stream (usocket:socket-stream socket)))
+             (write-sequence
+              (%ascii-octets
+               (format nil "GET /fixture/v1/stream HTTP/1.1~C~CHost: t~C~CConnection: close~C~C~C~C"
+                       #\Return #\Linefeed #\Return #\Linefeed #\Return #\Linefeed
+                       #\Return #\Linefeed))
+              stream)
+             (force-output stream)
+             (let ((buffer (make-array 65536 :element-type '(unsigned-byte 8)))
+                   (first-read-at nil)
+                   (done nil)
+                   (total 0))
+               (loop until done
+                     do (let ((n (read-sequence buffer stream)))
+                          (when (plusp n)
+                            (unless first-read-at
+                              (setf first-read-at (get-internal-real-time)))
+                            (incf total n))
+                          (when (< n (length buffer))
+                            (setf done t))))
+               (let ((gap (/ (- (get-internal-real-time) first-read-at)
+                             internal-time-units-per-second)))
+                 (ok (>= total 20))
+                 (ok (>= gap 0.3))
+                 (ok (<= gap 5.0)))))
+        (ignore-errors (usocket:socket-close socket))))))
 
 (deftest large-bodies-stream-without-full-buffering-deadlock
-  (let* ((upstream (start-fixture-upstream))
-         (payload (random-binary (* 8 1024 1024))))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (setf (fixture-server-response-spec upstream)
-                 (list :status 200
-                       :headers '(("Content-Type" . "application/octet-stream"))
-                       :body-mode (list :fixed payload)))
-           (multiple-value-bind (status body)
-               (%client-request +fixture-proxy-port+ "PUT" "/fixture/v1/large"
-                                :headers '(("Content-Type" . "application/octet-stream"))
-                                :body payload)
-             (ok (eql status 200))
-             (ok (equalp body payload))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (let ((payload (random-binary (* 8 1024 1024))))
+      (setf (fixture-server-response-spec upstream)
+            (list :status 200
+                  :headers '(("Content-Type" . "application/octet-stream"))
+                  :body-mode (list :fixed payload)))
+      (multiple-value-bind (status body)
+          (%client-request +fixture-proxy-port+ "PUT" "/fixture/v1/large"
+                           :headers '(("Content-Type" . "application/octet-stream"))
+                           :body payload)
+        (ok (eql status 200))
+        (ok (equalp body payload))))))
 
 (deftest unknown-provider-is-rejected
-  (let ((upstream (start-fixture-upstream)))
-    (unwind-protect
-         (with-fixture-proxy (proxy)
-           (multiple-value-bind (status body)
-               (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
-             (declare (ignore body))
-             (ok (eql status 404))))
-      (stop-fixture-upstream upstream))))
+  (with-fixture-proxy (proxy upstream)
+    (declare (ignore upstream))
+    (multiple-value-bind (status body)
+        (%client-request +fixture-proxy-port+ "GET" "/nosuch/v1/models")
+      (declare (ignore body))
+      (ok (eql status 404)))))
