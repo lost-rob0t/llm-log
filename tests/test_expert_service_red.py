@@ -31,6 +31,14 @@ class ExpertServiceRedContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.tmp.name) / "expert"
+        self.proc: subprocess.Popen[str] | None = None
+        self.start_service()
+
+    def tearDown(self) -> None:
+        self.stop_service()
+        self.tmp.cleanup()
+
+    def start_service(self) -> None:
         self.proc = subprocess.Popen(
             [self.expert_bin, "serve", "--stdio", "--data-dir", str(self.data_dir)],
             stdin=subprocess.PIPE,
@@ -40,17 +48,23 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             bufsize=1,
         )
 
-    def tearDown(self) -> None:
-        if hasattr(self, "proc"):
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=3)
-        self.tmp.cleanup()
+    def stop_service(self) -> None:
+        if self.proc is None:
+            return
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait(timeout=3)
+        self.proc = None
+
+    def restart_service(self) -> None:
+        self.stop_service()
+        self.start_service()
 
     def rpc(self, operation: str, *, event_id: str | None, payload: dict) -> dict:
+        assert self.proc is not None
         assert self.proc.stdin is not None
         assert self.proc.stdout is not None
         message = {
@@ -107,6 +121,61 @@ class ExpertServiceRedContractTests(unittest.TestCase):
             created["result"]["kb_revision"],
             "replaying the same stable event must not mutate the durable KB",
         )
+
+    def test_conflicting_duplicate_is_rejected_without_overwriting_evidence(self) -> None:
+        original = {
+            "provider": "openrouter",
+            "model": "example/model",
+            "transport": "http",
+            "request_sha256": "e" * 64,
+            "response_sha256": "f" * 64,
+        }
+        conflicting = {**original, "transport": "websocket"}
+
+        created = self.rpc("observe_request", event_id="evt-red-conflict", payload=original)
+        conflict = self.rpc(
+            "observe_request", event_id="evt-red-conflict", payload=conflicting
+        )
+        derived = self.rpc(
+            "query_classification",
+            event_id="evt-red-conflict",
+            payload={"fixture": "event_transport"},
+        )
+
+        self.assertEqual(created["status"], "ok")
+        self.assertEqual(conflict["status"], "error")
+        self.assertEqual(conflict["error"]["code"], "event_conflict")
+        self.assertEqual(derived["status"], "ok")
+        self.assertEqual(derived["result"]["value"], "http")
+        self.assertEqual(
+            derived["result"]["kb_revision"], created["result"]["kb_revision"]
+        )
+
+    def test_kb_revision_and_duplicate_state_survive_service_restart(self) -> None:
+        payload = {
+            "provider": "openrouter",
+            "model": "example/model",
+            "transport": "sse",
+            "request_sha256": "1" * 64,
+            "response_sha256": "2" * 64,
+        }
+
+        created = self.rpc("observe_request", event_id="evt-red-restart", payload=payload)
+        before = self.rpc("health", event_id=None, payload={})
+        old_session = before["result"]["prolog_session_id"]
+
+        self.restart_service()
+
+        after = self.rpc("health", event_id=None, payload={})
+        duplicate = self.rpc(
+            "observe_request", event_id="evt-red-restart", payload=payload
+        )
+
+        self.assertNotEqual(old_session, after["result"]["prolog_session_id"])
+        self.assertEqual(after["result"]["kb_revision"], created["result"]["kb_revision"])
+        self.assertEqual(duplicate["status"], "ok")
+        self.assertEqual(duplicate["result"]["projection_state"], "existing")
+        self.assertEqual(duplicate["result"]["kb_revision"], created["result"]["kb_revision"])
 
     def test_fixture_query_round_trips_tek9_fact_through_prolog_with_provenance(self) -> None:
         self.rpc(
