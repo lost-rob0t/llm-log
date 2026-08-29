@@ -1,0 +1,235 @@
+#+title: LLM-LOG-RESEARCH-015 — Testing and Verification Guide
+#+startup: overview
+
+* Status
+- Lifecycle: CURRENT REFERENCE
+- Governing decision: [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011 — Zero-Python Rewrite]]
+- Architecture counterpart: [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]]
+- Operations counterpart: [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]]
+- Scope: the Common Lisp contract suite in =proxy/tests/=, the Rove/Nix
+  conventions of this repository, the RED-first protocol, and the evidence
+  rules for claiming GREEN.
+
+* Testing doctrine
+** RED-first is mandatory
+For every migrated or new capability:
+
+1. Write the Common Lisp (or Prolog/shell) contract *first* — as Rove
+   =deftest= forms that express externally observable behavior, not
+   implementation details.
+2. *Prove it fails* against the not-yet-implemented path by running the
+   exact gate (the Nix check) and capturing the failure.
+3. *Commit RED* (contract + harness + failing-gate evidence in the commit
+   trail).
+4. Implement the minimum that satisfies the contract.
+5. Run the exact gate again.
+6. *Commit GREEN only when the pass was actually observed* on the exact
+   head. Never fabricate or paraphrase execution evidence; record the
+   command, exit code, assertion count and output location in the relevant
+   research file.
+
+Example trail (slice 2): RED commit =dda440d= (all 7 transport tests
+failing, 58 config assertions untouched) → implementation commits
+→ GREEN =d8cf785= (79 assertions, exit 0).
+
+** What a contract is
+A contract asserts behavior a client or operator can observe:
+
+- configuration acceptance/rejection and precedence,
+- bytes on the wire (method, path, query, body octets, status, headers),
+- timing visible to a client (chunk arrival gaps),
+- failure mapping (404 unknown provider, 502 upstream failure).
+
+A contract does *not* reach into internal functions, does not mock the
+network, and does not assert on implementation-private symbols.
+
+** Framework: Rove
+- Contracts live in =deftest= forms inside package =llm-log/tests=
+  (=:use cl rove llm-log=).
+- Assertions: =(ok form)=, =(ng form)=, =(signals form 'condition)= — note
+  Rove's =signals= argument order is *(form condition)*, the reverse of
+  many other frameworks. Getting this wrong silently makes every
+  rejection-contract assertion meaningless, so the order is recorded here
+  as a hard convention.
+- Test output goes through Rove's spec reporter with colors disabled in CI
+  (the runner sets =rove:*enable-colors*= to =nil= via =find-symbol=).
+
+** The Nix gate
+=checks.llm-log-config-contract= in =flake.nix= runs
+=proxy/tests/runner.lisp= inside =packages.llm-log-cl-sbcl=. It is the
+single authoritative CL gate:
+
+#+begin_example
+nix build .#checks.x86_64-linux.llm-log-config-contract   # exit 0 = GREEN
+#+end_example
+
+The runner (=proxy/tests/runner.lisp=) does, in order:
+
+1. Load =$(ASDF)= if set — the nixpkgs-wrapper ASDF (3.3.6). Required: the
+   SBCL-bundled ASDF (3.3.1) makes prebuilt nixpkgs fasls look stale and
+   triggers recompilation into the read-only store. See 014, troubleshooting.
+2. =(require :asdf)= and =(asdf:load-system :llm-log-tests)=.
+3. Disable Rove colors (resolved at runtime).
+4. =uiop:symbol-call= =rove/core/suite:run-system-tests= for
+   =llm-log-tests=, which returns =(values passed-p results)= from
+   =call-with-suite=; exit =0= iff =passed-p=.
+
+Two Rove/SBCL conventions are load-bearing and documented to prevent
+regressions:
+
+- *Runtime symbol resolution*: SBCL reads an entire =--load= file before
+  executing any form. Any =rove:= reader reference in the runner would
+  fail with "package ROVE does not exist" because Rove loads later. The
+  runner therefore uses =find-symbol= / =uiop:symbol-call= exclusively.
+- *Do not trust =rove:run-system='s return value*: it discards the pass
+  status. =run-system-tests= (the =call-with-suite= entry point) is the
+  function whose first value is the pass flag. Rove's =passedp= generic
+  applies to test objects, not to the =passed=/=failed= result instances
+  pushed into =stats-results=.
+
+** Running tests interactively
+#+begin_example
+# full gate (same as CI):
+nix build .#checks.x86_64-linux.llm-log-config-contract
+
+# REPL-style against the packaged closure:
+nix shell .#llm-log-cl-sbcl --command bash -c \
+  'sbcl --noinform --no-userinit --no-sysinit --non-interactive \
+        --load proxy/tests/runner.lisp'
+
+# single capability while debugging (pattern used during slice 2):
+# load the system, then call the specific functions with handler-case
+# printing; see the DEBUG notes in 012 for worked examples.
+#+end_example
+
+The config contract can be run without network or sockets; the transport
+contract needs loopback TCP only (the Nix build sandbox provides it).
+
+* Fixture architecture (transport contract)
+The transport contract talks HTTP to the proxy over *raw octet sockets* on
+both sides — no HTTP client library, no framework. Byte fidelity assertions
+are only meaningful if the harness controls every byte.
+
+** Components
+| Piece | File | Role |
+|---+---+---|
+| =fixture-server= | transport.lisp | scripted upstream: accepts one connection at a time, parses the request with a byte-level head reader, records it, writes a scripted response, closes |
+| =%client-request= | transport.lisp | scripted client: writes a raw HTTP/1.1 request (with =Content-Length= when a body is present), reads the response to EOF, splits status/headers/body |
+| =with-fixture-proxy= | transport.lisp | per-test lifecycle: allocates a port pair, starts fixture + proxy, waits for the proxy port, runs the body, stops both |
+| =%wait-for-port= | transport.lisp | poll-connect with a 5 s deadline, used to await the proxy listener |
+
+** Scripted responses
+=fixture-server-response-spec= is a plist:
+
+#+begin_example
+(:status 418
+ :reason "I'm a teapot"               ; relayed verbatim by the proxy
+ :headers (("Set-Cookie" . "first=1; Path=/")
+           ("Set-Cookie" . "second=2; Path=/"))  ; duplicates survive
+ :body-mode (:fixed #(byte vector))
+ :body-mode (:chunked #(bytes) 0.5 #(bytes)))   ; 0.5 = sleep between chunks
+#+end_example
+
+The =:chunked= mode writes real chunked framing (hex size, =\r\n=, data,
+=\r\n=, terminator) with sleeps between chunks — the timing assertions
+prove the proxy does not buffer until end-of-response.
+
+** Port allocation
+Each test owns a dedicated port pair via a counter:
+
+#+begin_example
+n = (++ +fixture-port-counter+)
+upstream port = 18770 + 2n        proxy port = 18771 + 2n
+test 1 -> 18772 / 18773 ... test 7 -> 18784 / 18785
+#+end_example
+
+Rationale: lingering =CLOSE_WAIT= / =TIME_WAIT= sockets from one test's
+connections can block rebinding the same port; unique ports make test
+results independent of socket-lifecycle timing. The macro binds the
+specials =+fixture-upstream-port+= / =+fixture-proxy-port+= dynamically so
+tests and helper functions agree on the ports — starting the fixture
+*outside* that scope was an actual defect (the fixture listened on the
+default port while the config named the macro's port; every relay timed
+out with =USOCKET:TIMEOUT-ERROR=).
+
+** Known trap: client framing
+=%client-request= must send =Content-Length= whenever it writes a body.
+Without it, Woo dispatches the app with an empty body (request framing has
+no EOF-delimited body), the relay responds and closes, and the client's
+subsequent 64 KiB body write dies with =EPIPE=. This was the root cause of
+flaky binary round-trip failures during slice 2 bring-up.
+
+** Known trap: client reads
+SBCL =read-sequence= on a socket stream may return short reads at any
+time; a read loop must terminate on =n = 0= (EOF), never on
+=n < buffer-length=. A "fill the buffer" loop silently truncates large
+responses (the 8 MiB round-trip failed exactly this way) and makes timing
+assertions meaningless for chunked responses (everything arrives in one
+"read until EOF-ish" call).
+
+** Recording requests
+The fixture records request plists
+=(:method :path :query :headers :body)= under its lock *before* writing
+the response, so assertions after the client call observe a consistent
+record. Connection handling is wrapped in =ignore-errors= so a misbehaving
+peer cannot kill the test process with an unhandled =END-OF-FILE=.
+
+* Contract inventory
+** Configuration contract (=proxy/tests/config.lisp=, 32 deftests / 58 assertions)
+| Area | Deftests | What they pin |
+|---+---|---|
+| defaults | =default-data-directory-is-home-llm-proxy=, =default-config-file-lives-under-default-data-directory=, =default-upstreams-match-established-registry=, =defaults-are-home-localhost-8787= | =~/.llm-proxy= root, =config.toml= location, the three built-in upstreams, 127.0.0.1:8787 |
+| TOML parsing | =toml-config-parses-all-optional-sections=, =toml-config-allows-omitted-keys=, =toml-config-upstream-trailing-slash-is-normalized= | full schema round-trip; omitted keys stay =nil= in the partial config; trailing slash normalization |
+| TOML rejection | =toml-config-rejects-unknown-keys=, =-non-integer-port=, =-out-of-range-port=, =-non-string-listen=, =-non-string-data-dir=, =-non-string-upstream-value=, =-empty-upstream-name=, =-empty-upstream-value=, =-non-http-scheme=, =-invalid-toml-syntax= | every malformed shape signals =invalid-configuration= |
+| file layer | =config-file-missing-explicit-path-is-an-error=, =config-file-layer-overrides-defaults= | explicit missing file fatal; file overrides defaults; registry merge keeps built-ins |
+| precedence | =cli-arguments-override-config-file-overrides-defaults=, =cli-upstream-replaces-same-named-entry-and-adds-new-ones= | full chain; per-name upstream merge |
+| CLI | =serve-arguments-parse-to-resolved-config=, =serve-arguments-accept-port-boundaries=, =-reject-missing-port-value=, =-reject-non-integer-port=, =-reject-out-of-range-port=, =-reject-unknown-argument=, =-reject-unknown-command=, =-reject-empty-invocation=, =-reject-upstream-without-value-separator=, =-reject-upstream-with-empty-name=, =-reject-upstream-with-empty-url=, =-reject-explicit-missing-config-file= | the full =serve= grammar and its rejections |
+
+** Transport contract (=proxy/tests/transport.lisp=, 7 deftests / 21 assertions)
+| Deftest | Pins |
+|---+---|
+| =http-method-path-and-query-are-preserved= | method, provider prefix stripping, raw query forwarding; =200= observed end-to-end |
+| =http-request-and-response-bodies-round-trip-binary-identically= | 64 KiB random binary request body -> upstream byte-identical; response payload -> client byte-identical; =Content-Type= forwarded |
+| =http-status-is-preserved= | upstream =418 I'm a teapot= reaches the client with its body and headers intact |
+| =duplicate-response-headers-are-preserved= | two =Set-Cookie= headers arrive as two headers with both values |
+| =chunked-responses-stream-incrementally= | two chunks separated by a 0.5 s upstream sleep arrive incrementally: gap =≥ 0.3 s=, total bytes present, bounded end-to-end time — proves no wait-for-EOS buffering |
+| =large-bodies-stream-without-full-buffering-deadlock= | 8 MiB request and response round-trip byte-identical — proves streaming under backpressure |
+| =unknown-provider-is-rejected= | =/nosuch/...= -> =404= |
+
+** Counting
+The gate currently reports *79 assertions across 39 deftests* (58 config +
+21 transport), plus a pass/fail summary; the runner exits 0 iff
+=run-system-tests= returns true.
+
+* Extending the suite
+1. Add the =deftest= to the right file; wire nothing else — the runner
+   runs the whole =llm-log-tests= system.
+2. If a new helper is needed, follow the fixture conventions above
+   (octets in, octets out; no libraries that hide framing).
+3. For a new *capability*, first commit the contract RED (it must fail),
+   then implement, then flip the gate. Update the contract inventory table
+   in this document in the same commit series.
+4. Never weaken an existing assertion to make a gate pass; adjust it only
+   with a documented reason in the slice's research file.
+
+* Evidence rules
+- Evidence = the exact command, exit code, assertion count, and the commit
+  hash it ran on — e.g. slice 2 GREEN: =nix build
+  .#checks.x86_64-linux.llm-log-config-contract= → exit 0, 79 assertions at
+  =d8cf785= (recorded in [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]]).
+- Environment notes (machine, Nix revision effects, cold-start timings)
+  belong in the evidence block, not in commit messages alone.
+- A gate that was never run is not evidence. A gate that passed on a
+  different head is not evidence for this head.
+
+* Legacy Python suite (transitional)
+=tests/*.py= (unittest) still exercises the legacy Python proxy and is
+wired as =checks.package= and, for the expert boundary, as
+=checks.expert-service-contract=. Both fail identically at base =0b1994a=
+and are recorded as pre-existing debt in [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]]. Rules until slice 9:
+
+- do not add new Python tests;
+- do not fix Python-only behavior at the cost of CL parity work;
+- the final state deletes the tree and its Nix wiring, with a repository
+  acceptance scan rejecting =*.py=, =__pycache__=, =pytest=, =python=,
+  =python3=, =pyproject.toml= in implementation/test/package paths.

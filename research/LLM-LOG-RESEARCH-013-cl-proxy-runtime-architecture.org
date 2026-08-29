@@ -1,0 +1,427 @@
+#+title: LLM-LOG-RESEARCH-013 — Common Lisp Proxy Runtime Architecture
+#+startup: overview
+
+* Status
+- Lifecycle: CURRENT REFERENCE
+- Governing decision: [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011 — Zero-Python Rewrite]]
+- Decision + evidence record: [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012 — CL Runtime Slices 1–2]]
+- Operations counterpart: [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]]
+- Testing counterpart: [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]]
+- Scope: the =proxy/= Common Lisp system (=llm-log= ASDF system, version
+  0.1.0) as implemented on branch =rage/10-expert-runtime-red=. This document
+  describes the code as it is, including its deliberate tradeoffs.
+
+* System topology
+#+begin_example
+LLM clients (gptel, Codex, OpenCode, Claude Code, curl, ...)
+    |
+    |  HTTP/1.1  (SSE and WebSocket upgrade framing pass through)
+    v
++-----------------------------------------------------------+
+| Common Lisp llm-log runtime          (system "llm-log")   |
+|                                                           |
+|  cli.lisp      argument parsing -> resolved config        |
+|  config.lisp   defaults < config.toml < CLI, strict       |
+|  transport.lisp  Woo acceptor + per-request relay thread  |
+|                                                           |
+|  (slice 3+) recorder actor, capture, redaction            |
+|  (slice 4+) Sento actor supervision                       |
+|  (slice 6+) websocket-driver relay                        |
++---------------------------+-------------------------------+
+                            | transparent relay (octets)
+                            v
+                 configured upstream provider registry
+                 openai / openrouter / anthropic / arbitrary
+#+end_example
+
+Ownership boundaries (from [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]]):
+
+- *Common Lisp* owns CLI, configuration, transport, capture, recorder,
+  provider registry, expert orchestration.
+- *SWI-Prolog* owns facts, rules, inference (expert/=llm-log-expert= system;
+  outside this document).
+- *Tek9* owns the durable document/graph KB.
+- *Python owns nothing.* The legacy =llm_log/*.py= tree is migration debt,
+  deleted in slice 9.
+
+* Source layout
+| File | Responsibility |
+|---+---|
+| =proxy/llm-log.asd= | System definition; =:serial t=; depends on uiop, clop, woo, usocket, quri, cl+ssl, bordeaux-threads, trivial-utf-8 |
+| =proxy/package.lisp= | =llm-log= package: exports the public configuration, transport, and CLI surface |
+| =proxy/config.lisp= | Configuration model, TOML layer, registry merge, validation, =invalid-configuration= |
+| =proxy/transport.lisp= | Woo app, provider resolution, upstream connection, verbatim response relay, lifecycle |
+| =proxy/cli.lisp= | =llm-log serve= argument parser and =main= entry point |
+| =proxy/entrypoint.lisp= | Nix executable bootstrap (the =$ASDF= rule) |
+| =proxy/tests/= | Rove contracts + raw-octet fixture harness + Nix runner |
+
+Test-side files live in the =llm-log-tests= system
+(=proxy/llm-log-tests.asd=): package, config contract, transport contract,
+runner. See [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]].
+
+* Public API surface
+Exported from package =llm-log= (see =proxy/package.lisp=):
+
+** Configuration (slice 1)
+| Symbol | Kind | Summary |
+|---+---+---|
+| =runtime-config= | defstruct | Slots: =data-directory= (directory pathname), =listen-address= (string), =port= (integer 1..65535), =upstreams= (assoc list of =(name . base-url)=) |
+| =runtime-config-data-directory= et al. | accessors | typed struct accessors; they signal a type error when applied to non-structs |
+| =invalid-configuration= | condition | the single rejection condition; =invalid-configuration-detail= carries a formatted explanation |
+| =default-upstreams= | parameter | built-in registry: openai, openrouter, anthropic |
+| =default-data-directory= | function | =~/.llm-proxy/= as a directory pathname |
+| =default-config-file= | function | =~/.llm-proxy/config.toml= |
+| =normalize-upstream-url= | function | strips trailing =/= characters |
+| =validate-upstream= | function | =(validate-upstream name url)= -> =(name . normalized-url)=; rejects empty parts and non-http(s) schemes |
+| =upstream-base-url= | function | exact-name (case-sensitive =equal=) registry lookup |
+| =parse-toml-config= | function | TOML text -> partial =runtime-config=; unknown keys or wrong types signal =invalid-configuration= |
+| =load-config-file= | function | file pathname -> partial =runtime-config=; missing file signals |
+| =resolve-config= | function | full merge; see [[*Configuration resolution][Configuration resolution]] |
+| =parse-serve-arguments= | function | argv list -> fully resolved =runtime-config=; strict rejection |
+
+** Transport (slice 2)
+| Symbol | Kind | Summary |
+|---+---+---|
+| =start-proxy= | function | =config= -> =proxy-server=; starts Woo in a dedicated thread |
+| =stop-proxy= | function | stops a started server (destroys the loop thread; test/CLI convenience) |
+| =proxy-server= | defstruct | =thread=, =config= |
+
+** CLI
+| Symbol | Kind | Summary |
+|---+---+---|
+| =main= | function | executable entry point; returns an exit code; blocks serving once configured |
+
+* Configuration resolution
+** Merge model
+Precedence, lowest to highest:
+
+1. *Built-in defaults* — =listen= =127.0.0.1=, =port= =8787=, upstream
+   registry =+default-upstreams+=, data directory =~/.llm-proxy/=.
+2. *Config file* — TOML. =:config-file :default= selects
+   =default-config-file=; a missing default file is not an error.
+   =:config-file path= is explicit; a missing explicit file is an error.
+   =:config-file nil= disables the layer entirely (used by tests for
+   determinism).
+3. *Environment* — reserved by the contract, nothing implemented in
+   slices 1–2. The layer exists so future additions are additive, not a
+   redesign.
+4. *CLI arguments* — parsed by =parse-serve-arguments=.
+
+Upstream registry merging is *per-name*: the default registry is the base;
+a config file =upstreams= entry replaces same-named entries and appends new
+ones; CLI =--upstream= does the same above the file. There is no "wholesale
+replacement" mode. A name lookup is exact (case-sensitive, =equal=).
+
+The merge is implemented by =%merge-upstreams= over assoc lists; =assoc=
+with =equal= finds the entry and =setf= of =cdr= replaces it in place,
+otherwise the entry is appended — insertion order is preserved.
+
+** TOML schema (strict)
+#+begin_src toml
+  data_dir = "/home/user/.llm-proxy"     # optional; non-empty string
+  listen   = "127.0.0.1"                 # optional; non-empty string
+  port     = 8787                        # optional; integer 1..65535
+
+  [upstreams]                            # optional table
+  openai     = "https://api.openai.com"  # name -> base URL
+  openrouter = "https://openrouter.ai"
+  anthropic  = "https://api.anthropic.com"
+  ollama     = "http://127.0.0.1:11434/"
+#+end_src
+
+Rules enforced by =%toml-config= / =validate-upstream= / =%validate-port=:
+
+| Input | Result |
+|---+---|
+| unknown top-level key (e.g. =log_level=) | =invalid-configuration= |
+| =port= not an integer in 1..65535 (string, float, boolean, 0, 65536) | =invalid-configuration= |
+| =listen= / =data_dir= not a non-empty string | =invalid-configuration= |
+| upstream value not a string, empty, or without =http://= / =https://= prefix | =invalid-configuration= |
+| upstream name empty (TOML quoted empty key) | =invalid-configuration= |
+| malformed TOML (clop parse error) | =invalid-configuration= (wrapped) |
+| trailing =/= in an upstream base URL | normalized away (=normalize-upstream-url=) |
+
+Rationale: llm-log routes live traffic; a silent misconfiguration (a typo'd
+key falling through to a default) is worse than a failed start. The schema
+is deliberately tiny; growth is a documented contract change.
+
+** CLI grammar
+#+begin_example
+llm-log serve [--config PATH] [--data-dir PATH] [--listen ADDR]
+              [--port N] [--upstream NAME=URL]...
+#+end_example
+
+- The command word must be =serve=; anything else (including an empty
+  argv) is rejected.
+- Option values are consumed by the parser loop itself
+  (=parse-serve-arguments=); a missing value (e.g. =--port= with nothing
+  after) is rejected immediately.
+- =--port= values are parsed with =parse-integer= then range-validated;
+  =--port abc= and =--port 65536= are rejections.
+- =--upstream= splits on the *first* =\==; an empty name or empty value is a
+  rejection; the URL is validated and normalized exactly like the file
+  layer.
+- Unknown arguments are rejections; there are no ignored flags.
+
+=parse-serve-arguments= returns a *fully resolved* =runtime-config= (it
+calls =resolve-config= with =:config-file (or explicit :default)=).
+
+** Exit codes (main)
+| Code | Meaning |
+|---+---|
+| 0 | clean exit (currently only reachable via =stop-proxy= paths) |
+| 2 | =invalid-configuration= (message printed to stderr) |
+| — | otherwise =main= blocks serving forever: =loop (sleep 3600)=; production stopping is process termination (systemd =Restart=on-failure=) |
+
+=main= also ensures the data directory exists
+(=uiop:ensure-all-directories-exist=) before announcing
+=llm-log: listening on ADDR:PORT; capture root DIR= on stderr.
+
+* Request lifecycle (slice 2 transport)
+** Sequence
+#+begin_example
+client                Woo event loop            relay thread             upstream
+  |  TCP connect            |                        |                      |
+  |------------------------>| accept (wev)           |                      |
+  |  request head+body      | fast-http parse        |                      |
+  |------------------------>| body buffered          |                      |
+  |                         | app(env):              |                      |
+  |                         |   spawn relay thread --+                      |
+  |                         |   return (lambda (respond) ...)              |
+  |                         |   (woo writes nothing)                       |
+  |                         |                        | connect (usocket,   |
+  |                         |                        |  cl+ssl if https)   |
+  |                         |                        |-------------------->|
+  |                         |                        | origin-form request |
+  |                         |                        | (rebuilt Host,      |
+  |                         |                        |  Content-Length)    |
+  |                         |                        |-------------------->|
+  |                         |                        |<-- response head ---|
+  |                         |                        |  (relay verbatim,   |
+  |                         |                        |   Connection: close)|
+  |<=== head + body octets =|===(blocking fd-stream)=|<== body chunks =====|
+  |                         |                        | upstream EOF        |
+  |  EOF                    |                        | close both sides    |
+#+end_example
+
+** Inbound side: what Woo provides
+- Accept loop, HTTP/1.1 parsing via fast-http, request *body fully
+  buffered* into a smart-buffer before the app runs. =:raw-body= is an octet
+  vector or a vector-input stream depending on the Woo build
+  (=%request-body-octets= coerces both).
+- The app receives a Clack-style plist =env=:
+  - =:request-method= — keyword (=:GET=, =:POST=, ...)
+  - =:request-uri= — the *raw* target (encoding preserved), e.g.
+    ="/fixture/v1/models?foo=bar&x=1"=
+  - =:headers= — hash table with lowercase string keys
+  - =:clack.io= — the Woo socket struct (contains =fd=)
+  - plus =:server-name=, =:content-length=, =:remote-addr=, etc.
+- Woo is started with =:worker-num nil= (single-threaded event loop, no
+  forked worker cluster) and =:debug nil=.
+
+** Provider resolution (= %resolve-provider=)
+Given the raw URI ="/fixture/v1/models?foo=bar&x=1"=:
+
+1. Split =path= ="/fixture/v1/models"= and =query= ="?foo=bar&x=1"= at the
+   first =?= (the =?= stays part of =query=, so concatenation is exact).
+2. The *first path segment* selects the provider: ="fixture"=.
+3. The remainder is reassembled *raw* into the origin-form target:
+   ="/v1/models?foo=bar&x=1"=. Percent-encodings are never decoded or
+   re-encoded by llm-log.
+4. The registry supplies the base URL; the final upstream target is
+   =base + remainder-path + query=. Three values are returned: provider,
+   target, base URL. A missing provider or an unregistered name yields
+   =nil= values which the caller maps to =404=.
+
+** Outbound request construction (= %write-upstream-request=)
+#+begin_example
+GET /v1/models?foo=bar&x=1 HTTP/1.1\r\n      <- origin-form target
+Host: 127.0.0.1:18771\r\n                    <- rebuilt; :80/:443 elided
+<inbound headers, minus dropped>\r\n         <- name: value pairs from env hash
+Content-Length: <len(body)>\r\n              <- recomputed
+\r\n
+<body octets>                                <- verbatim
+#+end_example
+
+Dropped from the inbound head (=+hop-by-hop-request-headers+=):
+
+| Header | Reason |
+|---+---|
+| =connection=, =keep-alive=, =te=, =trailer=, =trailers=, =upgrade=, =proxy-authenticate=, =proxy-authorization=, =transfer-encoding= | HTTP/1.1 hop-by-hop semantics |
+| =host= | rebuilt for the upstream authority |
+| =content-length= | recomputed from the forwarded octets |
+| =expect= | Woo does not emit 100-continue; forwarding it would hang clients |
+
+Everything else is forwarded name-for-name as received. Limitation: the
+inbound header store is a hash, so duplicate request headers (two =Cookie=
+lines) are coalesced by fast-http before llm-log sees them. Duplicate
+*response* headers (two =Set-Cookie= lines) are preserved exactly — see
+below. Known limitation, documented; revisit when Woo/fast-http handling
+changes or when a raw-head inbound relay lands.
+
+** Response relay (= %relay-upstream-response=)
+The upstream response is relayed *verbatim at the octet level*:
+
+1. =%read-head-octets= accumulates bytes until =CRLF CRLF=.
+2. The head is split into lines; every line is re-emitted except =Connection=
+   headers (case-insensitive), then exactly one =Connection: close= line is
+   appended, then the terminating blank line. This means:
+   - the *status line is byte-identical* (reason phrase preserved),
+   - *duplicate headers are preserved* (the two =Set-Cookie= case),
+   - =Content-Length= and =Transfer-Encoding: chunked= pass through
+     untouched — no re-framing, so chunk boundaries arrive exactly as the
+     provider sent them.
+3. The body is pumped =read-sequence= -> =write-sequence= in
+   =+relay-buffer-size+= (64 KiB) chunks until upstream EOF, with
+   =force-output= at the end.
+4. Both sides are closed: upstream stream and socket, then the client
+   stream (after marking the Woo socket inactive).
+
+Reading until EOF is correct because the relayed =Connection: close= asks
+the upstream to terminate after the response. A provider that keeps the
+connection open contrary to =Connection: close= would keep the relay thread
+alive until the socket times out — accepted for slice 2, revisit with
+content-length-aware framing in a later hardening slice.
+
+** Failure mapping
+| Condition | Client sees |
+|---+---|
+| provider segment missing from config | =404 Not Found=, plain text =unknown upstream: NAME= |
+| upstream connect/write/read error | =502 Bad Gateway=, plain text =upstream request failed: ...= |
+| anything else reaching =%relay-request='s handler | =502 Bad Gateway= |
+
+Raw responses are written with =%write-raw-response= directly onto the
+client fd-stream (head + =Content-Length= + body + =Connection: close=).
+
+** Client socket ownership (the Woo flush constraint)
+Woo's outbound path (=woo.ev.socket:write-socket-data= and friends) appends
+to per-socket output buffers whose flush is driven by the libev event
+loop. Writing from a foreign thread buffers the bytes but never wakes the
+loop — the bytes never reach the wire (this was observed empirically:
+clients timed out while relay threads reported completion).
+
+The slice-2 design therefore hands the descriptor to the relay thread:
+
+1. =%make-blocking-client-stream= reads =socket-fd= (the slot is internal
+   to =woo.ev.socket=, hence the double-colon reference), clears
+   =O_NONBLOCK= via =sb-posix:fcntl= (=F_GETFL= / =F_SETFL=), and wraps the
+   fd in =sb-sys:make-fd-stream= with =:input nil :output t :buffering
+   :none=. Blocking writes give natural backpressure for large bodies.
+2. The relay thread performs *all* client-side writes through this stream
+   (plain =write-sequence=). Woo never writes to the connection: the app
+   returns =(lambda (respond) (declare (ignore respond)))=, so the
+   =handle-response= function-protocol fires but never emits anything.
+3. Cleanup order matters: first
+   =(setf (woo.ev.socket::socket-open-p io) nil)= (disarms Woo's 15-minute
+   idle-timeout callback and its close path), *then* =(close client-stream)=
+   — closing the descriptor exactly once, on our side. Closing the fd while
+   Woo's watchers are still armed is tolerated by epoll (auto-deregistration
+   of closed descriptors) and by Woo's guarded callbacks.
+
+Consequences, accepted and documented:
+
+- Woo's read watcher remains armed during the relay; under
+  =Connection: close= semantics the client sends nothing more, so no bytes
+  are stolen.
+- The per-connection idle timer is neutralized per-socket; long SSE streams
+  are driven by our relay thread, not by Woo timers (slice 5 will own
+  activity refreshing if needed).
+- One thread per in-flight request. This is deliberate for slices 2–3:
+  bounded, simple, and correct; the evented redesign (loop-integrated
+  watchers, actor-owned pool) is a scheduled hardening item, not an
+  afterthought to be smuggled in.
+
+* Data structures
+#+begin_example
+runtime-config
+  data-directory    pathname (directory)   e.g. /home/u/.llm-proxy/
+  listen-address    string                 e.g. "127.0.0.1"
+  port              integer 1..65535       e.g. 8787
+  upstreams         assoc list             (("openai" . "https://api.openai.com") ...)
+
+proxy-server
+  thread            bordeaux-thread running the Woo event loop
+  config            the resolved runtime-config
+
+fixture-server (tests only)
+  listener          usocket server socket
+  thread            accept-loop thread
+  lock              mutex protecting requests/response-spec
+  stop              flag slot (kept for future clean-stop work)
+  requests          ordered list of recorded request plists
+  response-spec     (list :status :reason :headers :body-mode)
+#+end_example
+
+* Conditions and failures
+| Condition | Raised by | Meaning |
+|---+---+---|
+| =invalid-configuration= | all configuration validators | any rejected configuration: bad TOML, unknown key, wrong type, bad upstream, bad port, missing explicit config file, malformed CLI |
+
+Every rejection carries a human-readable =invalid-configuration-detail=
+string (e.g. =port must be an integer between 1 and 65535, got "abc"=).
+There are no warnings: configuration is fail-closed.
+
+Transport-side failures are converted to HTTP =502= / =404= responses; they
+do not crash the proxy process. Test-side fixture threads wrap their
+connection handling in =ignore-errors= so a misbehaving peer cannot kill
+the test process through an unhandled =END-OF-FILE=.
+
+* Concurrency model
+| Thread | Created by | Lifetime | Owns |
+|---+---|---|---|
+| =llm-log-proxy= | =start-proxy= | until =stop-proxy= (destroys thread) or process exit | Woo event loop, listening socket |
+| event-loop thread (implicit) | =woo:run= | same as above | accepts, parsing, app dispatch |
+| =llm-log-relay= | app per request | one request | client fd-stream, upstream socket |
+| (fixture) =llm-log-fixture-upstream= / =llm-log-fixture-connection= | tests | per test | fixture listener / connection |
+
+Shared mutable state is minimal: the resolved =runtime-config= is immutable
+after =resolve-config=; the relay threads share nothing but the config.
+The recorder actor (slice 4, Sento) will be the single writer for capture
+data; until then nothing on the transport path persists.
+
+* Interaction with the expert plane
+Slice 2's transport does not call the expert plane. The planned call shape
+(fail-open by default) is already implemented on the expert side
+(=expert/=, =llm-log-expert= system): the proxy will send typed JSON
+observations over the expert service boundary; SWI-Prolog remains the only
+inference engine; Tek9 remains the durable KB. See 004–010 and
+=expert/README.org=. The transport was built so capture (slice 3) can hook
+the relay thread without changing the forwarding contract.
+
+* Packaging
+- =flake.nix= exposes =llm-log-cl-lib= (ASDF closure),
+  =llm-log-cl-tests=, =llm-log-cl-sbcl= (SBCL wrapper carrying the closure,
+  usable for interactive development), =llm-log-cl= (the =llm-log=
+  executable: =writeShellApplication= around =sbcl --load entrypoint.lisp=),
+  and the =llm-log-config-contract= check. Details and run commands:
+  [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]].
+- =proxy/entrypoint.lisp= implements the mandatory =$ASDF= bootstrap: load
+  the wrapper-provided ASDF fasl before anything else, then
+  =(require :asdf)=, then =asdf:load-system=, then =main=. Without the
+  first step, nixpkgs' prebuilt dependency fasls are considered stale and
+  ASDF attempts recompilation into the read-only store (observed:
+  =Permission denied= on =cffi-grovel= / =smart-buffer= tmp fasls).
+- =--script= / =--no-sysinit= are used deliberately so a developer's
+  =~/.sbclrc= (Quicklisp) cannot hijack the packaged source registry.
+
+* Known limitations and follow-ups
+| Limitation | Where | Planned resolution |
+|---+---|---|
+| request body fully buffered by Woo before dispatch | inbound framing | acceptable for LLM traffic; revisit only if providers stream requests |
+| duplicate request headers coalesced (inbound hash) | fast-http env | revisit when inbound raw-head relay lands |
+| response relayed until EOF (assumes =Connection: close= honored) | =%relay-upstream-response= | add content-length-aware termination in a hardening slice |
+| thread per request; no upstream connection pool | relay model | slice 4 (Sento supervision) + hardening |
+| client descriptor removed from Woo's control per request | fd-stream ownership | evented redesign (loop-integrated watchers) in hardening |
+| no TLS verification configuration yet (cl+ssl defaults) | =%open-upstream= | provider adapter slice |
+| no capture/redaction yet | — | slice 3 |
+| =stop-proxy= destroys the loop thread | tests/CLI convenience | production stopping is process termination; revisit if a clean in-process stop is needed |
+
+* Traceability
+| Requirement (011) | Implementation |
+|---+---|
+| CL owns configuration | =config.lisp= (slice 1 contract) |
+| CL owns transparent forwarding | =transport.lisp= (slice 2 contract) |
+| never normalize traffic casually | raw-head relay; only =Connection= patched upstream-side; only hop-by-hop + Host + Content-Length dropped request-side |
+| invalid configuration rejected | =invalid-configuration=, fail-closed |
+| tests callable through ASDF/Nix | =llm-log-tests= system + =checks.llm-log-config-contract= |
+| no Python | =proxy/= contains only Common Lisp; Python is legacy debt only |

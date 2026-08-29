@@ -1,0 +1,273 @@
+#+title: LLM-LOG-RESEARCH-014 — Configuration and Operations Guide
+#+startup: overview
+
+* Status
+- Lifecycle: CURRENT REFERENCE
+- Architecture counterpart: [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]]
+- Decision + evidence record: [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]]
+- Scope: everything needed to configure, run, package, test and troubleshoot
+  the Common Lisp llm-log runtime (slices 1–2) on Nix and non-Nix systems.
+
+* What llm-log is
+A transparent capture proxy for LLM traffic. Clients point their *provider
+endpoint* at llm-log; llm-log forwards the request unchanged to the
+configured upstream, streams the response back unchanged, and (from slice 3
+on) persists immutable evidence. Authorization stays with the client: llm-log
+never owns or stores API keys.
+
+* Quick start (Nix)
+#+begin_example
+# from a checkout of lost-rob0t/llm-log
+nix build .#llm-log-cl
+./result/bin/llm-log serve
+
+# default state:
+#   config file : ~/.llm-proxy/config.toml   (optional; may be absent)
+#   data dir    : ~/.llm-proxy/
+#   listen      : 127.0.0.1:8787
+#   upstreams   : openai, openrouter, anthropic (built-in)
+#+end_example
+
+Point a client at the proxy using a provider prefix:
+
+#+begin_example
+# instead of https://api.openai.com/v1/chat/completions
+curl http://127.0.0.1:8787/openai/v1/chat/completions ...
+#+end_example
+
+The first path segment (/openai) selects the upstream; the rest of the path
+and the query string are forwarded verbatim. Authorization headers are
+forwarded to the upstream (and, from slice 3, redacted before persistence).
+
+* Configuration reference
+** Precedence
+#+begin_example
+built-in defaults  <  config file  <  environment (reserved)  <  CLI arguments
+#+end_example
+
+- A missing *default* config file (=~/.llm-proxy/config.toml=) is normal.
+- An *explicit* =--config PATH= that does not exist is a fatal error.
+- Unknown keys, wrong types and malformed TOML are always fatal
+  (=invalid-configuration=). llm-log routes live traffic; fail-closed
+  configuration is deliberate.
+
+** TOML schema
+#+begin_src toml
+  # ~/.llm-proxy/config.toml
+  data_dir = "/home/user/.llm-proxy"   # optional, non-empty string
+  listen   = "127.0.0.1"               # optional, non-empty string
+  port     = 8787                      # optional, integer 1..65535
+
+  [upstreams]                          # optional table: NAME = BASE-URL
+  openai     = "https://api.openai.com"
+  openrouter = "https://openrouter.ai"
+  anthropic  = "https://api.anthropic.com"
+  ollama     = "http://127.0.0.1:11434"
+#+end_src
+
+| Key | Type | Default | Notes |
+|---+---+---|---|
+| =data_dir= | string (path) | =~/.llm-proxy/= | capture/evidence root; created at startup |
+| =listen= | string (address) | =127.0.0.1= | passed to Woo as the bind address |
+| =port= | integer | =8787= | 1..65535 inclusive |
+| =upstreams.NAME= | string (URL) | see below | =http://= or =https://= only; trailing =/= normalized away |
+
+Built-in upstream registry (before any file or CLI merge):
+
+| Name | Base URL |
+|---+---|
+| =openai= | =https://api.openai.com= |
+| =openrouter= | =https://openrouter.ai= |
+| =anthropic= | =https://api.anthropic.com= |
+
+=chatgpt = "https://chatgpt.com"= is a *consumer* setting (Home Manager
+default in the user's dotfiles), not a built-in — the reusable default
+registry never hardcodes a personal provider set.
+
+Upstream merging is per-name across layers: the file adds/replaces entries
+on top of the built-ins; =--upstream= adds/replaces on top of the file.
+Name lookup is exact (case-sensitive).
+
+** CLI reference
+#+begin_example
+llm-log serve [--config PATH] [--data-dir PATH] [--listen ADDR]
+              [--port N] [--upstream NAME=URL]...
+#+end_example
+
+| Flag | Effect | Rejected when |
+|---+---|---|
+| =--config PATH= | config file layer; explicit missing file is fatal | value missing, file absent |
+| =--data-dir PATH= | overrides =data_dir= | value missing |
+| =--listen ADDR= | overrides =listen= | value missing |
+| =--port N= | overrides =port= | value missing, non-integer, outside 1..65535 |
+| =--upstream NAME=URL= | adds/replaces a registry entry | value missing, no =\==, empty name, empty value, non-http(s) scheme |
+| *(any other flag)* | — | rejected |
+| *(any command but =serve=)* | — | rejected |
+
+Example: a local vLLM and Ollama with an explicit data dir:
+
+#+begin_example
+llm-log serve \
+  --data-dir ~/llm-evidence \
+  --port 8787 \
+  --upstream ollama=http://127.0.0.1:11434 \
+  --upstream vllm=http://127.0.0.1:8000
+#+end_example
+
+Client endpoints then look like =http://127.0.0.1:8787/ollama/v1/...=.
+
+Exit codes: =2= invalid configuration; otherwise the process serves until
+terminated. Runtime logging currently goes to stderr
+(=llm-log: listening on ...=); the event loop's own warnings come from Woo
+(=vom=).
+
+** The =~/Documents/AI/proxy= rule
+=~/.llm-proxy= is the *reusable* default. The user's dotfiles set
+=services.llm-log.dataDir = "${config.home.homeDirectory}/Documents/AI/proxy"=
+as a *consumer override* through Home Manager. That personal path must
+never become the built-in default, must never be hardcoded in the CL
+source, and must never appear in Nix evaluation output for the reusable
+package.
+
+* Nix packaging
+** Flake outputs (as of slice 2)
+| Output | Kind | Contents |
+|---+---|---|
+| =packages.llm-log-cl-lib= | SBCL ASDF package | system =llm-log=; deps: clop, woo, usocket, quri, cl+ssl, bordeaux-threads, trivial-utf-8 |
+| =packages.llm-log-cl-tests= | SBCL ASDF package | system =llm-log-tests= (Rove contracts + fixture harness) |
+| =packages.llm-log-cl-sbcl= | SBCL wrapper | SBCL carrying lib + tests closures; also the interpreter used by the contract check; suitable for interactive development |
+| =packages.llm-log-cl= | executable | =bin/llm-log= — =writeShellApplication= running =proxy/entrypoint.lisp= inside =sbclWithClRuntime= |
+| =checks.llm-log-config-contract= | check | runs =proxy/tests/runner.lisp=; fails unless every Rove assertion passes |
+| =packages.llm-log= / =checks.package= | legacy | Python capture proxy — migration debt until slice 9 |
+| =packages.llm-log-expert-lib= / =llm-log-expert= / =checks.expert-lib= / =checks.expert-service-contract= | expert plane | Tek9 + SWI-Prolog expert service (004–010) |
+
+The flake inputs pin =tek9= to
+=github:lost-rob0t/tek9/a9f5b595f5d965163d2b7c518c72a2efd9be13fe=; the local
+Tek9 checkout must be kept at that revision (verified: =sbcl-tek9-0.2.0=
+builds green on the pin).
+
+** Why Nix, not Quicklisp, for the runtime closure
+All Common Lisp dependencies come from =nixpkgs sbcl.pkgs= with prebuilt
+fasls, and native libraries (libev for Woo, OpenSSL for CL+SSL) resolve
+inside the closure. A Quicklisp-based closure cannot provide =libev.so.4=
+on this machine and pulls mutable dist state; Quicklisp remains fine for
+non-Nix users (below) where the host provides libev.
+
+** The =$ASDF= entrypoint rule (critical)
+=sbcl.withPackages= exports =ASDF= pointing at the nixpkgs ASDF fasl
+(3.3.6). The SBCL-bundled ASDF is 3.3.1. When a Nix-run image loads the
+bundled ASDF first, nixpkgs' prebuilt fasls look stale, ASDF recompiles
+them, and the atomic-compile tmp fasl lands in the read-only store:
+
+#+begin_example
+Error opening #P"/nix/store/...-sbcl-cffi-grovel-.../grovel/package-tmpGHU3ALSV.fasl":
+Permission denied
+#+end_example
+
+Every Nix-run entrypoint therefore begins:
+
+#+begin_src lisp
+  (let ((asdf-fasl (sb-unix::posix-getenv "ASDF")))
+    (when (and asdf-fasl (plusp (length asdf-fasl)))
+      (load asdf-fasl)))
+  (require :asdf)
+  (asdf:load-system ...)
+#+end_src
+
+Entries must also run with =--no-userinit --no-sysinit= (or =--script=,
+which implies them) so =~/.sbclrc= (Quicklisp) cannot hijack the source
+registry. This pattern is load-bearing in =proxy/entrypoint.lisp= and
+=proxy/tests/runner.lisp=; do not "simplify" it away.
+
+** Build and check commands
+#+begin_example
+nix build .#llm-log-cl        # executable
+nix build .#llm-log-cl-lib    # library closure
+nix build .#llm-log-cl-sbcl   # SBCL wrapper (dev)
+nix build .#checks.x86_64-linux.llm-log-config-contract   # the CL contract gate
+nix flake check               # everything, including legacy Python gates
+#+end_example
+
+Note: =nix flake check= currently fails on the *legacy* Python gates
+(=checks.package=, =checks.expert-service-contract=) — identical at base
+=0b1994a=, recorded in [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] as pre-existing debt; they disappear in slice 9.
+
+* Running as a service
+** Home Manager contract (target state)
+#+begin_example
+services.llm-log.enable
+services.llm-log.dataDir
+services.llm-log.listenAddress
+services.llm-log.port
+services.llm-log.upstreams          # NAME -> BASE-URL attribute set
+services.llm-log.enablePrologClassifier   # legacy flag, dropped at slice 9
+services.llm-log.package
+services.llm-log.extraArgs
+#+end_example
+
+=nix/home-manager.nix= currently drives the *legacy Python* package. At
+slice 9 (Python deletion) it flips to =llm-log-cl= and translates:
+
+- =dataDir= -> =--data-dir=
+- =listenAddress= -> =--listen=
+- =port= -> =--port=
+- =upstreams= -> repeated =--upstream NAME=URL=
+- =extraArgs= -> appended verbatim
+
+The systemd user service runs the CL executable with =Restart=on-failure=;
+process termination is the supported stop path (Woo's loop thread is not
+interrupted in-process).
+
+** Non-Nix launch path (SBCL + ASDF)
+Requirements: SBCL (2.x), SWI-Prolog (expert plane only), a libev shared
+library on the host (Woo), and the ASDF dependencies of =llm-log=
+(clop, woo, usocket, quri, cl+ssl, bordeaux-threads, trivial-utf-8) —
+Quicklisp provides all of them.
+
+#+begin_example
+sbcl --noinform --non-interactive \
+     --eval '(ql:quickload :llm-log)' \
+     --eval '(uiop:quit (or (llm-log:main (list "serve" "--port" "8787")) 0))'
+#+end_example
+
+Or from a REPL: =(ql:quickload :llm-log)= then
+=(llm-log:main '("serve"))=. The =$ASDF= rule is Nix-specific; on a plain
+host the standard =require :asdf= bootstrap is fine, and the
+Quicklisp-managed source tree compiles into the user's writable fasl cache.
+
+* Client integration notes (preserved consumer behavior)
+- *gptel / OpenAI-compatible tools*: set the API base to
+  =http://127.0.0.1:8787/openai/v1=; keep the provider's normal API-key
+  mechanism (the =Authorization= header is forwarded upstream untouched).
+- *OpenCode provider/model picker*: same pattern per provider prefix.
+- *Claude Code auth*: point =ANTHROPIC_BASE_URL= at
+  =http://127.0.0.1:8787/anthropic=.
+- *Codex / ChatGPT-style WS clients*: WebSocket relay is slice 6; until it
+  lands, route only HTTP traffic through llm-log.
+
+The proxy never rewrites the provider payloads and never injects or strips
+authentication material.
+
+* Troubleshooting
+| Symptom | Cause | Fix |
+|---+---+---|
+| =Permission denied= on =/nix/store/...-tmp*.fasl= (cffi-grovel, smart-buffer, ...) | Nix-run SBCL loaded the bundled ASDF instead of the wrapper's | load =$ASDF= first; use =proxy/entrypoint.lisp= / =tests/runner.lisp= patterns |
+| =Only one inherited configuration allowed= when adding directories to =CL_SOURCE_REGISTRY= | the wrapper's registry value ends with an inherit marker; appending adds a second | do not fight the env var; add your tree via a Nix package (=buildASDFSystem=) or a source-registry conf file |
+| Test/registry pollution: fasls compiled into =~/quicklisp= under the Nix SBCL | =~/.sbclrc= loaded Quicklisp into the Nix image | run Nix entrypoints with =--no-userinit --no-sysinit= |
+| =ADDRESS-IN-USE-ERROR= on test ports | lingering listener from a previous run | tests allocate per-test port pairs; a stale manual listener must be killed |
+| =USOCKET:TIMEOUT-ERROR ... upstream request failed= behind the proxy | fixture/upstream bound on a different port than the config names (in tests: fixture started outside the port-binding macro) | keep fixture + proxy lifecycle inside =with-fixture-proxy= |
+| Client hangs while relay thread reports done | bytes buffered by Woo's loop-only flush path | the relay owns a blocking client fd-stream by design; see [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]], client socket ownership |
+| =There is no function named DECLARE= at compile time | a =declare= placed where forms are evaluated (=progn= body, macro body not at head of =locally=) | move the declare to the head of a binding/locally form |
+| Multiple-values assertions read the wrong value | =multiple-value-bind= omitted an intermediate value (e.g. headers) | bind all values; =declare= them ignored explicitly |
+
+* Glossary
+| Term | Meaning |
+|---+---|
+| provider | the first path segment of a client request; selects the upstream (e.g. =openai=) |
+| upstream | the configured base URL a request is forwarded to |
+| origin-form target | =path?query= sent on the upstream request line (authority lives in =Host=) |
+| hop-by-hop headers | headers meaningful on one link only (=Connection=, =Transfer-Encoding=, ...); never forwarded |
+| relay thread | per-request thread owning the upstream socket and the client descriptor |
+| fixture | test-side raw-octet upstream used by the transport contract |
+| raw capture | (slice 3) immutable persisted evidence; distinct from derived assertions |
+| Tek9 | canonical durable document/graph KB used by the expert plane |
