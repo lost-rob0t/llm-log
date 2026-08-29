@@ -37,12 +37,32 @@
               exec sbcl --noinform --script ${./expert/entrypoint.lisp} "$@"
             '';
           };
+          # Common Lisp runtime (zero-Python rewrite, research 012). The
+          # wrapper-provided ASDF must be loaded before require :asdf in every
+          # Nix-run entrypoint, see research/LLM-LOG-RESEARCH-012.
+          llmLogClLib = pkgs.sbcl.buildASDFSystem {
+            pname = "llm-log";
+            version = "0.1.0";
+            src = ./proxy;
+            systems = [ "llm-log" ];
+            lispLibs = [ cl.clop ];
+          };
+          llmLogClTests = pkgs.sbcl.buildASDFSystem {
+            pname = "llm-log-tests";
+            version = "0.1.0";
+            src = ./proxy;
+            systems = [ "llm-log/tests" ];
+            lispLibs = [ llmLogClLib cl.rove ];
+          };
+          sbclWithClTests = pkgs.sbcl.withPackages (_: [ llmLogClTests ]);
         in
         {
           default = llmLog;
           llm-log = llmLog;
           llm-log-expert-lib = expertLib;
           llm-log-expert = expertService;
+          llm-log-cl-lib = llmLogClLib;
+          llm-log-cl-tests = llmLogClTests;
         });
 
       homeManagerModules = {
@@ -63,6 +83,7 @@
               pkgs.swi-prolog
               tek9.packages.${system}.tek9
               self.packages.${system}.llm-log-expert
+              self.packages.${system}.llm-log-cl-lib
             ];
           };
         });
@@ -108,6 +129,16 @@
               --eval '(require :asdf)' \
               --eval '(asdf:load-asd #P"${self}/expert/llm-log-expert-test.asd")' \
               --eval '(asdf:test-system "llm-log-expert-test")'
+            touch "$out"
+          '';
+
+          llm-log-config-contract = pkgs.runCommand "llm-log-config-contract" {
+            nativeBuildInputs = [ self.packages.${system}.llm-log-cl-tests ];
+          } ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            sbcl --noinform --no-userinit --no-sysinit --non-interactive \
+              --load ${./proxy/tests/runner.lisp}
             touch "$out"
           '';
         });

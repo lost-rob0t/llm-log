@@ -1,0 +1,166 @@
+#+title: LLM-LOG-RESEARCH-012 — Common Lisp Runtime Slice 1 (Nix-packaged config/CLI)
+#+startup: overview
+
+* Status
+- Lifecycle: IN PROGRESS (bounded first auto-rage cycle for issue #20)
+- Parent substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Zero-Python decision: [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][LLM-LOG-RESEARCH-011]]
+- Scope: migration slice 1 (Common Lisp configuration + CLI) plus the transport
+  library/package decision for later slices.
+
+* Analyze
+The accepted llm-log implementation is Python and is migration debt
+(=llm_log/*.py=, =pyproject.toml=, Python tests, Python Nix package). The
+expert plane is already Common Lisp (=expert/=, system =llm-log-expert=) and is
+consumed through Nix via Tek9's packaged ASDF support. The proxy runtime
+(configuration, CLI, transport, capture, recorder) does not exist in Common
+Lisp yet.
+
+Slice 1 defines the Common Lisp runtime configuration contract:
+- default mutable state root =~/.llm-proxy=;
+- explicit data-directory override wins;
+- listen address and port;
+- upstream registry (provider prefix to base URL);
+- config file layer with strict validation;
+- invalid configuration rejected.
+
+* Research
+** Inbound server / transport library selection
+Requirement: evented HTTP server with streaming writes, no whole-response
+buffering, binary-safe octet traffic, WebSocket support.
+
+- =woo= is the primary server backend (libev event loop, clack middleware
+  compatible, streaming responses, websocket-driver server integration).
+- =lack= / =clack= provide the application adaptation layer; the proxy app
+  stays a raw clack app — no Ningle/Caveman routing framework.
+- =fast-http= for HTTP/1.1 parsing boundaries, =usocket= for TCP,
+  =cl+ssl= for TLS, =quri= for URI parsing/composition.
+- =websocket-driver-server= / =websocket-driver-client= for WS relay.
+- =sento= for actor semantics (recorder actor, supervision) in slice 4.
+- =jsown= retained for JSON (already used by the expert plane).
+- =clop= (TOML 1.0, esrap-based, passes the full BurntSushi/toml-test suite)
+  selected for the configuration file. No hand-written parser.
+
+Dexador is NOT the transparent forwarding path: its header API coalesces
+duplicate headers. It remains acceptable for auxiliary calls only.
+
+** Nix Common Lisp packaging (executed evidence, 2026-08-29)
+The reusable CL runtime closure is built from nixpkgs =sbcl.pkgs=:
+=woo=, =lack=, =clack=, =fast-http=, =usocket=, =cl_plus_ssl=, =quri=,
+=websocket-driver=, =sento=, =bordeaux-threads=, =jsown=, =clop=, =rove= —
+all present in the current channel; Tek9 is consumed as
+=github:lost-rob0t/tek9/a9f5b595f5d965163d2b7c518c72a2efd9be13fe=
+(=sbcl-tek9-0.2.0=; source updated and its Nix package check rebuilt green on
+the pinned revision).
+
+Native dependencies (libev for woo, OpenSSL for cl+ssl) resolve inside the Nix
+closure; no host-wide libev is required. Smoke evidence on the exact branch
+environment: after loading the wrapper-provided ASDF, the full transport stack
+loads and a live =woo:run= listener answered =HTTP/1.1 200= over a usocket
+client round-trip.
+
+** CRITICAL: nixpkgs SBCL ASDF loading rule
+=sbcl.withPackages= fasls are prebuilt under the nixpkgs ASDF (3.3.6) which the
+wrapper exports as =$ASDF=. A bare =(require :asdf)= loads SBCL's bundled ASDF
+(3.3.1) instead; the version skew makes ASDF treat prebuilt dependency fasls as
+stale and recompile them into the read-only store
+(=Permission denied=, e.g. =cffi-grovel= / =smart-buffer= =*-tmpGHU3ALSV.fasl=).
+
+Rule for every Nix-run SBCL entrypoint (executable and tests):
+
+#+begin_src lisp
+  ;; honor the wrapper-provided ASDF before anything else
+  (let ((asdf-fasl (sb-unix::posix-getenv "ASDF")))
+    (when (and asdf-fasl (plusp (length asdf-fasl)))
+      (load asdf-fasl)))
+  (require :asdf)
+  (asdf:load-system ...)
+#+end_src
+
+Executables additionally run with =--no-userinit --no-sysinit= so that a user's
+=~/.sbclrc= (Quicklisp) cannot hijack the source registry of a packaged
+closure.
+
+** Configuration design
+Precedence (low to high): built-in defaults < config file < environment where
+explicitly supported < CLI arguments. Slice 1 supports no environment
+variables; the layer exists in the contract for explicit future additions.
+
+Default config file path: =~/.llm-proxy/config.toml= (a missing file is not an
+error). Schema (strict; unknown keys rejected):
+
+#+begin_src toml
+  data_dir = "/home/user/.llm-proxy"
+  listen = "127.0.0.1"
+  port = 8787
+
+  [upstreams]
+  openai = "https://api.openai.com"
+  openrouter = "https://openrouter.ai"
+  anthropic = "https://api.anthropic.com"
+  # chatgpt = "https://chatgpt.com"
+#+end_src
+
+- =data_dir=, =listen=, =port= are optional top-level keys.
+- =upstreams= is an optional table of name = base-url strings.
+- Upstream values are normalized by stripping one trailing =/=.
+- Invalid content (bad TOML, wrong value types, unknown keys, non-integer or
+  out-of-range port, empty upstream name/value) is an error, never a warning.
+
+CLI (new Common Lisp surface):
+
+#+begin_example
+  llm-log serve [--config PATH] [--data-dir PATH] [--listen ADDR]
+                [--port N] [--upstream NAME=URL]...
+#+end_example
+
+=--upstream= entries replace same-named registry entries from lower layers and
+append new ones. The =~/Documents/AI/proxy= path from the user's dotfiles
+stays a consumer override; the reusable default remains =~/.llm-proxy=.
+
+* Design
+New Common Lisp system =llm-log= in =proxy/= (runtime) with a Rove test
+system =llm-log/tests= runnable through ASDF and Nix. The expert system
+=llm-log-expert= remains untouched. Public API for slice 1:
+
+- =runtime-config= struct: =data-directory=, =listen-address=, =port=,
+  =upstreams=;
+- =default-data-directory=, =default-config-file=;
+- =load-config-file= / =parse-toml-config=;
+- =resolve-config= (merge defaults < file < CLI overrides);
+- =parse-serve-arguments= (strict argument validation);
+- =invalid-configuration= condition.
+
+Nix flake additions (transitional names, Python package untouched until slice
+9): =llm-log-cl-lib= (ASDF closure), =llm-log-cl= (executable), and an
+=llm-log-config-contract= check running the Rove config contract.
+
+* Adversarial review
+** Risk: strict config rejection breaks consumers on harmless unknown keys
+Accepted for slice 1: llm-log controls traffic capture; silent misconfiguration
+is worse than a failed start. The schema is small and versioned by this
+document; growth is explicit.
+
+** Risk: dual Python/CL packages drift
+The flake keeps the Python =llm-log= package untouched during migration; the
+CL surface ships under =llm-log-cl*= names. Slice 9 deletes Python and flips
+=packages.default=. Transitional duplication is bounded by the RED-first
+parity gates.
+
+** Risk: recompile-into-store regression bites other entrypoints
+Mitigated by making the =$ASDF= load rule a required pattern for all Nix-run
+SBCL entrypoints in this repository (expert executable included when touched).
+
+* Decision
+GO for slice 1 as specified: Common Lisp config/CLI in =proxy/= with Rove
+contracts, clop as the TOML parser, Nix-packaged CL closure with the =$ASDF=
+entrypoint rule. RED-first: the config contract is committed and proven failing
+before implementation.
+
+* RED evidence
+(commit: RED config contract — Rove =llm-log/tests= loads =llm-log= system
+which does not implement the configuration surface yet; the contract run
+fails with missing-symbol/load errors, recorded in the commit message.)
+
+* GREEN evidence
+(filled when the exact head executes green)
