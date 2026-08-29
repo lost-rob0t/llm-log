@@ -1,0 +1,80 @@
+#+title: LLM-LOG-RESEARCH-002 — Unified Nix and Standalone Configuration
+#+status: AUTO-RAGE
+#+issue: 4
+
+* Problem
+llm-log already exposes a Nix package and a Home Manager module that can enable a systemd user service, but the standalone CLI is configured only through command-line flags and defaults its capture directory to a relative =data/= path.
+
+That creates two configuration experiences and two different storage defaults. The proxy runtime should have one configuration model regardless of whether it is launched by Home Manager, =nix run=, pip/pipx, or a checkout.
+
+* Decision
+Use one runtime configuration model with two frontends.
+
+** Nix / Home Manager
+Keep =services.llm-log.enable = true= as the service gate. Existing module options remain the declarative source for listener address, port, data directory, classifier state, upstream mapping, package selection, and extra arguments. The module owns the systemd user-service definition.
+
+** Standalone
+Add TOML configuration using Python's standard-library =tomllib=; do not add a configuration dependency.
+
+Default path:
+- =$XDG_CONFIG_HOME/llm-log/config.toml= when =XDG_CONFIG_HOME= is set.
+- =~/.config/llm-log/config.toml= otherwise.
+
+An absent default file is valid. An explicitly requested =--config PATH= that does not exist is an error.
+
+Standalone capture data defaults to:
+- =$XDG_DATA_HOME/llm-log= when =XDG_DATA_HOME= is set.
+- =~/.local/share/llm-log= otherwise.
+
+This makes the standalone default agree with the Home Manager module's XDG intent.
+
+* Configuration schema
+#+begin_src toml
+version = 1
+listen = "127.0.0.1"
+port = 8787
+data_dir = "/path/to/corpus"
+prolog_classifier = true
+
+[upstreams]
+openai = "https://api.openai.com"
+openrouter = "https://openrouter.ai"
+anthropic = "https://api.anthropic.com"
+chatgpt = "https://chatgpt.com"
+#+end_src
+
+Unknown top-level keys and invalid types should fail explicitly instead of being silently ignored.
+
+* Precedence
+Runtime defaults < TOML file < explicit CLI options.
+
+Repeatable =--upstream NAME=URL= values override or add only those provider names; they do not discard unrelated providers loaded from the config file.
+
+The classifier CLI should be a true boolean override so both =--prolog-classifier= and =--no-prolog-classifier= are representable.
+
+* Flake contract
+The flake must continue exposing:
+- =packages.default= / =packages.llm-log=
+- =homeManagerModules.default= / =homeManagerModules.llm-log=
+- =checks=
+- =devShells.default=
+
+Add =apps.default= and =apps.llm-log= pointing at the packaged executable so a user can run =nix run github:lost-rob0t/llm-log -- serve= without installing it.
+
+* Security boundary
+Configuration stores routing and runtime settings only. It does not become a credential store. Provider credentials remain owned by clients and are forwarded transparently; persisted request headers remain redacted by the capture layer.
+
+* Adversarial review
+- A config file must not silently replace all default upstreams merely because it defines one provider; configuration should merge over runtime defaults.
+- CLI provider overrides must be per-key to avoid making one debugging override remove other providers.
+- Explicit missing config paths must fail; otherwise operators may believe a file is active when it is not.
+- Unknown keys must fail to catch misspelled security/runtime options.
+- =~= in configured data paths should expand for normal standalone ergonomics, but Nix-produced absolute paths remain unchanged.
+- Nix should not generate or embed API keys in the store.
+- Home Manager service behavior must remain a user service, not unexpectedly become a privileged system daemon.
+
+* RED-first target
+Before production changes, add tests demonstrating that current main cannot load TOML, does not use XDG standalone defaults, and cannot resolve CLI-over-file precedence / per-provider upstream overrides.
+
+* Auto-RAGE gate
+GO for the bounded configuration-parity slice in issue #4. The requested behavior is additive, uses only the Python standard library, preserves transparent proxy semantics, and has deterministic tests.
