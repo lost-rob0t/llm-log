@@ -25,6 +25,13 @@ Authorization, cookie, and API-key header values are forwarded to the upstream b
 
 ## Standalone configuration
 
+Install from a checkout with normal Python tooling:
+
+```sh
+python -m pip install .
+llm-log serve
+```
+
 The default config path is:
 
 - `$XDG_CONFIG_HOME/llm-log/config.toml`, or
@@ -75,14 +82,13 @@ Run without installing:
 nix run github:lost-rob0t/llm-log -- serve
 ```
 
-Enable the systemd **user** service from Home Manager:
+Enable the systemd **user** service from a Home Manager module:
 
 ```nix
+{ config, inputs, ... }:
 {
-  inputs.llm-log.url = "github:lost-rob0t/llm-log";
+  imports = [ inputs.llm-log.homeManagerModules.llm-log ];
 
-  # Add inputs.llm-log.homeManagerModules.llm-log to your HM modules.
-  # Then configure:
   services.llm-log = {
     enable = true;
     listenAddress = "127.0.0.1";
@@ -98,6 +104,12 @@ Enable the systemd **user** service from Home Manager:
     };
   };
 }
+```
+
+And add the flake input in the consuming flake:
+
+```nix
+inputs.llm-log.url = "github:lost-rob0t/llm-log";
 ```
 
 `services.llm-log.enable = true` installs the package and creates `llm-log.service` under `systemd --user`. The module does not store provider API keys; clients keep their normal authentication and the proxy forwards those headers transparently.
