@@ -83,7 +83,10 @@
             export LLM_LOG_EXPERT_BIN="${expertService}/bin/llm-log-expert"
             mkdir -p "$HOME"
             cd ${self}
-            python -m unittest tests.test_expert_service_red -v
+            python -m unittest \
+              tests.test_expert_service_red \
+              tests.test_reasoner_result_validation_red \
+              -v
             touch "$out"
           '';
         });
