@@ -76,7 +76,7 @@ until process termination. Exit codes: 2 invalid configuration."
       (let* ((config (parse-serve-arguments arguments))
              (server (start-proxy config)))
         (uiop:ensure-all-directories-exist
-         (runtime-config-data-directory config))
+         (list (runtime-config-data-directory config)))
         (format *error-output*
                 "llm-log: listening on ~A:~A; capture root ~A~%"
                 (runtime-config-listen-address config)
