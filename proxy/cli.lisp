@@ -70,20 +70,22 @@
 (defun main (&optional (arguments (uiop:command-line-arguments)))
   "Entry point for the packaged llm-log executable.
 
-Slice 1 delivers configuration/CLI resolution; the transparent transport
-wiring lands with the Common Lisp HTTP slice (research 012). Exit codes:
-2 invalid configuration, 3 configuration valid but transport pending."
+Resolves configuration, starts the transparent Common Lisp proxy and blocks
+until process termination. Exit codes: 2 invalid configuration."
   (handler-case
-      (let ((config (parse-serve-arguments arguments)))
+      (let* ((config (parse-serve-arguments arguments))
+             (server (start-proxy config)))
+        (uiop:ensure-all-directories-exist
+         (runtime-config-data-directory config))
         (format *error-output*
-                "llm-log: configuration valid (data-dir=~A listen=~A ~
-port=~A); transport implementation pending ~
-(research/LLM-LOG-RESEARCH-012)~%"
-                (uiop:native-namestring
-                 (runtime-config-data-directory config))
+                "llm-log: listening on ~A:~A; capture root ~A~%"
                 (runtime-config-listen-address config)
-                (runtime-config-port config))
-        3)
+                (runtime-config-port config)
+                (uiop:native-namestring
+                 (runtime-config-data-directory config)))
+        (loop (sleep 3600))
+        (stop-proxy server)
+        0)
     (invalid-configuration (condition)
       (format *error-output* "llm-log: ~A~%" condition)
       2)))

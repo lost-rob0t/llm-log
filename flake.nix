@@ -45,7 +45,8 @@
             version = "0.1.0";
             src = ./proxy;
             systems = [ "llm-log" ];
-            lispLibs = [ cl.clop ];
+            lispLibs = with cl; [ clop woo usocket quri cl_plus_ssl
+                                  bordeaux-threads trivial-utf-8 ];
           };
           llmLogClTests = pkgs.sbcl.buildASDFSystem {
             pname = "llm-log-tests";

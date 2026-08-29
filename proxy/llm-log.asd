@@ -4,7 +4,9 @@
   :license "MIT"
   :version "0.1.0"
   :serial t
-  :depends-on (#:uiop #:clop)
+  :depends-on (#:uiop #:clop #:woo #:usocket #:quri #:cl+ssl
+                     #:bordeaux-threads #:trivial-utf-8)
   :components ((:file "package")
                (:file "config")
+               (:file "transport")
                (:file "cli")))
