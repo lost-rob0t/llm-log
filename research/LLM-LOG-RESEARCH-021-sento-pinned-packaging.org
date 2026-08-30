@@ -1,0 +1,82 @@
+#+title: LLM-LOG-RESEARCH-021 — Pinned Sento packaging for the recorder actor
+#+startup: overview
+
+* Scope
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- Depends on: =LLM-LOG-RESEARCH-018=, =019=, =020=
+- RED evidence: =evidence/LLM-LOG-EVIDENCE-005-sento-dependency-red.org=
+- Working branch: =rage/10-recorder-deps-red=
+
+This bounded ARADR slice decides only how the selected Sento actor dependency enters the reproducible Common Lisp closure. It does not implement recorder behavior and does not touch Tek9 or dotfiles.
+
+* Analyze
+The independent dependency gate now executes correctly and fails specifically because ASDF cannot find =:sento=. The current flake has no Sento package in any SBCL closure.
+
+The recorder behavioral contract is independently RED because =START-RECORDER= is absent. Dependency GREEN must come first; a mutex-based substitute or a hidden Quicklisp load would invalidate the selected actor architecture.
+
+* Research
+Upstream =mdbergmann/cl-gserver= currently identifies its main ASDF system as =sento= version =3.4.4=. Pin the source by immutable Git commit, not a moving branch. The inspected upstream =sento.asd= declares these runtime dependencies:
+
+- =alexandria=
+- =log4cl=
+- =bordeaux-threads=
+- =cl-speedy-queue=
+- =str=
+- =binding-arrows=
+- =timer-wheel=
+- =local-time-duration=
+- =atomics= on SBCL/non-ABCL
+
+The inspected upstream master head for 3.4.4 is =013ab6370042686e65943568b0d97e33319c0f54=.
+
+The package should use =pkgs.sbcl.buildASDFSystem= and Nix-declared Lisp dependencies. Quicklisp may be the provenance used by Nixpkgs to package individual libraries, but runtime/build resolution must come entirely through the flake closure.
+
+* Design
+1. Add one local Nix package expression for Sento rather than embedding a large dependency stanza repeatedly in =flake.nix=.
+2. Pin upstream =mdbergmann/cl-gserver= to commit =013ab6370042686e65943568b0d97e33319c0f54= and a fixed source hash.
+3. Package only the =sento= runtime ASDF system; do not pull =sento/tests=, remoting, docs, or benchmarks into the recorder runtime.
+4. Bind the package's =lispLibs= only to the declared runtime dependency closure.
+5. Add the resulting package to the SBCL closure used by =common-lisp-recorder-deps=.
+6. Rerun the *identical* =(asdf:load-system :sento)= check. No weakening or replacement of the RED contract is allowed.
+7. Only after GREEN may the expert runtime/test systems declare Sento and implement the RESEARCH-018 recorder API.
+
+* Adversarial review
+** Moving Git branch or unpinned tarball
+Rejected. Actor runtime semantics must not drift underneath an evidence chain.
+
+** Ambient Quicklisp at build or runtime
+Rejected. This would make Home Manager/systemd deployment non-reproducible and would violate the existing flake contract.
+
+** Vendor all transitive sources into llm-log
+Rejected unless a dependency is genuinely unavailable through the pinned Nixpkgs Lisp package set. Prefer existing reusable packages first.
+
+** Pull Sento tests/remoting into production closure
+Rejected. The recorder needs the core actor runtime only.
+
+** Implement recorder before dependency GREEN
+Rejected. It would make failures ambiguous between packaging and behavior.
+
+** Modify Tek9
+Rejected for this slice. Recorder persistence remains raw evidence storage below the symbolic KB boundary; no missing Tek9 primitive has been demonstrated.
+
+** Update dotfiles to this branch
+Rejected. The consumer remains on its stable merged revision until llm-log exposes a merge-ready runtime.
+
+* Decision
+Package pinned Sento 3.4.4 as a first-class Nix/SBCL dependency, using existing Nixpkgs Common Lisp libraries wherever available. Preserve the exact dependency RED as the GREEN gate. Do not implement recorder behavior until that gate passes.
+
+* RED-first acceptance
+- [x] Independent hosted dependency job executed.
+- [x] Exact =common-lisp-recorder-deps= check executed.
+- [x] Failure was specifically =Component :SENTO not found=.
+- [x] No Sento package or recorder implementation existed on the RED head.
+
+* GREEN acceptance
+- [ ] Sento source pinned by commit and fixed hash.
+- [ ] Runtime dependency closure is explicit in Nix.
+- [ ] =(asdf:load-system :sento)= succeeds with no ambient Quicklisp.
+- [ ] Existing recorder behavioral RED remains independently visible.
+- [ ] No Tek9 or dotfiles mutation.
+
+* Result
+ARADR COMPLETE. AUTO-RAGE AUTHORIZED FOR THE PINNED SENTO PACKAGING SLICE ONLY.
