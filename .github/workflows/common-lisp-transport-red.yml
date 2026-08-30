@@ -21,9 +21,16 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify Common Lisp ordinary HTTP contract
+      - name: Verify existing Common Lisp transport contracts stay green
         shell: bash
         run: |
           set -euo pipefail
           nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
-          echo "COMMON_LISP_HTTP_GREEN: lifecycle and raw HTTP fidelity contract passed"
+          echo "COMMON_LISP_HTTP_GREEN: existing transport/capture contracts passed"
+
+      - name: Verify Sento recorder dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+          echo "SENTO_RECORDER_DEPS_GREEN: reproducible actor dependency closure is available"
