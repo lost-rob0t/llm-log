@@ -21,6 +21,8 @@ The hosted check already runs SBCL, so the fixture may use SBCL's socket/thread 
 
 The black-box fixture intentionally uses ordinary HTTP/1.1 over loopback only. TLS, SSE and WebSocket get later independent RED contracts.
 
+Current Python migration behavior routes =/<provider>/<tail>= to the configured provider base URI plus =/<tail>=. The Common Lisp parity contract preserves that consumer-visible routing shape during migration; provider redesign belongs to a later explicit contract.
+
 * Design
 ** Required public runtime surface
 Before the fidelity body can execute, the Common Lisp runtime must expose:
@@ -51,11 +53,11 @@ tea\000pot
 The two =Set-Cookie= fields are deliberately separate. Collapsing them into one comma-joined field is a contract failure.
 
 ** Raw client fixture
-The test sends through llm-log:
+The downstream client sends through llm-log:
 
 #+begin_example
-POST /v1/messages?alpha=1&alpha=2&encoded=%2Fkeep HTTP/1.1
-Host: fixture.invalid
+POST /fixture/v1/messages?alpha=1&alpha=2&encoded=%2Fkeep HTTP/1.1
+Host: 127.0.0.1
 Content-Type: application/octet-stream
 Content-Length: 8
 X-Fidelity: keep-me
@@ -64,7 +66,7 @@ Connection: close
 req\000body
 #+end_example
 
-The request body is octet data and includes NUL. No JSON parser participates.
+The proxy removes the leading provider selector only for upstream routing, so the raw fixture upstream must observe =/v1/messages?alpha=1&alpha=2&encoded=%2Fkeep=. The request body is octet data and includes NUL. No JSON parser participates.
 
 ** Assertions
 The first ordinary-HTTP GREEN must prove:
@@ -77,7 +79,7 @@ The first ordinary-HTTP GREEN must prove:
 7. client receives two distinct =Set-Cookie= fields in original order;
 8. no Python executable/module is needed by this contract.
 
-Hop-by-hop headers are excluded from byte-for-byte equality because a correct proxy may legally rewrite/remove them.
+Hop-by-hop headers are excluded from byte-for-byte equality because a correct proxy may legally rewrite/remove them. Host and Content-Length may also be regenerated as required by forwarding semantics; payload and routing behavior are authoritative.
 
 * Failure semantics
 A fixture bootstrap/socket failure is infrastructure failure and does not count as behavioral RED.
@@ -96,6 +98,9 @@ Resolved: fixture uses SBCL socket primitives only as test machinery. Production
 
 ** Query normalization hides corruption
 Resolved: upstream records the raw request target and the assertion includes repeated query keys plus an encoded slash.
+
+** Provider-prefix migration regression
+Resolved: downstream request includes =/fixture/= and the upstream assertion proves the selector is removed exactly once before forwarding.
 
 ** Text streams corrupt binary bodies
 Resolved: request and response bodies contain NUL and are compared as octets.
