@@ -84,7 +84,7 @@ The dotfiles consumer must not be made GREEN by pinning an upstream head that st
 
 * Decision
 1. #20 is superseded by current explicit architecture and should be closed as not planned/superseded.
-2. #8 and #10 remain open but their zero-Python passages are historical/stale; issue-thread corrections must point to this document and PR #24 until their bodies are fully reconciled.
+2. #8 and #10 remain open and their bodies must state the current Python-transport/Common-Lisp-expert ownership directly; comments alone are insufficient authority.
 3. PR #24 remains the active #10 implementation branch.
 4. PR #24 must remain unmerged until its exact head is green, mergeable and satisfies required review/discussion gates.
 5. dotfiles PR #172 remains RED-only until an eligible upstream revision exists; do not advance the pin merely because the code is technically green.
@@ -104,3 +104,6 @@ The next production mutation remains the dotfiles consumer transaction only afte
 - unchanged consumer contract moves from the already-executed RED to GREEN.
 
 Until those prerequisites hold, no production consumer mutation is authorized.
+
+* 2026-08-30 bounded reconciliation execution
+Remote inspection again found #8/#10 bodies still declaring zero-Python ownership despite their later correction comments and PR #24's canonical split. This run therefore executes the governance part of the decision: rewrite both issue bodies so the top-level backlog authority matches this Org document. This is a documentation/governance mutation, not a production behavior change, so no synthetic RED is claimed or required. The active production head remains otherwise unchanged; exact-head GREEN is still required before merge or dotfiles consumption.
