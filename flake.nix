@@ -96,9 +96,7 @@
             touch "$out"
           '';
 
-          # Authoritative zero-Python transport RED/GREEN gate.  The current
-          # pre-HTTP branch is expected to fail specifically because the CL
-          # proxy lifecycle functions do not exist yet.
+          # Authoritative zero-Python transport RED/GREEN gate.
           common-lisp-transport-contract = pkgs.runCommand "llm-log-common-lisp-transport-contract" {
             nativeBuildInputs = [ transportTestSbcl ];
           } ''
@@ -108,6 +106,20 @@
               --eval '(require :asdf)' \
               --eval '(asdf:load-asd #P"${self}/expert/llm-log-expert-test.asd")' \
               --eval '(asdf:test-system "llm-log-expert-test")'
+            touch "$out"
+          '';
+
+          # RESEARCH-019 RED: this must fail on the untouched dependency
+          # closure until Sento/cl-gserver and every transitive Lisp system
+          # are explicitly pinned and packaged. Ambient Quicklisp is forbidden.
+          common-lisp-recorder-deps = pkgs.runCommand "llm-log-common-lisp-recorder-deps" {
+            nativeBuildInputs = [ transportTestSbcl ];
+          } ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            sbcl --noinform --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-system :sento)'
             touch "$out"
           '';
         });
