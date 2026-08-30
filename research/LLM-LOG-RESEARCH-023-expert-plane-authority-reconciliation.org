@@ -1,0 +1,118 @@
+#+title: LLM-LOG-RESEARCH-023 — Expert-plane authority reconciliation
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Active substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Canonical predecessor: =research/LLM-LOG-RESEARCH-004-symbolic-expert-plane.org=
+- Working branch: =rage/10-expert-runtime-red=
+
+* Analyze
+Current remote state contains a later issue-level “zero Python” direction that conflicts with the current explicit program boundary and with canonical =LLM-LOG-RESEARCH-004=.
+
+The authoritative boundary for this cycle is therefore restored to the canonical expert-plane split:
+
+#+begin_example
+Python llm-log proxy
+  - transparent HTTP/SSE/WebSocket transport
+  - provider compatibility
+  - immutable raw capture
+  - capture-time redaction policy
+          |
+          | versioned local observation/query protocol
+          v
+Common Lisp expert service
+  - runtime lifecycle
+  - typed domain objects
+  - Tek9 access and bounded indexed materialization
+  - SWI-Prolog supervision
+  - result validation
+  - derived assertion persistence
+          |                         \
+          v                          v
+Tek9                              SWI-Prolog
+canonical durable KB             declared facts/rules/inference
+#+end_example
+
+Current explicit user constraints outrank conflicting older issue text. Python must not become a second rule engine, but it remains the capture/transport owner.
+
+* Research
+** Recorder evidence
+PR #23 exact head =076295de2737e0cb946140056251732540ef7f3f= completed hosted run =33301131087= successfully.
+
+The unchanged recorder contract now proves:
+- twelve concurrent acknowledged submissions publish exactly twelve complete events;
+- event metadata/request/response bodies remain internally isolated;
+- failure-before-publish returns failure rather than false acknowledgement;
+- failed staging work never enters the committed namespace;
+- a later command succeeds after bounded recovery;
+- the Sento dependency closure remains reproducibly loadable.
+
+This is valid implementation evidence for the Sento actor and its atomic publication semantics. It does *not* authorize changing raw-capture ownership from Python to Common Lisp.
+
+** Expert-runtime finding
+The same hosted build emits a concrete warning in =expert/prolog-supervisor.lisp=: =%prolog-worker-path= passes the unquoted form =#:llm-log-expert= to =asdf:system-relative-pathname=. SBCL therefore reports an undefined variable while compiling the expert system.
+
+This path is on the #10 expert-runtime boundary and is a better next implementation target than additional Common Lisp proxy/recorder migration.
+
+** Tek9 boundary
+The current llm-log flake already consumes Tek9 as a packaged dependency. Tek9 currently exposes the document/index/graph primitives needed for #10 and has no open issue or pull-request backlog requiring a database mutation. No missing generic Tek9 primitive has been demonstrated in this cycle.
+
+* Design
+The next bounded #10 contract SHALL exercise the real Common Lisp -> Tek9 -> SWI-Prolog substrate rather than transport migration.
+
+Minimum typed integration contract:
+1. create one temporary expert host with one Tek9 environment;
+2. persist a typed source observation in Tek9;
+3. retrieve it by an explicit bounded/indexed lookup rather than corpus scan;
+4. materialize only the declared facts for the test observation;
+5. invoke the declared =event_transport= Prolog operation through the persistent worker;
+6. validate protocol version, request correlation, operation, status and bounded result shape;
+7. persist the derived assertion separately from the immutable source evidence with source ID, rule/version and expert/version provenance;
+8. verify a second request reuses the live worker/session;
+9. verify an unknown operation is rejected before any callable Prolog term is constructed;
+10. verify timeout/crash invalidates the in-flight request and no implicit replay occurs.
+
+The test must use a temporary database and fixture worker/rules. It must not require or load the full capture corpus.
+
+* Local protocol
+Keep the versioned observation/query boundary from RESEARCH-004. Python sends typed observations and consumes typed results. It does not execute expert rules.
+
+Fail-open remains the proxy default when the expert service is absent or invalid. =require_expert_plane= is the explicit fail-closed mode.
+
+* Provenance separation
+- Raw capture evidence: immutable and Python-owned.
+- Derived Tek9 assertions: expert-owned, source-linked, versioned and supersedable.
+- Research/design: files under =research/=, including this file.
+- Implementation/test evidence: files under =evidence/=; never substitute a prose claim for executed RED/GREEN evidence.
+
+Credentials are excluded from Tek9 facts, Prolog facts, Nix strings, research prose and logs unless explicitly intended and safely redacted.
+
+* Nix and non-Nix
+The existing flake remains the reproducible Nix path for SBCL, Tek9 and SWI-Prolog. The same Common Lisp service contract must remain launchable outside Nix with ordinary runtime configuration and an explicit worker path override.
+
+The dotfiles consumer remains configuration-only and preserves =~/Documents/AI/proxy=; no consumer mutation is required for this substrate slice.
+
+* Adversarial review
+** Risk: treating recorder GREEN as authority to migrate capture into Common Lisp
+Decision: rejected. Recorder GREEN proves an actor behavior, not architecture ownership. PR #23 must not be wired into live raw capture under the current program boundary.
+
+** Risk: fixing the compiler warning without a behavioral contract
+Decision: rejected. Add an executable Common Lisp/Tek9/SWI-Prolog RED first; then make the minimum production correction.
+
+** Risk: hiding database scans behind a convenience helper
+Decision: reject any contract that loads the entire Tek9 corpus into Prolog. Acceptance must demonstrate bounded retrieval by identity/index/graph neighborhood.
+
+** Risk: arbitrary Prolog execution
+Decision: host operations remain an allowlist; request/model data cannot provide callable terms or predicate names.
+
+** Risk: transport HTTP 200 becomes outcome truth
+Decision: unchanged. Transport evidence and outcome labels remain distinct.
+
+* Decision
+GO: return #10 to the expert-runtime substrate defined by RESEARCH-004.
+
+AUTO-RAGE next mutation is RED-first Common Lisp/Tek9/SWI-Prolog integration, beginning with the currently observable Prolog worker-path/runtime defect and extending only far enough to prove one bounded typed round trip.
+
+HOLD: live Common Lisp capture integration, SSE/WebSocket migration, provider-census implementation, #12/#13/#15/#17 production work, and dotfiles changes until #10 substrate is GREEN.
