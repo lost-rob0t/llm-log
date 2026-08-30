@@ -1,4 +1,4 @@
-name: Common Lisp expert contract
+name: Expert plane contracts
 
 on:
   push:
@@ -26,3 +26,20 @@ jobs:
         run: |
           set -euo pipefail
           nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract
+
+  python-expert-policy-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute Python proxy expert-policy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command python -m unittest tests.test_expert_proxy_policy -v
