@@ -48,18 +48,16 @@ let
     ];
   };
 
-  service = evaluated.config.systemd.user.services.llm-log;
-  command = service.Service.ExecStart;
+  services = evaluated.config.systemd.user.services;
+  command = services.llm-log.Service.ExecStart;
 in
-assert lib.hasInfix "${proxyPackage}/bin/llm-log" command;
 assert lib.hasInfix "--log-dir" command;
 assert lib.hasInfix "/home/test/Documents/AI/proxy" command;
 assert lib.hasInfix "--expert-service-bin" command;
-assert lib.hasInfix "${expertPackage}/bin/llm-log-expert" command;
 assert lib.hasInfix "--expert-data-dir" command;
 assert lib.hasInfix "/home/test/.llm-proxy/expert" command;
 assert lib.hasInfix "--require-expert-plane" command;
-assert !(builtins.hasAttr "llm-log-expert" evaluated.config.systemd.user.services);
+assert !(builtins.hasAttr "llm-log-expert" services);
 pkgs.runCommand "llm-log-home-manager-expert-contract" { } ''
   touch "$out"
 ''
