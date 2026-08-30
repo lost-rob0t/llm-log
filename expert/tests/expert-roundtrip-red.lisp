@@ -1,4 +1,4 @@
-(in-package #:llm-log-expert-test)
+(in-package #:llm-log-expert-integration-test)
 
 (defun %temporary-expert-directory ()
   (uiop:ensure-directory-pathname
