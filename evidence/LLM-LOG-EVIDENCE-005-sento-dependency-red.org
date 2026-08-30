@@ -1,0 +1,49 @@
+#+title: LLM-LOG-EVIDENCE-005 — Sento dependency closure RED
+#+startup: overview
+
+* Scope
+- Parent issue: https://github.com/lost-rob0t/llm-log/issues/10
+- Research: =research/LLM-LOG-RESEARCH-020-recorder-dependency-red-execution.org=
+- Executed branch/head: =rage/10-expert-runtime-red= at =b914ec05fd4e3e8a29133d0984ec58213b10c1a4=
+- Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33294213110
+
+This file is implementation/test evidence only. It does not redefine the recorder architecture.
+
+* Executed contract
+The independent =common-lisp-recorder-deps= job installed Nix successfully and executed the exact declared closure gate:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+#+end_src
+
+That check launched SBCL from the flake-declared dependency closure and evaluated:
+
+#+begin_src lisp
+(asdf:load-system :sento)
+#+end_src
+
+No ambient Quicklisp was used.
+
+* Observed RED
+The build reached SBCL/ASDF and failed with the intended missing dependency condition:
+
+#+begin_example
+ASDF/FIND-COMPONENT:MISSING-COMPONENT
+Component :SENTO not found
+#+end_example
+
+This is a valid dependency RED. It is not a Nix installer failure, network bootstrap failure, skipped step, or unrelated transport failure.
+
+The transport job ran independently. Its existing HTTP/capture assertions were GREEN through the immutable capture/redaction slice; the job remained RED specifically on the already-known recorder contract because =LLM-LOG-EXPERT::START-RECORDER= is still absent. That recorder behavioral RED remains separate from this dependency-closure RED.
+
+* Separation of evidence
+- Raw LLM traffic capture evidence: unchanged.
+- Derived assertions/Tek9 state: unchanged.
+- Research/design: RESEARCH-018 through RESEARCH-020.
+- Packaging execution evidence: this file.
+- Recorder behavioral RED: existing Common Lisp Rove recorder contract.
+
+* Result
+VALID RED.
+
+The preimplementation packaging baseline is now independently established. AUTO-RAGE may package a pinned Sento 3.4.4 dependency closure and rerun this exact check. Recorder production code remains blocked until the dependency gate is GREEN.
