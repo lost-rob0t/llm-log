@@ -48,3 +48,30 @@ jobs:
             tests.test_expert_transport_lifecycle \
             tests.test_expert_launch_config \
             -v
+
+  home-manager-expert-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute #10 Home Manager expert wiring contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L --impure --expr '
+            let
+              flake = builtins.getFlake (toString ./.);
+              pkgs = import flake.inputs.nixpkgs { system = "x86_64-linux"; };
+            in
+              import ./nix/tests/home-manager-expert.nix {
+                self = flake;
+                inherit pkgs;
+                lib = pkgs.lib;
+              }
+          '
