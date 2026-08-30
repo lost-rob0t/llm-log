@@ -1,0 +1,80 @@
+#+title: LLM-LOG-EVIDENCE-012 — Python/Common Lisp adapter RED and exact-blob GREEN
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Design: =research/LLM-LOG-RESEARCH-028-python-common-lisp-expert-adapter.org=
+
+This file is implementation/test evidence only. It is separate from immutable raw capture evidence and from canonical research/design.
+
+* Valid hosted RED
+- Exact pre-implementation head: =adabdf532edde833a66458739b3a389593ec3c17=
+- Hosted workflow run: =33316177583=
+- Python job: =99269936952=
+- Command: =nix develop --command python -m unittest tests.test_expert_proxy_policy tests.test_expert_adapter -v=
+
+The exact head checked out successfully. All four pre-existing Python expert-policy cases passed. The independent Common Lisp/Tek9/SWI-Prolog integration job also passed. The adapter suite then failed at import with:
+
+#+begin_example
+ModuleNotFoundError: No module named 'llm_log.expert_adapter'
+#+end_example
+
+This is the intended product-boundary RED: the concrete long-lived Python -> Common Lisp adapter did not exist. No production mutation preceded this RED.
+
+* Production mutation
+- Commit: =e87d51d8dc74cc3106c1b7e33fe5d0a77141fe37=
+- Production blob: =llm_log/expert_adapter.py= / Git blob =893063bd338af25c6bf9162c4dd93943e73c8b1f=
+
+The implementation adds =SubprocessExpertPlane= with:
+- one owned long-lived subprocess;
+- protocol-v1 newline-delimited JSON;
+- serialized request/reply exchanges through one async lock;
+- explicit =start= / =close= lifecycle;
+- bounded reply deadlines;
+- child invalidation on timeout, EOF, pipe failure, malformed JSON, malformed reply, or malformed result;
+- no automatic replay after an ambiguous exchange;
+- no =call_prolog=, =query_goal=, or other raw-goal API.
+
+It does not implement expert rules in Python. Common Lisp remains the expert runtime and only Tek9 client; SWI-Prolog remains inference authority.
+
+* Fixture correction — not product evidence
+The original timeout helper used a very short =0.05= second deadline and iterated =sys.stdin=. Exact-blob execution showed that scheduler/startup timing and buffered helper input could prevent the helper from recording that it had consumed the one request before the adapter correctly timed out and killed it.
+
+Those failures are not counted as product RED or GREEN. The fixture was corrected only to make its intended observation deterministic:
+- =4112ec96635e46cb062d2787dde610435e8f6d57=: first timing-margin correction;
+- =4bf4120fe934b40ee948981fc7de16ef19892374=: helper consumes exactly one request with =readline()=;
+- =c5b5eda0a35f859bc089ff785931f697f0cb9ad0=: ordinary helper deadlines raised to 5 seconds and the deliberate timeout case to 2 seconds against a 10-second hang.
+
+The semantic assertion is unchanged: one request is observed, the exchange times out, and it is never replayed.
+
+* Exact-remote-blob GREEN
+Current corrected contract blob at =c5b5eda0a35f859bc089ff785931f697f0cb9ad0=:
+- adapter blob: =893063bd338af25c6bf9162c4dd93943e73c8b1f=
+- test blob: =e668c29b1d55610dc5dcfebb630f89403349b0f0=
+
+Those exact Git blobs were executed together locally with:
+
+#+begin_example
+PYTHONPATH=. python -m unittest tests.test_expert_adapter -v
+#+end_example
+
+The unchanged five semantic cases passed in three consecutive executions:
+1. one child reused across two protocol-v1 health requests;
+2. malformed reply fails;
+3. EOF fails after exactly one observed request and is not replayed;
+4. timeout fails after exactly one observed request and is not replayed;
+5. no arbitrary Prolog-goal API exists.
+
+This is local exact-remote-blob GREEN. It is *not* a claim that GitHub Actions executed the post-production head: commits written through the GitHub API did not produce a new push workflow run during this bounded cycle. The earlier hosted RED remains authoritative for the pre-implementation failure, and hosted current-head GREEN remains outstanding.
+
+* Boundary
+- No Tek9 repository mutation was required; current public APIs remain sufficient.
+- No dotfiles mutation was made.
+- No provider-census work displaced #10.
+- No #12/#13/#15/#17 implementation was started.
+- The consumer capture path remains =~/Documents/AI/proxy=.
+- PR #5 remains a separate configuration transaction.
+
+* Result
+The concrete adapter behavior is locally GREEN against exact remote blobs after a legitimate hosted missing-adapter RED. Merge eligibility is not established until the exact final head has the required checks/reviews/discussions.
