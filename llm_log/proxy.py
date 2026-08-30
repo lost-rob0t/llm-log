@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
+from .expert_adapter import SubprocessExpertPlane
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
@@ -300,8 +301,15 @@ def build_app(
             timeout=ClientTimeout(total=timeout_seconds),
             auto_decompress=False,
         )
+        if isinstance(expert_plane, SubprocessExpertPlane):
+            try:
+                await expert_plane.start()
+            except Exception:
+                pass
 
     async def cleanup(application: web.Application) -> None:
+        if isinstance(expert_plane, SubprocessExpertPlane):
+            await expert_plane.close()
         session = application.get(_SESSION_KEY)
         if session is not None:
             await session.close()
