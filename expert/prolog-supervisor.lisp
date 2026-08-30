@@ -17,7 +17,7 @@
     (if (and configured (plusp (length configured)))
         (pathname configured)
         (asdf:system-relative-pathname
-         #:llm-log-expert
+         "llm-log-expert"
          #P"prolog/worker.pl"))))
 
 (defun %prolog-timeout-seconds ()
