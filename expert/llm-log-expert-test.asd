@@ -8,7 +8,8 @@
                 :serial t
                 :components ((:file "package")
                              (:file "transport-red")
-                             (:file "capture-red"))))
+                             (:file "capture-red")
+                             (:file "recorder-red"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))
              (unless (uiop:symbol-call :rove :run :llm-log-expert-test)
