@@ -6,7 +6,7 @@ let
     owner = "mdbergmann";
     repo = "cl-gserver";
     rev = "013ab6370042686e65943568b0d97e33319c0f54";
-    hash = pkgs.lib.fakeHash;
+    hash = "sha256-z+AKk8Y09rpF+NgyKhcHNvn0jsjeGe3dSibkv8yySKg=";
   };
 in
 pkgs.sbcl.buildASDFSystem {
