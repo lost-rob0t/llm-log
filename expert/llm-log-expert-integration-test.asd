@@ -7,7 +7,8 @@
   :components ((:module "tests"
                 :serial t
                 :components ((:file "integration-package")
-                             (:file "expert-roundtrip-red"))))
+                             (:file "expert-roundtrip-red")
+                             (:file "reasoner-failure-red"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))
              (unless (uiop:symbol-call :rove :run :llm-log-expert-integration-test)
