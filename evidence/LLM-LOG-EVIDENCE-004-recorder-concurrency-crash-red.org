@@ -1,0 +1,70 @@
+#+title: LLM-LOG-EVIDENCE-004 — Recorder concurrency/crash RED
+#+startup: overview
+
+* Scope
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Design: =research/LLM-LOG-RESEARCH-018-single-writer-recorder-crash-contract.org=
+- Branch: =rage/10-expert-runtime-red=
+
+* Immutable RED baseline
+- Head: =b0773366f830424ce49ab955ab22860a49803dec=
+- Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33289740093
+- Job: =99199157484=
+- Gate:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
+#+end_src
+
+* Control contracts remained GREEN
+The hosted run reached the Common Lisp/Rove system successfully. Existing contracts passed before the new recorder assertions:
+
+- Common Lisp proxy lifecycle/config surface;
+- ordinary finite HTTP method/path/query/header/status/body fidelity;
+- distinct duplicate =Set-Cookie= forwarding;
+- immutable finite-HTTP capture;
+- upstream credential forwarding unchanged;
+- persisted credential redaction;
+- exact NUL-containing request/response body evidence.
+
+Therefore this RED is not an environment/bootstrap failure and does not regress the already-proven finite HTTP slice.
+
+* Intended RED observed
+Both new recorder contracts failed at the declared recorder lifecycle boundary with:
+
+#+begin_example
+SIMPLE-ERROR: Missing recorder contract function LLM-LOG-EXPERT::START-RECORDER
+#+end_example
+
+Observed failing contracts:
+- =COMMON-LISP-RECORDER-CONCURRENCY-RED=
+- =COMMON-LISP-RECORDER-CRASH-RED=
+
+This is the intended baseline: the current product still writes capture files directly from per-client transport workers and has no single-writer recorder actor/publication lifecycle.
+
+* What the RED now requires
+The unchanged contract will require production code to prove:
+
+1. one recorder ownership boundary accepts concurrent producers;
+2. twelve acknowledged submissions publish exactly twelve complete committed events;
+3. bodies/metadata do not cross-contaminate between events;
+4. deterministic failure before publish returns failure rather than false success;
+5. a failed staging write cannot expose a partial committed event;
+6. an already committed prior event survives the failure;
+7. a later command succeeds after bounded recovery without automatic ambiguous replay.
+
+* Production mutation state
+No recorder production implementation was added after this RED in this bounded cycle.
+
+The selected design uses Sento/cl-gserver for actor ownership. Reproducible Sento/cl-gserver consumption through the pinned Nix/ASDF build has not yet been established. The current flake does not contain that dependency, and current package discovery did not establish a pinned nixpkgs package for it.
+
+Per the design decision, do not replace the actor boundary with an ad-hoc mutex/shared-state recorder merely to turn the test GREEN. First make the selected actor dependency reproducibly packageable, then implement against this exact RED contract.
+
+* Tek9 / consumer boundary
+This RED does not cross the symbolic database boundary, so no Tek9 mutation is justified.
+
+No =lost-rob0t/dotfiles= mutation is part of this evidence. The consumer must remain pinned to the merged llm-log baseline until the Common Lisp runtime transaction is actually ready for consumption.
+
+* Result
+RED CONFIRMED. Production recorder actor remains unimplemented. No GREEN claim and no merge authorization.
