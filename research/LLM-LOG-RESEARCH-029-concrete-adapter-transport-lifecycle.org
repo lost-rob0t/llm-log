@@ -1,0 +1,46 @@
+#+title: LLM-LOG-RESEARCH-029 — Concrete expert adapter transport lifecycle
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+Bounded Auto-ARADR decision for exercising the concrete Python -> Common Lisp expert adapter through the real Python HTTP/WebSocket capture proxy. This document supersedes conflicting zero-Python issue prose for this boundary: Python remains transparent capture/transport; Common Lisp owns expert runtime, Tek9 and SWI-Prolog supervision.
+
+* Analyze
+Current =build_app= accepts an =expert_plane= and invokes =health()= before both ordinary HTTP and WebSocket forwarding. =SubprocessExpertPlane= exists and owns a long-lived JSON-lines child, but its =start()/close()= lifecycle is not connected to the aiohttp application lifecycle. Passing a fresh concrete adapter with =require_expert_plane=true= therefore cannot become healthy without an external launcher starting it first. That leaves the concrete integration unproven even though fake expert-policy tests and isolated adapter tests are GREEN.
+
+* Research
+The proxy already has one bounded startup/cleanup authority for its =ClientSession= and =RecorderActor=. The least-coupled integration is to treat expert lifecycle as an optional declared capability: if the configured expert object exposes async =start= and =close=, app startup starts it after the recorder and app cleanup closes it before recorder shutdown. The proxy must not know Tek9, Prolog, or Common Lisp internals.
+
+The same pre-forward health gate sits before the HTTP/WebSocket branch, so dedicated WebSocket conformance is required rather than inferring parity from source placement.
+
+* Design
+** Typed boundary
+- Python calls only declared adapter methods; no raw Prolog goal API.
+- Concrete adapter remains one serialized long-lived Common Lisp subprocess.
+- Common Lisp remains sole Tek9 client and Prolog supervisor.
+
+** Failure semantics
+- expert start/health failure with default policy: proxy remains available and forwarding is fail-open;
+- explicit =require_expert_plane=true=: request/upgrade returns 503 before upstream contact;
+- ambiguous adapter exchange is never implicitly replayed;
+- cleanup is bounded and must not mutate raw capture evidence.
+
+** Transport acceptance
+RED-first fixtures must use the concrete =SubprocessExpertPlane= and real aiohttp upstreams, proving:
+1. app startup owns concrete adapter startup;
+2. required healthy HTTP forwards and reuses the child;
+3. unavailable HTTP fails open by default and fails closed when required;
+4. required healthy WebSocket upgrades and relays frames;
+5. unavailable WebSocket fails open by default and fails closed before upstream upgrade when required;
+6. app cleanup terminates the owned child;
+7. capture/redaction behavior remains unchanged.
+
+* Adversarial review
+Do not make every structural =ExpertPlane= fake require lifecycle methods; lifecycle should be optional/capability-based so existing policy tests remain valid. Do not start a replacement child on a failed in-flight exchange. Do not put credentials or protocol payloads in lifecycle logs. Do not modify Tek9: no missing database primitive is implicated.
+
+* Decision
+Add and execute a test-only concrete transport lifecycle contract against the current head before production mutation. The expected first RED is that a fresh =SubprocessExpertPlane= is not started by =build_app=, causing required-mode transport to fail despite a healthy child command. Only after that exact failure is observed may production startup/cleanup wiring be added.
+
+Dotfiles and PR #5 remain separate transactions. The consumer capture path remains =~/Documents/AI/proxy=.
