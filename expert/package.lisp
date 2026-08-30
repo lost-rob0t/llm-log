@@ -35,6 +35,10 @@
    #:current-kb-revision
    #:project-request-event
    #:fetch-request-event
+   #:assertion-conflict
+   #:assertion-conflict-assertion-id
+   #:persist-derived-assertion
+   #:fetch-derived-assertion
    #:derive-event-transport
    #:dispatch-expert-request
    #:serve-stdio
