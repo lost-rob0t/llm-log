@@ -1,0 +1,88 @@
+#+title: LLM-LOG-RESEARCH-027 — Python expert fail-open / fail-closed boundary
+#+startup: overview
+
+* Scope and authority
+Parent: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+This document records the current explicit architecture for this program. It supersedes conflicting older zero-Python prose in #8, #10, #20, and RESEARCH-011 for the capture/expert ownership boundary:
+
+- Python llm-log owns transparent HTTP/SSE/WebSocket forwarding and immutable raw capture.
+- Common Lisp owns the expert runtime, typed objects, Tek9 access, bounded fact materialization, SWI-Prolog supervision, result validation, and derived assertion persistence.
+- Tek9 is the canonical durable expert document/graph KB.
+- SWI-Prolog owns declared facts/rules/inference.
+- Python must not grow a second rule engine.
+
+Raw capture evidence, expert assertions, research/design, and implementation evidence remain separate artifacts.
+
+* Analyze
+Current Python =build_app= forwards directly to an upstream and has no expert availability policy. The Common Lisp service already exposes a versioned =health= operation over framed JSON-lines stdio and returns typed reasoner failures. The proxy therefore lacks the required integration invariant: expert failure must be fail-open by default, while explicit =require_expert_plane= must fail closed before forwarding.
+
+No Tek9 change is required for this slice. Availability is a runtime boundary; querying or mutating the database from Python would violate ownership.
+
+* Research / typed contract
+The proxy accepts an expert availability capability with one declared async operation:
+
+#+begin_src python
+class ExpertPlane(Protocol):
+    async def health(self) -> None: ...
+#+end_src
+
+Success means the configured Common Lisp expert endpoint answered its declared health contract. Any exception means unavailable for the current request. The Python side does not interpret Prolog facts or derive policy.
+
+The local service protocol remains versioned JSON-lines. A later concrete process/socket adapter may satisfy =ExpertPlane=; the proxy policy itself depends only on the typed capability so deterministic tests can use a fake without booting Tek9/SWI.
+
+* Request semantics
+Before opening an upstream HTTP request or WebSocket connection:
+
+1. If no expert capability is configured and =require_expert_plane=false=, forward normally.
+2. If an expert capability is configured, call =health=.
+3. If health succeeds, forward normally.
+4. If health fails and =require_expert_plane=false=, forward normally. Expert unavailability is not authority to drop user traffic.
+5. If health fails and =require_expert_plane=true=, return HTTP 503 and do not contact the upstream.
+6. If =require_expert_plane=true= and no expert capability exists, return HTTP 503 and do not contact the upstream.
+
+This gate applies equally before HTTP/SSE and WebSocket upstream establishment. It does not alter provider bodies, credentials, headers, model selection, or capture format.
+
+* Failure and privacy semantics
+- The failure response is bounded and generic; it must not serialize subprocess stderr, credentials, request bodies, or expert internals.
+- Fail-open forwarding still records raw traffic through the existing recorder.
+- Fail-closed requests are not upstream traffic and must not be misrepresented as provider success.
+- Classification metadata never grants authority.
+- No automatic retry of ambiguous expert inference is introduced here.
+- =require_expert_plane= is an explicit operator policy, never inferred from request classification or model output.
+
+* Nix / non-Nix
+This slice does not alter PR #5 configuration. The policy is exposed as a =build_app= runtime argument so #5 can later wire TOML/CLI/Home Manager configuration as a separate transaction without contaminating its branch.
+
+The existing flake remains. A Python contract check may exercise this boundary in the Nix Python closure. The Common Lisp expert executable remains independently reproducible with SBCL, Tek9, and SWI-Prolog.
+
+The consumer override =~/Documents/AI/proxy= remains unchanged.
+
+* Adversarial review
+**Failure storm:** health can fail repeatedly. Default behavior must continue forwarding; required mode must remain a bounded 503 rather than hang.
+
+**Authority confusion:** a classifier or expert result cannot switch fail-closed mode. Only explicit runtime configuration may do so.
+
+**Credential leak:** health receives no request payload or auth material in this slice. Returned errors are not copied to client responses or capture prose.
+
+**Upstream side effects:** required-mode availability must be checked before opening the upstream connection. The RED must count upstream hits and prove zero hits while unavailable.
+
+**WebSocket bypass:** WebSocket upgrade must traverse the same availability gate before =ws_connect=.
+
+**False GREEN:** unit tests that only call a helper are insufficient. Acceptance must start a real aiohttp upstream and proxy, perform client requests, and assert forwarding / non-forwarding behavior.
+
+* Decision
+Implement one bounded policy gate in Python transport, behind a fresh executable RED. Do not modify Tek9, Prolog rules, Common Lisp inference, dotfiles, provider registry, or #12/#13/#15/#17.
+
+* Exact RED-first acceptance
+On the untouched production proxy, add a test contract that attempts to construct/use =build_app(..., expert_plane=..., require_expert_plane=...)= and proves the missing boundary.
+
+Required cases:
+- unavailable expert + default policy -> upstream receives request and caller receives upstream 200;
+- unavailable expert + =require_expert_plane=true= -> caller receives 503 and upstream hit count stays zero;
+- missing expert + =require_expert_plane=true= -> 503 and zero upstream hits;
+- healthy expert + required mode -> upstream receives request and caller receives upstream 200;
+- expert failure text is absent from the 503 body.
+
+The baseline RED is valid only if existing capture/proxy tests remain otherwise healthy and the failure is specifically the absent expert-policy surface/behavior. After that exact RED is recorded, production mutation may make the same contract GREEN.
