@@ -1,4 +1,4 @@
-name: Common Lisp transport RED
+name: Common Lisp transport contract
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  common-lisp-transport-red:
+  common-lisp-transport-contract:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact head
@@ -21,23 +21,9 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify authoritative contract is behaviorally RED
+      - name: Verify Common Lisp ordinary HTTP contract
         shell: bash
         run: |
-          set -uo pipefail
-          log="$RUNNER_TEMP/common-lisp-transport-red.log"
-          set +e
-          nix build -L .#checks.x86_64-linux.common-lisp-transport-contract 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            echo "ERROR: Common Lisp transport contract unexpectedly passed" >&2
-            exit 1
-          fi
-
-          grep -F "Common Lisp must expose START-HTTP-PROXY" "$log"
-          grep -F "Common Lisp must expose STOP-HTTP-PROXY" "$log"
-          grep -F "Common Lisp must expose PROXY-LISTEN-PORT" "$log"
-
-          echo "EXPECTED_RED_CONFIRMED: missing Common Lisp HTTP proxy lifecycle"
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
+          echo "COMMON_LISP_HTTP_GREEN: lifecycle and raw HTTP fidelity contract passed"
