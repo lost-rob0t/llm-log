@@ -1,0 +1,71 @@
+#+title: LLM-LOG-RESEARCH-020 — Recorder dependency RED execution correction
+#+startup: overview
+
+* Scope
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- Supersedes the execution claim in =LLM-LOG-RESEARCH-019= only; its recorder architecture remains unchanged.
+- Baseline: merged =main= after PR #18.
+- Working branch: =rage/10-recorder-deps-red=
+
+This bounded ARADR pass corrects the recorder dependency evidence chain before any Sento packaging or recorder production mutation.
+
+* Analyze
+PR #18 has merged into =main=. The old =rage/10-expert-runtime-red= head is now an ancestor of main and is no longer the correct place for new unmerged production work.
+
+Hosted run 33291976121 on =dffa8616afe9bbeeedca64394351bec16e15e394= concluded failure, but the failure occurred in the existing Common Lisp transport-contract step. The later =Verify Sento recorder dependency closure= step was skipped. Therefore that run is NOT valid evidence that the Sento dependency contract is RED.
+
+The current workflow serializes the transport and recorder-dependency checks in one job. A failure in the unrelated prerequisite check prevents the recorder dependency gate from executing, which makes it impossible to distinguish a real missing-Sento RED from unrelated transport regression.
+
+* Research
+The exact intended recorder dependency contract remains:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+#+end_src
+
+The flake check starts SBCL from declared Nix dependencies and evaluates =(asdf:load-system :sento)= with no ambient Quicklisp. This remains the correct bounded test for the packaging boundary.
+
+A valid RED requires that exact check itself execute and fail specifically because =sento= or one of its declared transitive systems is unavailable from the reproducible closure. An upstream transport-test failure, Nix bootstrap failure, network failure, or skipped step does not count.
+
+* Design
+Split hosted verification into independent jobs:
+
+1. =common-lisp-transport-contract=: continue checking the already-established transport/capture behavior.
+2. =common-lisp-recorder-deps=: always execute the recorder dependency closure independently from the transport job.
+
+The recorder-dependency job runs only the exact Nix check above. No Sento source or production recorder code is added in this RED-only slice.
+
+After a valid missing-dependency RED is observed and recorded, a later bounded slice may pin/package the complete Sento closure and rerun the identical check to GREEN. Only after packaging GREEN may recorder production code be written against RESEARCH-018.
+
+* Adversarial review
+** False RED through skipped step
+Rejected. A skipped command proves nothing about the dependency closure.
+
+** Hide transport regression by deleting its check
+Rejected. The transport gate remains independently visible and must be repaired on its own evidence chain.
+
+** Add Sento and the RED correction in the same commit
+Rejected. That would destroy the untouched preimplementation dependency baseline.
+
+** Use ambient Quicklisp
+Rejected. The packaging contract must remain reproducible through the flake closure.
+
+** Change Tek9 or dotfiles
+Rejected. This slice never crosses the symbolic database boundary and does not alter the consumer contract.
+
+* Decision
+1. Treat run 33291976121 as invalid evidence for Sento RED because the Sento step was skipped.
+2. Keep RESEARCH-018/019 actor architecture and dependency-selection decision.
+3. Establish an independent hosted recorder-dependency job before any Sento packaging mutation.
+4. Require the exact =common-lisp-recorder-deps= check to execute and fail for the intended missing dependency before packaging work.
+5. Do not modify Tek9, dotfiles, or recorder production code in this RED-only slice.
+
+* RED-first acceptance
+- [ ] Hosted recorder-dependency job executes on an immutable branch head.
+- [ ] The exact =nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps= command executes.
+- [ ] Failure is specifically missing/unavailable Sento or a required transitive Lisp system.
+- [ ] Existing transport gate remains independently reported.
+- [ ] No Sento packaging or recorder production mutation exists on the RED head.
+
+* Result
+ARADR COMPLETE. AUTO-RAGE AUTHORIZED ONLY TO FIX THE TEST EXECUTION TOPOLOGY AND OBTAIN A REAL DEPENDENCY RED. No production mutation is authorized until that RED exists.
