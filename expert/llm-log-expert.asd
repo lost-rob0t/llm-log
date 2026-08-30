@@ -7,6 +7,7 @@
   :depends-on (#:tek9 #:jsown #:uiop)
   :components ((:file "package")
                (:file "config")
+               (:file "transport")
                (:file "host")
                (:file "prolog-supervisor")
                (:file "storage")
