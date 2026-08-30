@@ -79,6 +79,18 @@
           llm-log-cl-sbcl = sbclWithClTests;
         });
 
+      apps = eachSystem (system:
+        let
+          app = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/llm-log";
+          };
+        in
+        {
+          default = app;
+          llm-log = app;
+        });
+
       homeManagerModules = {
         default = import ./nix/home-manager.nix { inherit self; };
         llm-log = self.homeManagerModules.default;
