@@ -1,0 +1,66 @@
+#+title: LLM-LOG-EVIDENCE-002 — Common Lisp ordinary HTTP fidelity GREEN
+#+startup: overview
+
+* Scope
+Implementation evidence for the bounded ordinary HTTP slice under:
+- https://github.com/lost-rob0t/llm-log/issues/10
+- =research/LLM-LOG-RESEARCH-016-http-bootstrap-green.org=
+
+This file is implementation/test evidence, not design authority and not raw captured LLM traffic.
+
+* RED baseline
+- immutable pre-implementation head: =0359d92e4e637d888079ddf55e72d2c9124de81a=
+- hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33282707089
+- result: expected RED confirmed before production mutation
+- missing surface at RED: =START-HTTP-PROXY=, =STOP-HTTP-PROXY=, =PROXY-LISTEN-PORT=
+
+* GREEN implementation
+Exact implementation/gate head tested: =ce8a706409e277c65a833703aa1dacb4f0c66be4=
+
+Hosted run:
+- https://github.com/lost-rob0t/llm-log/actions/runs/33285111349
+- job: =common-lisp-transport-contract=
+- result: SUCCESS
+- direct gate: =nix build -L .#checks.x86_64-linux.common-lisp-transport-contract=
+
+The successful job checked out the exact head, installed Nix, and completed the direct Common Lisp/Rove ordinary-HTTP contract without an expected-failure wrapper.
+
+* Behavior verified
+The contract exercised a real loopback TCP upstream and verified:
+- Common Lisp runtime owns proxy lifecycle;
+- typed runtime config exposes provider/upstream mapping;
+- request method preserved;
+- provider selector removed exactly once from path;
+- repeated and encoded query content preserved;
+- end-to-end request header preserved;
+- binary request body including NUL preserved;
+- upstream HTTP 418 status preserved;
+- duplicate ordered =Set-Cookie= fields remain separate;
+- binary response body including NUL preserved.
+
+* Implementation boundary
+This GREEN is intentionally narrow.
+
+Verified:
+- ordinary finite HTTP/1.1 over =http://= upstreams;
+- one-request-per-connection bootstrap lifecycle;
+- octet-preserving response forwarding.
+
+Not yet verified and not claimed GREEN:
+- HTTPS/TLS upstreams;
+- chunked request/response semantics;
+- SSE incremental streaming/backpressure;
+- WebSocket upgrade/frame forwarding;
+- immutable capture/recorder/redaction;
+- provider-family conformance;
+- expert fail-open/fail-closed integration on the new transport;
+- final zero-Python repository/package acceptance.
+
+* Tek9 / Prolog boundary
+No Tek9 or SWI-Prolog mutation was required for this transport slice.  The existing #10 expert substrate remains separate and intact.
+
+* Consumer boundary
+=lost-rob0t/dotfiles= was not modified.  It remains pinned to merged llm-log main and keeps =~/Documents/AI/proxy= as its explicit consumer storage override until an appropriate mergeable llm-log head exists.
+
+* Result
+GREEN for the bounded ordinary-HTTP fidelity contract.  Next production behavior requires a new executed RED first; capture/redaction is the next dependency in #10's migration order.
