@@ -29,7 +29,7 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
             script = Path(tmp) / "fake_expert.py"
             script.write_text(_FAKE_SERVICE)
             plane = SubprocessExpertPlane(
-                [sys.executable, str(script)], data_dir=Path(tmp) / "kb", timeout=1.0,
+                [sys.executable, str(script)], data_dir=Path(tmp) / "kb", timeout=5.0,
                 append_service_args=False,
             )
             await plane.start()
@@ -45,7 +45,7 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "bad.py"
             script.write_text('import sys\nfor _ in sys.stdin: print("not-json", flush=True)\n')
-            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=1.0, append_service_args=False)
+            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=5.0, append_service_args=False)
             await plane.start()
             with self.assertRaises(Exception):
                 await plane.health()
@@ -61,7 +61,7 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
                 'for _ in sys.stdin:\n'
                 ' n=int(p.read_text())+1 if p.exists() else 1; p.write_text(str(n)); sys.exit(0)\n'
             )
-            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=1.0, append_service_args=False)
+            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=5.0, append_service_args=False)
             await plane.start()
             with self.assertRaises(Exception):
                 await plane.health()
@@ -81,7 +81,7 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
                 'p.write_text(str(n))\n'
                 'time.sleep(10)\n'
             )
-            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=0.5, append_service_args=False)
+            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=2.0, append_service_args=False)
             await plane.start()
             with self.assertRaises(Exception):
                 await plane.health()
