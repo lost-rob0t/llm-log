@@ -1,0 +1,72 @@
+#+title: LLM-LOG-RESEARCH-028 — Python/Common Lisp expert adapter
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+This slice connects the accepted Python capture/transport runtime to the existing long-lived Common Lisp expert service. It does not move transport ownership, implement #12/#13/#15/#17, mutate Tek9, or change dotfiles.
+
+* Analyze
+Current Python proxy has only a structural =ExpertPlane.health()= capability and the fail-open / explicit fail-closed policy. Current Common Lisp =llm-log-expert serve --stdio= already owns one long-lived expert host, one Tek9 environment and one supervised persistent SWI-Prolog worker, and accepts versioned JSON-lines requests.
+
+The missing boundary is a concrete Python client that owns the Common Lisp child process and serializes typed request/reply exchanges without implementing expert policy in Python.
+
+* Research
+** Typed local protocol
+Use the existing protocol version 1 envelope. Python may construct only declared operations through =ExpertEnvelope= and =encode_envelope=. The adapter must never accept a raw Prolog goal or callable term.
+
+The Common Lisp process is launched once and reused. One JSON request line produces one JSON reply line. The adapter serializes exchanges because stdio request/reply correlation is positional in the current service.
+
+** Lifecycle
+The adapter owns one subprocess. =start()= launches the configured expert executable with =serve --stdio --data-dir PATH=. =close()= closes stdin, waits for bounded graceful exit, then terminates/kills only if needed. =health()= uses the real versioned =health= operation and validates an =ok= reply.
+
+A dead child, EOF, timeout, malformed JSON, or malformed reply is an adapter failure. The proxy policy decides fail-open versus =require_expert_plane= fail-closed; the adapter itself never grants authority.
+
+** Failure semantics
+No automatic replay after an ambiguous write/read failure. A later independent call may start a fresh child only through an explicit lifecycle action; this slice does not silently retry an in-flight request.
+
+Do not reflect child stderr, paths, credentials or arbitrary expert error detail to proxied callers. stderr may be captured only for bounded local diagnostics and must not enter Tek9.
+
+** Tek9 boundary
+No Tek9 repository change is required. The adapter talks only to the Common Lisp service. Common Lisp remains the sole owner of Tek9 access and bounded fact materialization.
+
+** Nix/non-Nix
+The executable path and expert data directory are constructor/config inputs. Nix can point at the packaged =llm-log-expert= binary; non-Nix can point at a normal executable wrapper. This slice does not modify PR #5 configuration or Home Manager wiring.
+
+* Design
+Add =SubprocessExpertPlane= in Python with:
+- explicit executable argv + data directory;
+- async =start= / =close= lifecycle;
+- one =asyncio.Lock= around request/reply exchange;
+- =health()= implemented through protocol v1 =health=;
+- bounded reply timeout;
+- strict JSON object/status validation;
+- no generic caller-controlled Prolog execution surface.
+
+The proxy continues depending on the narrow =ExpertPlane= protocol rather than the concrete class.
+
+* Adversarial review
+- Concurrent health/observation writes could interleave: serialize the complete exchange.
+- Child can die after request write: report failure and do not replay.
+- Child can emit malformed data: reject it; do not interpret partial output as success.
+- A model-controlled operation string could become an execution escape hatch: public request construction remains constrained by =ExpertEnvelope= validation and the CL dispatcher independently allowlists operations.
+- Child stderr could leak secrets: do not surface it through HTTP policy errors or persist it to Tek9.
+- Expert failure must not kill ordinary proxy forwarding unless =require_expert_plane= is explicitly enabled.
+
+* Decision
+Proceed RED-first with a focused adapter contract. Do not touch dotfiles, Tek9, provider census, PR #5, or downstream experts.
+
+* Exact RED-first acceptance
+Against the pre-implementation branch head, execute a test requiring the concrete adapter and prove failure because it does not exist. The corrected test must then remain unchanged while production code turns it GREEN.
+
+The contract must prove:
+1. one long-lived child is reused across at least two health calls;
+2. exact protocol-v1 health envelopes are sent as newline-delimited JSON;
+3. requests are serialized and replies are matched in order;
+4. malformed reply and EOF become failures;
+5. timeout becomes failure without implicit replay;
+6. close terminates the owned child cleanly;
+7. no arbitrary Prolog-goal API is exposed.
+
+A separate following slice must exercise this concrete adapter through real HTTP and WebSocket proxy fail-open/fail-closed conformance before configuration/launch wiring is changed.
