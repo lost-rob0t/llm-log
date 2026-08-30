@@ -44,3 +44,10 @@ Do not make every structural =ExpertPlane= fake require lifecycle methods; lifec
 Add and execute a test-only concrete transport lifecycle contract against the current head before production mutation. The expected first RED is that a fresh =SubprocessExpertPlane= is not started by =build_app=, causing required-mode transport to fail despite a healthy child command. Only after that exact failure is observed may production startup/cleanup wiring be added.
 
 Dotfiles and PR #5 remain separate transactions. The consumer capture path remains =~/Documents/AI/proxy=.
+
+* RED contract staged — execution not yet claimed
+The test-only transport contract was added at =a83151505edbd9451317c0a85d39357da0ed6c1e= as =tests/test_expert_transport_lifecycle.py=. It uses the concrete =SubprocessExpertPlane= with a deterministic protocol-v1 JSON-lines child and real aiohttp HTTP/WebSocket upstreams. It covers owned adapter startup/cleanup, required healthy HTTP forwarding, default fail-open WebSocket forwarding, required fail-closed WebSocket behavior before upstream contact, and healthy required WebSocket frame relay.
+
+The branch workflow was then extended at =81b1ae164231acafc7ba9c2c2a084228110121d7= to execute this new test alongside the existing Python expert-policy and adapter contracts while preserving the independent Common Lisp/Tek9/SWI-Prolog job.
+
+GitHub did not emit a workflow run for these Contents-API commits, and the local execution container could not resolve =github.com=. Therefore this bounded cycle does not claim an executed RED and does not authorize production lifecycle mutation. The expected failure remains source-grounded but unexecuted: current =build_app= starts only the recorder and aiohttp =ClientSession=; it does not call =SubprocessExpertPlane.start()=, while =health()= rejects a non-running adapter.
