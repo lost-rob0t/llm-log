@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import shutil
 import tempfile
@@ -122,6 +123,7 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         self.upstream.router.add_post("/v1/chat/completions", self.non_stream)
         self.upstream.router.add_post("/v1/stream", self.stream)
         self.upstream.router.add_get("/v1/ws", self.websocket)
+        self.upstream.router.add_get("/v1/ws-binary", self.websocket_binary)
         self.runner = web.AppRunner(self.upstream)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -166,6 +168,16 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.type, WSMsgType.TEXT)
         self.assertIn('"model":"ws-model"', message.data)
         await response.send_str('{"type":"response.output_text.delta","delta":"captured websocket"}')
+        await response.close()
+        return response
+
+    async def websocket_binary(self, request):
+        response = web.WebSocketResponse()
+        await response.prepare(request)
+        message = await response.receive()
+        self.assertEqual(message.type, WSMsgType.BINARY)
+        self.assertEqual(message.data, b"\x00\x01ws-binary-payload")
+        await response.send_bytes(b"\xff\xfeupstream-bytes")
         await response.close()
         return response
 
@@ -221,9 +233,47 @@ class ProxyCaptureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["response_status"], 101)
         self.assertEqual(event["model"], "ws-model")
         self.assertNotIn("ws-forwarded-secret", line)
-        self.assertIn('"type":"text"', event["request_body"]["text"])
-        self.assertIn('"model":"ws-model"', event["request_body"]["text"])
-        self.assertIn("captured websocket", event["response_body"]["text"])
+        request_frames = [
+            json.loads(frame) for frame in event["request_body"]["text"].splitlines()
+        ]
+        self.assertEqual(request_frames[0]["type"], "text")
+        self.assertEqual(json.loads(request_frames[0]["text"])["model"], "ws-model")
+        response_frames = [
+            json.loads(frame) for frame in event["response_body"]["text"].splitlines()
+        ]
+        self.assertEqual(response_frames[0]["type"], "text")
+        self.assertEqual(
+            json.loads(response_frames[0]["text"])["delta"], "captured websocket"
+        )
+
+    async def test_websocket_binary_frames_are_captured_as_base64_envelopes(self):
+        async with ClientSession() as session:
+            async with session.ws_connect(f"{self.proxy_url}/test/v1/ws-binary") as socket:
+                await socket.send_bytes(b"\x00\x01ws-binary-payload")
+                message = await socket.receive()
+
+        self.assertEqual(message.type, WSMsgType.BINARY)
+        self.assertEqual(message.data, b"\xff\xfeupstream-bytes")
+        await self.recorder.flush()
+        event = json.loads((self.root / "events.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(event["transport"], "websocket")
+        self.assertEqual(event["response_status"], 101)
+        request_frames = [
+            json.loads(frame) for frame in event["request_body"]["text"].splitlines()
+        ]
+        self.assertEqual(request_frames[0]["type"], "binary")
+        self.assertEqual(request_frames[0]["encoding"], "base64")
+        self.assertEqual(
+            base64.b64decode(request_frames[0]["data"]), b"\x00\x01ws-binary-payload"
+        )
+        response_frames = [
+            json.loads(frame) for frame in event["response_body"]["text"].splitlines()
+        ]
+        self.assertEqual(response_frames[0]["type"], "binary")
+        self.assertEqual(response_frames[0]["encoding"], "base64")
+        self.assertEqual(
+            base64.b64decode(response_frames[0]["data"]), b"\xff\xfeupstream-bytes"
+        )
 
 
 if __name__ == "__main__":
