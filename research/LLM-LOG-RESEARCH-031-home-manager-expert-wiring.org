@@ -1,0 +1,92 @@
+#+title: LLM-LOG-RESEARCH-031 — Home Manager expert-plane wiring
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Depends on: =research/LLM-LOG-RESEARCH-030-expert-launch-configuration.org=
+
+Bounded Auto-ARADR decision for exposing the already-proven Python -> Common Lisp expert launch boundary through the existing llm-log Home Manager/systemd user-service module.
+
+Current explicit architecture controls over stale zero-Python prose in #8/#10/#20: Python remains transparent HTTP/SSE/WebSocket capture/transport; Common Lisp owns the expert runtime, typed objects, Tek9 access, bounded fact materialization, SWI-Prolog supervision and result validation; Tek9 remains the canonical durable expert KB; SWI-Prolog owns declared facts/rules/inference.
+
+* Analyze
+The active =rage/10-expert-runtime-red= branch already proves the normal CLI surface =--expert-service-bin=, =--expert-data-dir= and =--require-expert-plane=. =SubprocessExpertPlane= is lifecycle-owned by the Python proxy while Common Lisp remains expert authority.
+
+The current =nix/home-manager.nix= still exposes only proxy package/listen/port/dataDir/classifier/upstream/extraArgs options. Its systemd =ExecStart= cannot enable the packaged Common Lisp expert child. Therefore the reproducible Home Manager path is behind the already-green CLI path.
+
+The dotfiles consumer remains a separate transaction. Its raw capture path =~/Documents/AI/proxy= must not move in this slice and its llm-log pin must not advance until the upstream module contract is GREEN.
+
+* Research
+The smallest coherent Nix boundary is a nested =services.llm-log.expert= option set that renders only the same already-proven CLI argv. It must not create a second expert systemd service: the proxy is the single lifecycle owner of the long-lived Common Lisp child.
+
+The expert package is already reproducibly available as =self.packages.${system}.llm-log-expert=, whose closure contains SBCL, the llm-log expert ASDF system, Tek9 and SWI-Prolog. Existing Tek9 public APIs remain sufficient; no database mutation or new generic primitive is justified.
+
+Mutable expert state is separate from immutable raw capture. Reusable default: =${config.home.homeDirectory}/.llm-proxy/expert=. The consumer may later override this explicitly; it must not be implicitly derived from =services.llm-log.dataDir=.
+
+No credentials belong in these options. Provider authentication continues to transit the proxy and secret headers remain subject to capture redaction. Expert launch configuration contains only package/path/policy values.
+
+* Design
+** Typed Home Manager options
+Add =services.llm-log.expert=:
+- =enable=: boolean, default false;
+- =package=: package, default =self.packages.${system}.llm-log-expert=;
+- =dataDir=: string, default =${config.home.homeDirectory}/.llm-proxy/expert=;
+- =require=: boolean, default false.
+
+** ExecStart projection
+When =expert.enable = true= append exactly:
+
+#+begin_example
+--expert-service-bin <expert.package>/bin/llm-log-expert
+--expert-data-dir <expert.dataDir>
+#+end_example
+
+Append =--require-expert-plane= only when =expert.require = true=.
+
+When expert support is disabled, emit none of those arguments and preserve existing service behavior.
+
+All paths remain shell-escaped through the module's existing =escapeShellArg= construction. No shell-evaluated user command string is introduced.
+
+** systemd ownership
+Do not create =llm-log-expert.service=. The existing =llm-log.service= starts the Python capture proxy, which starts and supervises one Common Lisp expert child through =SubprocessExpertPlane=. This preserves one writer/lifecycle authority and the already-tested fail-open/fail-closed behavior.
+
+** Nix/non-Nix boundary
+Home Manager is a declarative frontend over the same CLI. Non-Nix users continue to use the CLI contract proven by RESEARCH-030. No hidden Nix-only expert semantics are allowed.
+
+* Tek9 schema / protocol / provenance
+No schema change. No new local protocol operation. No Prolog predicate change.
+
+The existing expert service remains responsible for bounded indexed Tek9 retrieval, typed projection, declared-predicate invocation, result validation, rule/expert/source provenance, idempotent assertion persistence and historical supersession. Home Manager only selects the service binary, expert state directory and fail-closed policy.
+
+* Failure semantics
+- =expert.enable = false=: no expert child, ordinary proxy behavior unchanged;
+- enabled but child unavailable and =require = false=: existing fail-open forwarding remains authoritative;
+- enabled and =require = true=: existing health gate fails closed before upstream contact;
+- expert process errors do not authorize replay of ambiguous inference;
+- systemd restart remains proxy-level recovery and must not create concurrent expert writers.
+
+* Adversarial review
+- A separate systemd expert daemon would duplicate lifecycle ownership: reject.
+- Reusing raw =dataDir= for Tek9 expert state would mix immutable capture evidence and derived KB state: reject.
+- Allowing an arbitrary shell command instead of a package executable path would widen injection/configuration authority: reject.
+- Setting =require=true= without =enable=true= should not silently create an expert child; =require= only affects enabled expert wiring.
+- Credentials/environment secret values must not become Nix option literals or derivation text.
+- This slice does not authorize changing dotfiles, provider routing, Beagle, classification, cost, or outcome behavior.
+
+* RED-first acceptance
+Before mutating =nix/home-manager.nix=, add and execute a Nix evaluation/build contract against the untouched module. The contract must enable llm-log with a fixture proxy package and configure all four =services.llm-log.expert.*= values.
+
+Valid RED is specifically module evaluation failure because =services.llm-log.expert= is absent, or an evaluated =ExecStart= lacking the declared expert arguments. Syntax/fixture/Nix-infrastructure failures do not count.
+
+The unchanged contract must turn GREEN after the production mutation and assert:
+1. expert-enabled =ExecStart= contains the selected =llm-log-expert= executable;
+2. the selected expert data directory is present;
+3. =require=true= produces =--require-expert-plane=;
+4. the existing proxy data directory remains independently configurable;
+5. no second systemd expert unit is emitted.
+
+The independent Common Lisp/Tek9/SWI-Prolog gate and existing Python expert policy/adapter/transport/CLI gates must remain GREEN on the production head.
+
+* Decision
+Proceed with this Home Manager/systemd sub-slice only. Establish executed RED first, then mutate =nix/home-manager.nix= and rerun the unchanged contract to GREEN. Do not mutate Tek9 or dotfiles in this slice. PR #5 remains independent and must not be imported into PR #24.
