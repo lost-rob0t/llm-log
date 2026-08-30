@@ -1,0 +1,121 @@
+#+title: LLM-LOG-RESEARCH-018 — Single-writer recorder concurrency and crash contract
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION / RED CONTRACT
+- Parent expert plane: https://github.com/lost-rob0t/llm-log/issues/8
+- Active substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Predecessor: =LLM-LOG-RESEARCH-017-immutable-http-capture-redaction.org=
+- Active branch: =rage/10-expert-runtime-red=
+
+* Analyze
+Finite Common Lisp HTTP forwarding and immutable redacted capture are GREEN on the current #10 branch, but capture publication is still owned directly by per-client worker threads in =expert/transport.lisp=. Each worker allocates an event directory and writes =request-body.bin=, =response-body.bin=, then =metadata.json= sequentially.
+
+That design preserves create-only files but does not establish a single serialization owner and does not make event visibility atomic. A process/thread failure between writes may leave a directory that appears to be an event while containing only a subset of the evidence files. Concurrent workers also mutate the capture tree without an explicit ownership boundary.
+
+This bounded slice therefore targets only finite-HTTP recorder ownership/publication semantics. It does not authorize SSE, WebSocket, HTTPS, provider-family work, expert inference changes, or dotfiles mutation.
+
+* Research
+** Actor ownership
+Use Sento/cl-gserver for the recorder actor when packaging is reproducibly available. The actor is appropriate because the recorder owns mutable asynchronous state, sequencing, lifecycle and failure handling. Do not implement a homemade general actor framework.
+
+Reference: https://github.com/mdbergmann/cl-gserver
+
+If the dependency cannot be consumed reproducibly through the current Nix/ASDF path, stop after executable RED and record that packaging gap rather than silently replacing the actor requirement with ad-hoc shared locking.
+
+** Publication model
+A capture event is not externally visible as committed evidence until all required artifacts are complete. Build each event under a private staging location, fsync/close every file to the extent exposed by the runtime, then publish by one same-filesystem rename into the canonical events directory.
+
+Canonical committed tree:
+
+#+begin_example
+capture/http/events/<event-id>/
+  metadata.json
+  request-body.bin
+  response-body.bin
+#+end_example
+
+Staging paths are not events and must never be returned by committed-event enumeration.
+
+** Single writer
+Per-client proxy workers may construct an immutable typed capture command, but only the recorder actor mutates recorder-owned staging/committed directories. This gives one ordering/lifecycle owner without serializing network forwarding itself.
+
+* Design
+** Typed recorder command
+For finite HTTP, the command contains already-redacted metadata plus immutable body octets and the stable event identity inputs required by the current capture schema. No caller supplies arbitrary filesystem paths.
+
+The first public lifecycle surface is:
+- =start-recorder= — create/start one recorder for a configured data root;
+- =stop-recorder= — bounded drain/stop;
+- =record-http-capture= — synchronous or acknowledged actor request that returns a committed event ID only after publication;
+- =list-committed-http-events= — test/inspection boundary that enumerates committed events only.
+
+Names may be adjusted before GREEN, but the semantics may not be weakened.
+
+** Concurrency contract
+Launch multiple producer threads against one recorder. Each producer submits a distinct event with unique sentinel bytes/metadata. Acceptance requires exactly N committed event directories, each internally self-consistent, with no mixed bodies/metadata across events and no staging directory reported as committed.
+
+** Crash/failure contract
+Inject a deterministic recorder failure after at least one staging artifact is written but before commit publication. Acceptance requires:
+- the failed event is not visible under =capture/http/events/=;
+- no partial committed event directory exists;
+- already committed prior events remain intact;
+- recorder reports typed failure rather than false success;
+- after bounded recovery/restart, a later event can be committed without replaying the ambiguous failed command automatically.
+
+The initial implementation may leave an explicitly named staging tombstone for forensic cleanup, but committed enumeration must ignore it and credentials must remain redacted there too.
+
+** Forwarding semantics
+Capture remains fail-open for ordinary proxy forwarding in this bounded migration slice. Recorder failure must not mutate or truncate the network response. An explicit future durability policy may be added separately, but failure may never persist unredacted credentials.
+
+* Evidence separation
+1. raw committed capture = immutable filesystem evidence;
+2. recorder staging/tombstones = implementation recovery evidence, not committed capture;
+3. Tek9 = derived symbolic documents/edges/provenance only;
+4. Org = research/design;
+5. =evidence/= = RED/GREEN execution evidence.
+
+No Tek9 mutation is required for this recorder slice.
+
+* Adversarial review
+** A mutex would be simpler
+A lock could serialize writes but would leave ownership/lifecycle/recovery distributed across proxy workers. The recorder is stateful asynchronous infrastructure, so actor ownership is the clearer boundary and is already the selected architecture.
+
+** Actor mailbox acknowledgement before disk publication
+Forbidden. =record-http-capture= succeeds only after the event has been fully published into the committed tree.
+
+** Partial directory mistaken for immutable evidence
+Prevented by staging outside the committed =events/<id>/= namespace followed by atomic same-filesystem rename.
+
+** Actor crash causes hidden credential leak
+Staging uses the already-redacted metadata representation. Raw secret-bearing request headers are never serialized into recorder metadata, including failure paths.
+
+** Automatic replay duplicates ambiguous work
+Forbidden. A failed in-flight recorder command returns failure; recovery handles later commands. Idempotent replay, if introduced, needs stable command identity and its own RED contract.
+
+* Exact RED-first acceptance
+Before recorder production mutation:
+1. add a Common Lisp/Rove recorder contract to the existing zero-Python test system;
+2. require the declared recorder actor lifecycle/API;
+3. exercise N concurrent event submissions and assert exact committed count + event self-consistency;
+4. exercise deterministic failure-before-publish injection and assert no partial committed event is visible;
+5. prove current untouched implementation fails this contract for the intended missing recorder/publication semantics;
+6. record immutable RED head, command/run and exact expected failure under =evidence/=;
+7. only then add Sento/cl-gserver packaging and production recorder implementation;
+8. rerun the identical contract; claim GREEN only from observed execution on the exact head.
+
+The existing ordinary HTTP and immutable redaction contracts must remain GREEN throughout.
+
+* Nix / non-Nix
+The recorder dependency must be reproducibly available in the existing flake and ordinary ASDF loading. Do not assume a developer-local Quicklisp checkout. If Sento/cl-gserver is unavailable in pinned nixpkgs, research an explicit flake/package source or stop with a concrete packaging blocker before production mutation.
+
+No credential or mutable corpus data enters the Nix store.
+
+* Dotfiles / Tek9 boundary
+No dotfiles change is authorized in this slice. The consumer remains pinned to the merged llm-log baseline and retains its explicit =~/Documents/AI/proxy= path.
+
+No Tek9 change is authorized: recorder commit semantics are below the symbolic KB boundary and existing Tek9 APIs are not implicated.
+
+* Decision
+GO for an executed recorder concurrency/crash RED. Production mutation is authorized only after the current branch is observed failing the new Common Lisp contract for the intended missing recorder/atomic-publication behavior. If reproducible Sento/cl-gserver packaging is not available, stop after RED and record the blocker rather than substituting an ad-hoc shared-state design.
