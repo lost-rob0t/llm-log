@@ -1,0 +1,37 @@
+#+title: LLM-LOG-RESEARCH-022 — Sento single-writer recorder implementation
+#+status: DECIDED
+#+issue: https://github.com/lost-rob0t/llm-log/issues/10
+
+* Analyze
+The executed recorder contract in =expert/tests/recorder-red.lisp= is still RED because =START-RECORDER=, =STOP-RECORDER=, and =RECORD-HTTP-CAPTURE= do not exist. RESEARCH-021 established a reproducible Sento 3.4.4 closure, so the actor dependency is no longer the blocker.
+
+* Research
+Sento exposes an actor system, =actor-of=, synchronous =ask-s=, and actor-system shutdown. A single actor mailbox therefore provides the required serialization boundary without adding a second mutex-based recorder. The recorder command must carry immutable metadata and body octets as data; persistence stays in Common Lisp.
+
+The existing capture namespace is =capture/http/events/<event-id>/=. To prevent partial committed events, each command writes a complete event below =capture/http/staging/<event-id>/= and only then renames that directory into the committed =events/= namespace on the same filesystem.
+
+* Design
+- =START-RECORDER(data-directory)= creates one Sento actor system and one recorder actor.
+- The recorder actor is the sole owner of publication ordering.
+- =RECORD-HTTP-CAPTURE= performs synchronous =ask-s= so acknowledgement means publication completed.
+- Each =:record= command contains metadata text plus exact request/response octets.
+- Staging writes use create-only files.
+- Publication is one same-filesystem directory rename from staging to events.
+- =*RECORDER-TEST-FAIL-BEFORE-PUBLISH*= injects failure after complete staging and before rename; staging is removed and no committed event appears.
+- A failed command returns an explicit error to its caller while leaving the actor alive for later commands.
+- =STOP-RECORDER= shuts down the actor system and does not invent replay semantics for ambiguous commands.
+
+This slice does not yet route the HTTP proxy through the recorder. That integration requires its own RED proving proxy capture uses the actor boundary without regressing fail-open forwarding/redaction.
+
+* Adversarial review
+A mutex around the old direct writer would satisfy serialization superficially but violate the selected actor architecture. Writing directly under =events/= exposes partial files after a crash. A fire-and-forget tell would acknowledge too early. Automatic replay after failure could duplicate ambiguous evidence. Cross-filesystem staging would destroy rename atomicity. All are rejected.
+
+* Decision
+Implement the minimum Sento single-writer recorder against the already executed RESEARCH-018 RED. Do not mutate Tek9 or dotfiles. Do not claim crash durability beyond the tested failure-before-publish boundary; fsync/power-loss durability is a separate contract.
+
+* Exact acceptance
+The unchanged recorder contract must turn GREEN for:
+1. 12 concurrent producers -> exactly 12 internally consistent committed events;
+2. injected failure-before-publish -> caller sees failure and committed event count does not increase;
+3. prior committed evidence survives;
+4. a later command succeeds after the injected failure.
