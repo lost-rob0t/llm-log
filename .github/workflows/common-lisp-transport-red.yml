@@ -38,8 +38,8 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Execute Python proxy expert-policy contract
+      - name: Execute Python proxy expert-policy and adapter contracts
         shell: bash
         run: |
           set -euo pipefail
-          nix develop --command python -m unittest tests.test_expert_proxy_policy -v
+          nix develop --command python -m unittest tests.test_expert_proxy_policy tests.test_expert_adapter -v
