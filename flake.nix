@@ -21,6 +21,7 @@
           cl = pkgs.sbcl.pkgs;
           llmLog = pkgs.callPackage ./nix/package.nix { };
           tek9Package = tek9.packages.${system}.tek9;
+          sentoPackage = import ./nix/sento.nix { inherit pkgs; };
           expertLib = pkgs.sbcl.buildASDFSystem {
             pname = "llm-log-expert";
             version = "0.1.0";
@@ -74,6 +75,7 @@
           llm-log-cl-lib = llmLogClLib;
           llm-log-cl-tests = llmLogClTests;
           llm-log-cl = llmLogCl;
+          sento = sentoPackage;
           # Standalone SBCL closure carrying the Common Lisp runtime system;
           # also the interpreter used by the CL contract checks.
           llm-log-cl-sbcl = sbclWithClTests;
@@ -109,7 +111,9 @@
           python = pkgs.python312.withPackages (ps: [ ps.aiohttp ]);
           expertLib = self.packages.${system}.llm-log-expert-lib;
           expertService = self.packages.${system}.llm-log-expert;
+          sentoPackage = self.packages.${system}.sento;
           transportTestSbcl = pkgs.sbcl.withPackages (_: [ expertLib cl.rove ]);
+          recorderDependencySbcl = pkgs.sbcl.withPackages (_: [ sentoPackage ]);
         in
         {
           package = self.packages.${system}.default;
@@ -154,11 +158,10 @@
             touch "$out"
           '';
 
-          # RESEARCH-019 RED: this must fail on the untouched dependency
-          # closure until Sento/cl-gserver and every transitive Lisp system
-          # are explicitly pinned and packaged. Ambient Quicklisp is forbidden.
+          # RESEARCH-020/021: identical dependency RED/GREEN gate. The only
+          # acceptable GREEN is a fully Nix-declared Sento closure.
           common-lisp-recorder-deps = pkgs.runCommand "llm-log-common-lisp-recorder-deps" {
-            nativeBuildInputs = [ transportTestSbcl ];
+            nativeBuildInputs = [ recorderDependencySbcl ];
           } ''
             export HOME="$TMPDIR/home"
             mkdir -p "$HOME"
