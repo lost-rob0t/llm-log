@@ -78,7 +78,7 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
                 'for _ in sys.stdin:\n'
                 ' n=int(p.read_text())+1 if p.exists() else 1; p.write_text(str(n)); time.sleep(10)\n'
             )
-            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=0.05, append_service_args=False)
+            plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=0.5, append_service_args=False)
             await plane.start()
             with self.assertRaises(Exception):
                 await plane.health()
