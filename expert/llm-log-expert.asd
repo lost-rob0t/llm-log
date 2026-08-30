@@ -4,9 +4,10 @@
   :license "MIT"
   :version "0.1.0"
   :serial t
-  :depends-on (#:tek9 #:jsown #:uiop)
+  :depends-on (#:tek9 #:jsown #:uiop #:sento)
   :components ((:file "package")
                (:file "config")
+               (:file "recorder")
                (:file "transport")
                (:file "host")
                (:file "prolog-supervisor")
