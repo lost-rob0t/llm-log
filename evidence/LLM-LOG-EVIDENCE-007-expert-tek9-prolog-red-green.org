@@ -1,0 +1,60 @@
+#+title: LLM-LOG-EVIDENCE-007 — #10 Tek9 + SWI-Prolog RED/GREEN
+#+startup: overview
+
+* Scope
+Executable evidence for the first bounded Common Lisp expert-runtime round trip on issue #10.
+
+This evidence does not change transport ownership. Python remains the raw capture/transport owner under RESEARCH-004 and RESEARCH-023.
+
+* RED
+- Exact head: =e763c740a3e3d427758d3dcee6bf2c44ced56ef3=
+- Hosted run: =33303885632=
+- Gate: =checks.x86_64-linux.common-lisp-expert-integration-contract=
+- Environment: Nix closure with SBCL, Tek9 and SWI-Prolog; =LLM_LOG_PROLOG_WORKER= intentionally unset.
+
+The isolated integration suite reached =START-EXPERT-HOST= and failed in the production default worker-path resolver because =%prolog-worker-path= passed the unquoted form =#:llm-log-expert= to =asdf:system-relative-pathname=. SBCL attempted to evaluate it as a variable and signaled an unbound-variable failure.
+
+An earlier hosted attempt that died in the Rove harness before the behavior was reached is not counted as RED.
+
+* Production mutation
+- Commit: =42657f7c6f1073504d9c84d08275957f36e1245e=
+
+Only the default ASDF worker-path designator changed:
+
+#+begin_src lisp
+(asdf:system-relative-pathname
+ "llm-log-expert"
+ #P"prolog/worker.pl")
+#+end_src
+
+No Tek9 code, Prolog rule, transport implementation, dotfiles integration or provider implementation changed.
+
+* GREEN
+- Exact head: =42657f7c6f1073504d9c84d08275957f36e1245e=
+- Hosted run: =33303934852=
+- Integration job: =99237018845=
+- Gate: =checks.x86_64-linux.common-lisp-expert-integration-contract=
+
+The same isolated contract completed with all assertions passing:
+
+- expert host opened one Tek9 environment and one live SWI-Prolog worker;
+- one source observation was projected into Tek9 exactly once;
+- projection advanced the durable KB revision;
+- a bounded primary-key lookup retrieved the observation without corpus materialization;
+- typed projection retained =transport=http=;
+- declared =event_transport= inference returned =http= from grounded evidence;
+- the result carried a non-empty rule version;
+- the result bound to the current Tek9 KB revision;
+- a second healthy request reused the same supervised Prolog session;
+- undeclared operation =arbitrary_callable_term= was rejected before Prolog invocation.
+
+The build log also confirms Tek9 and SWI-Prolog were present in the exact Nix closure used by the gate.
+
+* Separation and caveats
+This is implementation/test evidence only.
+
+Raw capture evidence remains immutable and Python-owned. Derived assertions remain a separate expert-plane concern and must carry source/rule/expert provenance when persisted. This slice proves the bounded typed Tek9 -> declared SWI-Prolog substrate; it does not yet prove historical assertion supersession or persistent derived-assertion revisioning.
+
+The overall workflow on the GREEN head is not globally green: the independent historical Common Lisp transport/recorder job remains red because the recovered #10 branch intentionally does not import PR #23's recorder implementation. Therefore PR #24 is not merge-eligible from this evidence alone.
+
+No Tek9 mutation was required. No dotfiles mutation was required. =~/Documents/AI/proxy= remains the consumer capture path.
