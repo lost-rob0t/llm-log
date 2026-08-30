@@ -3,10 +3,17 @@
 #+issue: https://github.com/lost-rob0t/llm-log/issues/10
 
 * Analyze
-The executed recorder contract in =expert/tests/recorder-red.lisp= is still RED because =START-RECORDER=, =STOP-RECORDER=, and =RECORD-HTTP-CAPTURE= do not exist. RESEARCH-021 established a reproducible Sento 3.4.4 closure, so the actor dependency is no longer the blocker.
+The executed recorder contract in =expert/tests/recorder-red.lisp= is still RED because =START-RECORDER=, =STOP-RECORDER=, and =RECORD-HTTP-CAPTURE= do not yet pass the authoritative behavior gate. RESEARCH-021 established a reproducible Sento 3.4.4 closure, so the actor dependency source itself is no longer the blocker.
 
 * Research
 Sento exposes an actor system, =actor-of=, synchronous =ask-s=, and actor-system shutdown. A single actor mailbox therefore provides the required serialization boundary without adding a second mutex-based recorder. The recorder command must carry immutable metadata and body octets as data; persistence stays in Common Lisp.
+
+The pinned Sento 3.4.4 source at commit =013ab6370042686e65943568b0d97e33319c0f54= defines =sento.user= by =:use= of its API packages. Common Lisp inherited symbols are not external symbols of =SENTO.USER=, so =sento-user:make-actor-system= is invalid even though =MAKE-ACTOR-SYSTEM= is visible when programming interactively in that package. The declared public package boundaries are:
+- =asys:make-actor-system= from =sento.actor-system=;
+- =ac:actor-of= and =ac:shutdown= from the actor-context protocol, with methods specialized for actor systems;
+- =act:ask-s= from =sento.actor=.
+
+Recorder code must call those exporting packages directly rather than rely on =SENTO.USER= inheritance or double-colon internals.
 
 The existing capture namespace is =capture/http/events/<event-id>/=. To prevent partial committed events, each command writes a complete event below =capture/http/staging/<event-id>/= and only then renames that directory into the committed =events/= namespace on the same filesystem.
 
@@ -24,9 +31,9 @@ The existing capture namespace is =capture/http/events/<event-id>/=. To prevent 
 This slice does not yet route the HTTP proxy through the recorder. That integration requires its own RED proving proxy capture uses the actor boundary without regressing fail-open forwarding/redaction.
 
 * Adversarial review
-A mutex around the old direct writer would satisfy serialization superficially but violate the selected actor architecture. Writing directly under =events/= exposes partial files after a crash. A fire-and-forget tell would acknowledge too early. Automatic replay after failure could duplicate ambiguous evidence. Cross-filesystem staging would destroy rename atomicity. All are rejected.
+A mutex around the old direct writer would satisfy serialization superficially but violate the selected actor architecture. Writing directly under =events/= exposes partial files after a crash. A fire-and-forget tell would acknowledge too early. Automatic replay after failure could duplicate ambiguous evidence. Cross-filesystem staging would destroy rename atomicity. Calling inherited =SENTO.USER= symbols with a package external marker is also rejected because it makes compilation depend on a false API assumption rather than the pinned package contract.
 
-** Hosted implementation-gate finding
+** Hosted implementation-gate findings
 Hosted run =33298572566= on implementation head =f04ea7380b3ce20d59482d4800a42ef24394e1fc= did not reach the recorder behavior assertions. The independent Sento dependency gate stayed GREEN, but the authoritative Common Lisp contract failed while building =llm-log-expert=:
 
 #+begin_example
@@ -34,14 +41,14 @@ BUILD FAILED: Component #:SENTO not found, required by
               #<SYSTEM "llm-log-expert">
 #+end_example
 
-Cause: =expert/llm-log-expert.asd= correctly declares =#:sento=, but the flake's =expertLib = pkgs.sbcl.buildASDFSystem { ... }= still declares only =tek9Package= and =cl.jsown= in =lispLibs=. Packaging Sento as a standalone flake output is insufficient; the consumer ASDF derivation must carry Sento in its declared Lisp closure.
+Cause: =expert/llm-log-expert.asd= correctly declares =#:sento=, but the flake's expert ASDF derivation omitted =sentoPackage= from =lispLibs=. Packaging Sento as a standalone flake output was insufficient; the consumer ASDF derivation had to carry Sento in its declared Lisp closure.
 
-This is not behavioral RED/GREEN evidence for the recorder. It is a reproducible integration failure at the package boundary.
+After adding the already-pinned Sento package to that closure, hosted run =33301021983= on head =c4542753f2b68bb539bcd686cbd59c21a99ca2b7= advanced past dependency resolution and compiled Sento and Tek9, then failed compiling =expert/recorder.lisp= specifically because =MAKE-ACTOR-SYSTEM= is not external in =SENTO.USER=. The independent =common-lisp-recorder-deps= job remained GREEN. This is a valid API-integration RED, not yet recorder-behavior RED/GREEN.
 
 * Decision
 Implement the minimum Sento single-writer recorder against the already executed RESEARCH-018 RED. Do not mutate Tek9 or dotfiles. Do not claim crash durability beyond the tested failure-before-publish boundary; fsync/power-loss durability is a separate contract.
 
-Before evaluating recorder behavior, repair the Nix consumer closure by adding the already-pinned =sentoPackage= to =expertLib.lispLibs=. This is the smallest legitimate mutation because it only reconciles the declared ASDF dependency with the already-GREEN pinned package; it adds no new dependency source, recorder semantics, or fallback implementation.
+The Nix consumer closure is now repaired. Reconcile recorder calls to the pinned Sento public package exports (=asys:=, =ac:=, =act:=) and rerun the unchanged authoritative Common Lisp contract. Do not add compatibility fallbacks or use =sento-user::= internals merely to compile.
 
 * Exact acceptance
 The unchanged recorder contract must turn GREEN for:
@@ -50,4 +57,4 @@ The unchanged recorder contract must turn GREEN for:
 3. prior committed evidence survives;
 4. a later command succeeds after the injected failure.
 
-The packaging repair is accepted only when the same authoritative Common Lisp contract can build =llm-log-expert= past ASDF dependency resolution. Recorder GREEN may be claimed only if the unchanged RESEARCH-018 behavior assertions then pass.
+Packaging/API repairs are accepted only when the same authoritative Common Lisp contract gets past dependency resolution and source compilation. Recorder GREEN may be claimed only if the unchanged RESEARCH-018 behavior assertions then pass.
