@@ -15,8 +15,14 @@
    #:runtime-config-data-directory
    #:runtime-config-listen-address
    #:runtime-config-port
+   #:runtime-config-upstreams
    #:default-data-directory
+   #:make-runtime-config
    #:make-default-runtime-config
+   #:http-proxy
+   #:start-http-proxy
+   #:stop-http-proxy
+   #:proxy-listen-port
    #:expert-host
    #:expert-host-data-directory
    #:expert-host-database
