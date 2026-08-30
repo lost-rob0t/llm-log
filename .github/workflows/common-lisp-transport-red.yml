@@ -34,3 +34,20 @@ jobs:
           set -euo pipefail
           nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
           echo "SENTO_RECORDER_DEPS_GREEN: reproducible actor dependency closure is available"
+
+  common-lisp-expert-integration-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute #10 Tek9 + SWI-Prolog RED contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract
