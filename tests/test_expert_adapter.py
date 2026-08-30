@@ -75,8 +75,11 @@ class SubprocessExpertPlaneTests(unittest.IsolatedAsyncioTestCase):
             script.write_text(
                 'import pathlib,sys,time\n'
                 f'p=pathlib.Path({str(marker)!r})\n'
-                'for _ in sys.stdin:\n'
-                ' n=int(p.read_text())+1 if p.exists() else 1; p.write_text(str(n)); time.sleep(10)\n'
+                'line=sys.stdin.readline()\n'
+                'assert line\n'
+                'n=int(p.read_text())+1 if p.exists() else 1\n'
+                'p.write_text(str(n))\n'
+                'time.sleep(10)\n'
             )
             plane = SubprocessExpertPlane([sys.executable, str(script)], data_dir=Path(tmp), timeout=0.5, append_service_args=False)
             await plane.start()
