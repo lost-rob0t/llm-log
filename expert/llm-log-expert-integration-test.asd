@@ -6,9 +6,9 @@
   :serial t
   :components ((:module "tests"
                 :serial t
-                :components ((:file "package")
+                :components ((:file "integration-package")
                              (:file "expert-roundtrip-red"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))
-             (unless (uiop:symbol-call :rove :run :llm-log-expert-test)
+             (unless (uiop:symbol-call :rove :run :llm-log-expert-integration-test)
                (error "llm-log-expert-integration-test failed"))))
