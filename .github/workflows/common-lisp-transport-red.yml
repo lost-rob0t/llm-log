@@ -38,8 +38,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Execute Python proxy expert-policy, adapter, and transport lifecycle contracts
+      - name: Execute Python proxy expert-policy, adapter, transport lifecycle, and launch contracts
         shell: bash
         run: |
           set -euo pipefail
-          nix develop --command python -m unittest tests.test_expert_proxy_policy tests.test_expert_adapter tests.test_expert_transport_lifecycle -v
+          nix develop --command python -m unittest \
+            tests.test_expert_proxy_policy \
+            tests.test_expert_adapter \
+            tests.test_expert_transport_lifecycle \
+            tests.test_expert_launch_config \
+            -v
