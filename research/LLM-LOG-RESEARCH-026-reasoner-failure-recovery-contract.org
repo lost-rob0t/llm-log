@@ -1,0 +1,89 @@
+#+title: LLM-LOG-RESEARCH-026 — Typed reasoner failure and bounded recovery
+#+filetags: :llm-log:aradr:expert:tek9:prolog:issue-10:
+
+* Stable links
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+* Analyze
+The current branch already keeps one persistent SWI-Prolog process and invalidates it when =prolog-worker-request= raises. It also restarts a dead worker on a later request. The missing bounded contract is failure typing: crash, timeout, unavailable worker, and malformed/correlation-invalid reply currently collapse into generic Common Lisp errors and the public service can reduce them to a generic fixture error.
+
+Remote issue #8/#10 prose currently contains a stale zero-Python ownership rewrite. The active program authority for this slice is the current user instruction and PR #24: Python remains transparent capture/transport; Common Lisp owns the expert runtime; Tek9 remains the canonical durable expert KB; SWI-Prolog owns declared inference. This slice does not move transport ownership.
+
+* Research
+** Existing runtime boundary
+- =expert/prolog-supervisor.lisp= owns SWI lifecycle and request framing.
+- Declared operations are allow-listed before process invocation.
+- Request correlation and operation echo are validated.
+- Timeout is bounded by an operator-level finite value.
+- Any in-flight reasoner error invalidates the worker; no automatic replay occurs inside =prolog-worker-request=.
+- A later request may create a fresh worker/session.
+
+** Failure classes required
+The host needs a typed condition with a finite, non-authoritative classification:
+- =:unavailable= — worker cannot be started/observed live.
+- =:crashed= — EOF / worker vanished during an in-flight request.
+- =:timeout= — bounded deadline expired; in-flight result is ambiguous and must not be replayed automatically.
+- =:malformed-reply= — invalid JSON, wrong shape, correlation mismatch, operation mismatch, or invalid status.
+
+The condition is operational metadata only. It grants no execution authority and must never cause raw evidence mutation.
+
+** Recovery semantics
+1. Failure invalidates the current SWI process/session.
+2. The failed request is returned as a typed failure and is not retried implicitly.
+3. The next independent request may start exactly one fresh worker/session.
+4. Successful recovery must not mutate previously projected Tek9 source evidence or derived assertions.
+
+* Design
+** Common Lisp typed contract
+Define =reasoner-failure= as an =error= condition with:
+- =kind= — one of the finite keywords above;
+- =message= — diagnostic prose safe for the local expert boundary.
+
+Expose read-only accessors so the service layer can map the condition to stable protocol error codes without string parsing.
+
+** Service mapping
+Map failure kinds to stable error codes:
+- =reasoner_unavailable=
+- =reasoner_crashed=
+- =reasoner_timeout=
+- =reasoner_malformed_reply=
+
+Do not return empty success. Do not automatically replay the failed inference.
+
+** Tek9 boundary
+No Tek9 repository mutation is required. Failure typing and worker lifecycle are runtime concerns; existing bounded primary-key APIs remain sufficient. No failure record is persisted as a derived assertion by this slice.
+
+** Nix / non-Nix
+No dependency or packaging change is required. The contract executes inside the existing SBCL + Tek9 + SWI-Prolog integration check and applies identically to ASDF/SBCL non-Nix launches.
+
+* Adversarial review
+- Do not catch =unknown_reasoner_operation= as a reasoner crash: allow-list rejection occurs before invocation and remains a caller contract error.
+- Do not reuse the failed worker after malformed JSON/correlation/status: stream synchronization is no longer trustworthy.
+- Do not retry timeout/crash automatically: the reasoner may have performed work before the host lost the reply.
+- Do not derive authority from failure classification.
+- Do not write credentials, raw request bodies, or arbitrary worker stderr into Tek9/prose as part of failure handling.
+
+* Decision
+Proceed with one RED-first slice limited to typed reasoner failure + later-request recovery. Keep Python transport, Tek9 schema, provider census, dotfiles, and expert #12/#13/#15/#17 production behavior unchanged.
+
+* Exact RED-first acceptance
+Against the untouched pre-production head =00a45a069a673b0c62b08bf636d52794e01fa5f8=:
+1. Add only tests/documentation.
+2. Execute the existing Nix integration contract.
+3. RED is valid only if prior Tek9 -> SWI roundtrip/provenance tests remain GREEN and the new assertion fails because typed =reasoner-failure= behavior is absent.
+4. After that observed RED, production code may add the condition and stable mapping.
+5. GREEN must prove:
+   - malformed reply classification is =:malformed-reply=;
+   - a killed/dead worker is not reused;
+   - the next independent declared query starts a fresh session and succeeds;
+   - no automatic replay is added;
+   - existing bounded Tek9, declared-predicate, provenance, and derived-assertion contracts remain GREEN.
+
+* Explicitly not claimed
+- Python fail-open / =require_expert_plane= integration.
+- synthetic timeout process fixture.
+- malformed worker process fixture over stdio.
+- provider transport conformance.
+- any Tek9 schema/index change.
