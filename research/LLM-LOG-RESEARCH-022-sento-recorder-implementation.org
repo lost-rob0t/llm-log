@@ -26,8 +26,22 @@ This slice does not yet route the HTTP proxy through the recorder. That integrat
 * Adversarial review
 A mutex around the old direct writer would satisfy serialization superficially but violate the selected actor architecture. Writing directly under =events/= exposes partial files after a crash. A fire-and-forget tell would acknowledge too early. Automatic replay after failure could duplicate ambiguous evidence. Cross-filesystem staging would destroy rename atomicity. All are rejected.
 
+** Hosted implementation-gate finding
+Hosted run =33298572566= on implementation head =f04ea7380b3ce20d59482d4800a42ef24394e1fc= did not reach the recorder behavior assertions. The independent Sento dependency gate stayed GREEN, but the authoritative Common Lisp contract failed while building =llm-log-expert=:
+
+#+begin_example
+BUILD FAILED: Component #:SENTO not found, required by
+              #<SYSTEM "llm-log-expert">
+#+end_example
+
+Cause: =expert/llm-log-expert.asd= correctly declares =#:sento=, but the flake's =expertLib = pkgs.sbcl.buildASDFSystem { ... }= still declares only =tek9Package= and =cl.jsown= in =lispLibs=. Packaging Sento as a standalone flake output is insufficient; the consumer ASDF derivation must carry Sento in its declared Lisp closure.
+
+This is not behavioral RED/GREEN evidence for the recorder. It is a reproducible integration failure at the package boundary.
+
 * Decision
 Implement the minimum Sento single-writer recorder against the already executed RESEARCH-018 RED. Do not mutate Tek9 or dotfiles. Do not claim crash durability beyond the tested failure-before-publish boundary; fsync/power-loss durability is a separate contract.
+
+Before evaluating recorder behavior, repair the Nix consumer closure by adding the already-pinned =sentoPackage= to =expertLib.lispLibs=. This is the smallest legitimate mutation because it only reconciles the declared ASDF dependency with the already-GREEN pinned package; it adds no new dependency source, recorder semantics, or fallback implementation.
 
 * Exact acceptance
 The unchanged recorder contract must turn GREEN for:
@@ -35,3 +49,5 @@ The unchanged recorder contract must turn GREEN for:
 2. injected failure-before-publish -> caller sees failure and committed event count does not increase;
 3. prior committed evidence survives;
 4. a later command succeeds after the injected failure.
+
+The packaging repair is accepted only when the same authoritative Common Lisp contract can build =llm-log-expert= past ASDF dependency resolution. Recorder GREEN may be claimed only if the unchanged RESEARCH-018 behavior assertions then pass.
