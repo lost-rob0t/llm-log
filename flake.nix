@@ -27,7 +27,7 @@
             version = "0.1.0";
             src = ./expert;
             systems = [ "llm-log-expert" ];
-            lispLibs = [ tek9Package cl.jsown ];
+            lispLibs = [ tek9Package cl.jsown sentoPackage ];
           };
           sbclWithExpert = pkgs.sbcl.withPackages (_: [ expertLib ]);
           expertService = pkgs.writeShellApplication {
@@ -172,4 +172,3 @@
           '';
         });
     };
-}
