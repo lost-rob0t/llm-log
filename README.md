@@ -4,6 +4,17 @@ Transparent LLM traffic capture for building a durable training corpus and a sym
 
 The first slice is deliberately small: route an LLM client through `llm-log`, forward the request unchanged, stream the response back immediately, and append the completed exchange to disk.
 
+## Documentation
+
+Canonical documentation is Org-mode under [`research/`](research/):
+
+- [`research/LLM-LOG-RESEARCH-INDEX.org`](research/LLM-LOG-RESEARCH-INDEX.org) — document map and migration status
+- [`research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org`](research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org) — Common Lisp proxy runtime architecture reference
+- [`research/LLM-LOG-RESEARCH-014-configuration-and-operations.org`](research/LLM-LOG-RESEARCH-014-configuration-and-operations.org) — configuration and operations guide
+- [`research/LLM-LOG-RESEARCH-015-testing-and-verification.org`](research/LLM-LOG-RESEARCH-015-testing-and-verification.org) — testing and verification guide
+
+The Common Lisp runtime lives in `proxy/`; the expert plane in `expert/`.
+
 ## Architecture
 
 ```text

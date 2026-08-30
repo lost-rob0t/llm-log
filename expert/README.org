@@ -1,0 +1,54 @@
+#+title: llm-log expert runtime
+
+* Boundary
+
+This directory is the Common Lisp-owned expert-system runtime for llm-log.
+
+- Tek9 is the durable document/graph KB.
+- SWI-Prolog is the rule/inference engine.
+- Common Lisp owns lifecycle, typed schemas, bounded fact materialization, Prolog supervision, result validation, and persistence.
+- Python owns only proxy/capture transport plus the versioned client envelope in =llm_log/expert_protocol.py=.
+
+The runtime is developed behind the black-box contract in =tests/test_expert_service_red.py=. Do not make the Python proxy a second rule engine and do not add an arbitrary Prolog goal operation.
+
+* First executable contract
+
+The service surface for the substrate is:
+
+#+begin_example
+llm-log-expert serve --stdio [--data-dir PATH]
+#+end_example
+
+with one JSON object per input/output line. One service process owns one Tek9 environment and one persistent supervised SWI-Prolog worker for its lifetime.
+
+Public operations remain closed. The current substrate implements =health=, =observe_request=, and the fixture-only =query_classification= path for =event_transport=. Untrusted strings are data, never executable Prolog terms.
+
+* Mutable state
+
+The reusable llm-log default mutable state root is:
+
+#+begin_example
+~/.llm-proxy/
+#+end_example
+
+Expert runtime state therefore defaults below =~/.llm-proxy/expert/=.
+
+This is a default, not a hardcoded machine path. Standalone configuration/CLI and Home Manager =services.llm-log.dataDir= may override the root. Consumer configuration such as dotfiles may point it at a personal corpus directory without changing the reusable llm-log default. No mutable database state belongs in the Nix store.
+
+* Packaging
+
+Tek9's reusable Nix/ASDF package support is merged on Tek9 =master= and the llm-log flake consumes that immutable merged revision.
+
+The llm-log flake exposes:
+- =llm-log= — Python capture/proxy package;
+- =llm-log-expert-lib= — Common Lisp ASDF system closure;
+- =llm-log-expert= — executable SBCL + Tek9 + SWI-Prolog expert service;
+- =expert-service-contract= — packaged black-box contract check.
+
+The executable receives its immutable packaged =worker.pl= path through =LLM_LOG_PROLOG_WORKER=. This is packaging metadata, not user state. A source checkout may fall back to the ASDF-relative worker path.
+
+No developer-local Quicklisp checkout is required and no mutable database state is written into the Nix store.
+
+* Validation state
+
+The executable/package contract is defined but must not be called GREEN until an environment with Nix, SBCL and SWI-Prolog executes it on the exact branch head. See =../research/LLM-LOG-RESEARCH-007-expert-service-transaction.org= for the current evidence boundary.

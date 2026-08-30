@@ -1,0 +1,117 @@
+#+title: LLM-LOG-RESEARCH-019 — Sento recorder packaging boundary
+#+startup: overview
+
+* Scope
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Previous design: =research/LLM-LOG-RESEARCH-018-single-writer-recorder-crash-contract.org=
+- Branch: =rage/10-expert-runtime-red=
+
+This bounded ARADR pass answers one question only: can the selected Sento/cl-gserver single-writer recorder be introduced reproducibly through the current Nix/ASDF boundary without silently falling back to an ad-hoc mutex recorder or an unpinned developer Quicklisp environment?
+
+* Analyze
+The live branch at =714091787a58cf1822086e7965445bb258112787= already has an executed recorder RED. The existing HTTP and immutable capture contracts are GREEN; recorder concurrency/crash contracts fail specifically because =START-RECORDER= is absent.
+
+The current flake packages =llm-log-expert= with =pkgs.sbcl.buildASDFSystem= and an explicit Lisp dependency set containing Tek9 and JSOWN. There is no Sento/cl-gserver dependency in the flake or ASDF system.
+
+Remote =main= advanced independently after the recorder RED. It is now at =94b79dccd9010b429eff0472c74391fa50b4db0a= after PR #22 repaired the existing Python WebSocket frame-envelope test. The #10 branch is therefore diverged: 80 commits ahead and 2 commits behind, with merge base =3e957799d842f058a8ce53b8f675773fc2cde5ef=. PR #18 currently reports non-mergeable and remains draft. This mainline drift is test-only migration debt and does not authorize overwriting #10 work.
+
+No repository-level =AGENTS.md= exists on the active llm-log branch. Repository and issue/PR contracts therefore remain the applicable instructions.
+
+* Research
+** Selected actor library
+Sento/cl-gserver remains the selected actor library. Upstream =sento.asd= reports version 3.4.4 and depends on:
+
+- alexandria
+- log4cl
+- bordeaux-threads
+- cl-speedy-queue
+- str
+- binding-arrows
+- timer-wheel
+- local-time-duration
+- atomics on SBCL/non-ABCL
+
+The actor runtime supplies actor systems, message passing, synchronous/asynchronous ask/tell, supervision-oriented actor hierarchy, dispatcher pools, and explicit shutdown. That is a materially better ownership boundary for the recorder than shared mutable state guarded by a process-wide lock.
+
+** Nix package discovery
+Fresh search of current Nixpkgs did not find a packaged =cl-gserver=/=sento= Lisp system. Searches also failed to establish all transitive Sento systems as Nixpkgs Common Lisp packages; notably =binding-arrows= was absent and =timer-wheel= search did not resolve a Common Lisp package.
+
+Therefore this branch cannot truthfully add =cl.sento= to =lispLibs= and claim reproducibility. Doing so would create a Nix expression that cannot evaluate.
+
+** Tek9 boundary
+No Tek9 change is required. The recorder publishes immutable capture artifacts below the symbolic projection boundary. Tek9 remains the canonical durable KB only after typed projection/derived assertion work. Current Tek9 remote state has no open issues or PRs, and llm-log remains pinned to the already packaged Tek9 revision.
+
+** Consumer boundary
+=lost-rob0t/dotfiles= remains consumer-only for this slice. Its llm-log integration must not move to the #10 draft branch while recorder, SSE/WebSocket migration, final packaging, and zero-Python gates are incomplete. Preserve the explicit =~/Documents/AI/proxy= data-dir override.
+
+* Design
+The recorder implementation remains:
+
+1. one Sento actor owns committed-event publication order;
+2. producers submit immutable capture event payloads by message;
+3. event files are staged beneath the same filesystem as the committed namespace;
+4. staging is completed before publication;
+5. publication is atomic rename into the committed namespace;
+6. acknowledgement is emitted only after successful publication;
+7. failure before publication returns typed failure and leaves no committed partial event;
+8. no ambiguous failed command is automatically replayed;
+9. later commands may proceed after bounded recovery;
+10. prior committed events remain immutable.
+
+Do not substitute a lock-based recorder merely to satisfy the existing RED.
+
+** Reproducible dependency boundary
+Before recorder production code, introduce a pinned Lisp dependency closure for Sento. Acceptable implementation strategies, in preference order:
+
+1. a reproducible Nix Lisp package set that already contains Sento 3.4.4 and its complete transitive dependencies;
+2. explicit pinned source derivations for Sento and every missing transitive Lisp dependency, built through =buildASDFSystem=;
+3. a generated, checked-in dependency lock/derivation layer whose inputs are immutable and whose build does not contact Quicklisp/network at runtime.
+
+Unacceptable:
+
+- ambient =~/quicklisp=;
+- network Quicklisp install during =nix build=;
+- floating Git branches;
+- hidden developer source-registry assumptions;
+- vendoring only Sento while resolving transitive systems from an uncontrolled environment.
+
+* RED-first packaging contract
+The next Auto-RAGE mutation must first add and execute a packaging RED that proves the untouched branch cannot load the selected Sento system from the exact Nix closure.
+
+The contract should run from the same hosted Nix workflow and require at minimum:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+#+end_src
+
+The check must start an SBCL built only from declared flake dependencies and evaluate an ASDF load of =sento=. The valid preimplementation RED is specifically an unavailable/missing declared Sento dependency. Random Nix/network/bootstrap failure does not count.
+
+After that RED is recorded, package the complete pinned dependency closure, rerun the exact check to GREEN, and only then implement =START-RECORDER=/submission/shutdown against the already executed recorder behavior RED from RESEARCH-018.
+
+* Adversarial review
+** Failure: declare Sento without its closure
+Result: local developer Quicklisp may make tests pass while Nix/CI is unreproducible. Rejected.
+
+** Failure: use a mutex instead
+Result: satisfies serialization superficially but violates the selected actor ownership/supervision architecture and makes later lifecycle/recovery behavior harder to reason about. Rejected.
+
+** Failure: make Tek9 the raw recorder
+Result: collapses immutable wire evidence and symbolic KB responsibilities and makes capture forwarding depend on database availability. Rejected.
+
+** Failure: update dotfiles now
+Result: consumers would pin an unfinished diverged draft branch. Rejected.
+
+** Failure: ignore main divergence
+Result: PR #18 stays non-mergeable and can later hide conflicts with post-base proxy tests. Reconciliation is required before merge, but it is not a reason to contaminate this bounded packaging slice with unrelated Python migration-test edits.
+
+* Decision
+1. Keep Sento/cl-gserver as the recorder actor implementation.
+2. No recorder production mutation in this pass because the selected actor dependency closure is not yet reproducibly established.
+3. The next executable gate is a dedicated hosted Nix Sento availability RED followed by a pinned dependency closure GREEN.
+4. Only after packaging GREEN may Auto-RAGE implement the single-writer actor against the existing RESEARCH-018 recorder concurrency/crash RED.
+5. Do not modify Tek9 or dotfiles for this slice.
+6. Reconcile the two-main-commit divergence before PR #18 can become mergeable, while preserving all #10 research/evidence history.
+
+* Result
+ARADR COMPLETE. AUTO-RAGE IS BLOCKED AT A PROVEN REPRODUCIBLE-DEPENDENCY BOUNDARY, NOT AT RECORDER DESIGN. No fake GREEN and no merge authorization.

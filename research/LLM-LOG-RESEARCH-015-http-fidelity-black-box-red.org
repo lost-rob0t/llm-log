@@ -1,0 +1,122 @@
+#+title: LLM-LOG-RESEARCH-015 — HTTP fidelity black-box RED
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION / RED CONTRACT
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Depends on: LLM-LOG-RESEARCH-014 hosted Common Lisp RED execution
+
+* Analyze
+The hosted Common Lisp gate is now trustworthy, but its current RED proves only that the HTTP lifecycle functions are absent. That is insufficient to authorize production proxy code: trivial lifecycle stubs could satisfy the existing assertions without forwarding one byte correctly.
+
+The next bounded contract therefore defines an end-to-end raw HTTP fixture that becomes executable as soon as the declared proxy surface exists. No production transport implementation is part of this decision commit.
+
+The accepted architecture remains the zero-Python correction in #20: Common Lisp owns transport/capture/runtime, Tek9 remains the durable symbolic KB, and SWI-Prolog remains the sole facts/rules/inference engine.
+
+* Research
+A fidelity test must observe bytes at both sides of the proxy rather than infer correctness from normalized application objects.
+
+The hosted check already runs SBCL, so the fixture may use SBCL's socket/thread facilities internally without adding a runtime dependency. This keeps the contract self-contained and does not constrain the production implementation, which remains designed around Woo/Clack, fast-http, usocket, CL+SSL, QURI and websocket-driver as recorded in RESEARCH-012.
+
+The black-box fixture intentionally uses ordinary HTTP/1.1 over loopback only. TLS, SSE and WebSocket get later independent RED contracts.
+
+Current Python migration behavior routes =/<provider>/<tail>= to the configured provider base URI plus =/<tail>=. The Common Lisp parity contract preserves that consumer-visible routing shape during migration; provider redesign belongs to a later explicit contract.
+
+* Design
+** Required public runtime surface
+Before the fidelity body can execute, the Common Lisp runtime must expose:
+- =MAKE-RUNTIME-CONFIG= as the typed public constructor;
+- =RUNTIME-CONFIG-UPSTREAMS=;
+- =START-HTTP-PROXY=;
+- =STOP-HTTP-PROXY=;
+- =PROXY-LISTEN-PORT=.
+
+Runtime config =upstreams= is a declarative mapping from stable provider/upstream name to base URI. For this fixture, one entry named =fixture= points to a loopback raw upstream.
+
+The exact internal representation may remain an alist initially; callers must not depend on transport-library internals.
+
+** Raw upstream fixture
+The test starts a loopback socket on an ephemeral port and accepts one request. It records the exact received request bytes needed for the contract and replies:
+
+#+begin_example
+HTTP/1.1 418 I'm a teapot
+Content-Length: 7
+Content-Type: application/octet-stream
+Set-Cookie: alpha=1; Path=/
+Set-Cookie: beta=2; Path=/
+Connection: close
+
+tea\000pot
+#+end_example
+
+The two =Set-Cookie= fields are deliberately separate. Collapsing them into one comma-joined field is a contract failure.
+
+** Raw client fixture
+The downstream client sends through llm-log:
+
+#+begin_example
+POST /fixture/v1/messages?alpha=1&alpha=2&encoded=%2Fkeep HTTP/1.1
+Host: 127.0.0.1
+Content-Type: application/octet-stream
+Content-Length: 8
+X-Fidelity: keep-me
+Connection: close
+
+req\000body
+#+end_example
+
+The proxy removes the leading provider selector only for upstream routing, so the raw fixture upstream must observe =/v1/messages?alpha=1&alpha=2&encoded=%2Fkeep=. The request body is octet data and includes NUL. No JSON parser participates.
+
+** Assertions
+The first ordinary-HTTP GREEN must prove:
+1. upstream observed method =POST=;
+2. upstream observed exact target =/v1/messages?alpha=1&alpha=2&encoded=%2Fkeep=;
+3. upstream observed request body octets exactly, including NUL;
+4. end-to-end header =X-Fidelity: keep-me= survives;
+5. client receives status =418=;
+6. client receives response body octets exactly, including NUL;
+7. client receives two distinct =Set-Cookie= fields in original order;
+8. no Python executable/module is needed by this contract.
+
+Hop-by-hop headers are excluded from byte-for-byte equality because a correct proxy may legally rewrite/remove them. Host and Content-Length may also be regenerated as required by forwarding semantics; payload and routing behavior are authoritative.
+
+* Failure semantics
+A fixture bootstrap/socket failure is infrastructure failure and does not count as behavioral RED.
+
+On the current pre-implementation head, expected RED remains the explicitly missing Common Lisp runtime/proxy surface. Once that surface exists, the same test must proceed into the raw forwarding assertions; merely making the symbols exist is not GREEN.
+
+* Adversarial review
+** Fake lifecycle stubs turn old RED green
+Resolved: the same suite now contains forwarding assertions gated behind the required public surface. Once stubs exist, the raw contract executes and fails until real forwarding works.
+
+** High-level test client hides header corruption
+Resolved: raw socket client inspects response header lines and counts distinct =Set-Cookie= fields.
+
+** Fixture accidentally dictates production library
+Resolved: fixture uses SBCL socket primitives only as test machinery. Production library decision remains RESEARCH-012.
+
+** Query normalization hides corruption
+Resolved: upstream records the raw request target and the assertion includes repeated query keys plus an encoded slash.
+
+** Provider-prefix migration regression
+Resolved: downstream request includes =/fixture/= and the upstream assertion proves the selector is removed exactly once before forwarding.
+
+** Text streams corrupt binary bodies
+Resolved: request and response bodies contain NUL and are compared as octets.
+
+** Tek9 scope drift
+No Tek9 mutation is needed. This contract is transport-only and preserves the existing #10 public Tek9 boundary.
+
+* Decision
+GO for the stronger RED contract only. Add it to the existing Common Lisp/Rove transport suite and use the hosted Nix runner to prove that the unchanged production runtime is still RED for the expected missing surface. Do not implement HTTP forwarding in this bounded cycle.
+
+After this RED is independently observed, the next Auto-RAGE slice may implement the minimum ordinary HTTP forwarding path necessary to turn this exact contract GREEN. SSE, WebSocket, recorder/redaction and expert integration remain subsequent gated slices.
+
+* Acceptance
+- [x] lifecycle-only RED already independently confirmed in RESEARCH-014;
+- [x] raw HTTP fidelity contract designed before production mutation;
+- [ ] contract committed to Common Lisp test suite;
+- [ ] hosted exact-head execution reaches the suite and confirms expected pre-implementation RED;
+- [ ] minimum Common Lisp HTTP implementation turns this same contract GREEN;
+- [ ] no dotfiles or Tek9 mutation in this slice.

@@ -1,0 +1,169 @@
+#+title: LLM-LOG-RESEARCH-005 — Persistent Prolog Supervisor Contract
+#+startup: overview
+
+* Status
+- Lifecycle: DESIGN -> RAGE-READY
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Implementation dependency: https://github.com/lost-rob0t/llm-log/issues/10
+- Active implementation PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Tek9 package dependency: https://github.com/lost-rob0t/tek9/pull/8
+- Tek9 verified head: =5931490eee6f160edf37830fbe96e7142fe68533=
+
+* New evidence
+Tek9's reusable Nix package contract is no longer a speculative blocker. Exact head =5931490eee6f160edf37830fbe96e7142fe68533= completed CI run 123 successfully, including the package smoke that loads =:tek9= from an external SBCL package closure and opens a real writable LMDB database outside the Nix store.
+
+The llm-log expert plane may therefore consume Tek9 by immutable revision while the upstream PR remains unmerged. The permanent dependency should move to Tek9 master after that exact change is merged.
+
+* Bounded slice
+The next Auto-RAGE slice is only the persistent Prolog supervisor and fixture query path. It does not implement request classification, task/cost inference, outcome inference, or Beagle.
+
+Required executable path:
+
+#+begin_example
+JSON request on expert-service stdio
+  -> Common Lisp closed operation dispatcher
+  -> bounded Tek9 point lookup / idempotent event projection
+  -> persistent supervised SWI-Prolog JSON-lines worker
+  -> declared fixture predicate only
+  -> validated Common Lisp result
+  -> JSON reply with provenance
+#+end_example
+
+* Supervisor ownership
+Common Lisp owns the SWI-Prolog process and all process lifecycle semantics.
+
+One =expert-host= owns at most one live SWI-Prolog worker at a time. Queries reuse that worker. A worker crash invalidates the session ID, returns an explicit typed failure for the in-flight operation, and permits a bounded restart before a later operation. No query may spawn an independent one-shot Prolog interpreter.
+
+The Prolog worker is not the database. Tek9 remains canonical durable state. Prolog receives only bounded facts required for the declared operation.
+
+* Closed Prolog protocol
+The CL -> Prolog protocol is JSON-lines over private stdio.
+
+Allowed worker operations for this slice:
+- =health=
+- =event_transport=
+
+There is no generic goal field and no =call= operation.
+
+Each message includes:
+- protocol version;
+- correlation/request ID;
+- operation atom selected by Common Lisp code;
+- normalized data object.
+
+The worker replies with:
+- status =ok|error=;
+- request ID;
+- operation;
+- rule version;
+- deterministic result or structured error.
+
+User/model strings are serialized only as JSON values. They are never parsed with =read_term/3=, =term_string/2=, =atom_to_term/3=, or passed to =call/1=.
+
+* Tek9 projection contract
+For the substrate proof, event documents use stable primary keys of the form =event:<event-id>=.
+
+The value contains only expert-plane metadata/references needed for inference:
+- event ID;
+- provider/upstream when present;
+- model when present;
+- transport;
+- started/completed timestamps when present;
+- request/response hashes or durable raw-corpus references;
+- projection schema version.
+
+Raw request/response bodies stay in the append-only capture corpus and are not copied into Tek9 merely for this expert substrate.
+
+Replay rule:
+1. If =event:<id>= does not exist, create it and advance the KB revision once.
+2. If it exists with equivalent projected data, return =existing= and do not advance revision.
+3. If it exists with contradictory projected data, return a typed =event_conflict= error. Do not overwrite evidence silently.
+
+KB revision is durable metadata in Tek9, not an in-memory process counter.
+
+* Fixture derivation
+The first declared expert predicate is =event_transport=.
+
+Common Lisp fetches exactly one event document by stable primary key, extracts its normalized transport value, and sends only that bounded fact to SWI-Prolog. SWI-Prolog applies a fixture rule and returns the transport plus =fixture.event_transport/v1=.
+
+The externally returned result includes:
+- expert =fixture.event_transport=;
+- value;
+- derivation_type =deterministic=;
+- rule_version;
+- KB revision;
+- evidence IDs containing the source event ID;
+- Prolog session ID.
+
+This fixture proves the substrate only. It must not grow into the production request classifier.
+
+* Failure semantics
+** Prolog unavailable at expert-service start
+The expert service reports a typed unavailable/error state. The llm-log proxy remains fail-open unless =require_expert_plane= is explicitly enabled.
+
+** Worker crash during a query
+Return typed =reasoner_crashed= for the operation. Do not manufacture an empty result. Mark the session dead and permit a bounded restart for subsequent operations.
+
+** Timeout
+Terminate/restart the stuck worker and return =reasoner_timeout=. Never let an unbounded Prolog query stall transparent proxy forwarding.
+
+** Malformed Prolog reply
+Return =invalid_reasoner_reply= and discard it. Never persist a derived assertion from an invalid reply.
+
+** Duplicate event
+No mutation and no KB revision increment.
+
+** Contradictory duplicate
+Return =event_conflict=; preserve the existing immutable projection.
+
+* Nix boundary
+Pin Tek9 to =5931490eee6f160edf37830fbe96e7142fe68533= for this integration transaction until upstream PR #8 merges.
+
+The llm-log flake should expose a distinct =llm-log-expert= package containing:
+- SBCL runtime;
+- =llm-log-expert= ASDF system;
+- pinned Tek9 package;
+- JSOWN;
+- SWI-Prolog executable/rules.
+
+Mutable state defaults below the llm-log data root at =expert/= and never enters the Nix store.
+
+The existing Python proxy package stays separately usable. Packaging the expert service must not convert Python into the inference owner.
+
+* Home Manager boundary
+After the executable substrate is green, Home Manager may add an explicit expert-plane service/options rather than silently coupling service lifecycle to the proxy. Initial intended options:
+- =services.llm-log.expert.enable=;
+- =services.llm-log.expert.package=;
+- =services.llm-log.expert.dataDir= defaulting to =${services.llm-log.dataDir}/expert=;
+- =services.llm-log.requireExpertPlane= default false.
+
+The current configured llm-log data root remains =~/Documents/AI/proxy= in the consumer dotfiles, so default expert state resolves beneath that tree.
+
+* Adversarial review
+** Arbitrary Prolog execution
+Rejected by a closed dispatcher on both CL and Prolog sides. No model-controlled callable terms.
+
+** Whole-corpus materialization
+Rejected. The fixture path uses one Tek9 primary-key fetch. Future experts must add explicit indexes/bounded graph neighborhoods before broader queries.
+
+** Lost idempotency on restart
+KB revision and event projection live in Tek9, so process restart does not reset duplicate detection.
+
+** Reasoner becomes canonical state
+Rejected. SWI-Prolog is disposable reasoning state; Tek9 remains durable authority.
+
+** False-green inference
+A valid transport/HTTP response is not task success. This substrate fixture only proves transport metadata derivation and must not be reused as outcome evidence without explicit rules later.
+
+* RED-first acceptance
+The existing black-box service RED in =tests/test_expert_service_red.py= remains authoritative for the first GREEN target. Before claiming GREEN on this slice, an executable environment must run it against the exact head and prove:
+- Common Lisp/Tek9/SWI runtime identity;
+- persistent Prolog session reuse;
+- idempotent event projection;
+- fixture event_transport inference with rule/KB/evidence provenance;
+- rejection of =call_prolog=.
+
+Additional crash/timeout tests should be added RED-first before implementing recovery behavior beyond the minimum needed by that current contract.
+
+* Decision
+GO for the persistent supervisor + fixture derivation slice only. Keep #12, #13, #15 and #17 blocked until #10's exact service head is GREEN. Keep provider census #6 live but non-conflicting.

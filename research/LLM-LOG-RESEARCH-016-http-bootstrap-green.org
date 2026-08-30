@@ -1,0 +1,83 @@
+#+title: LLM-LOG-RESEARCH-016 — Common Lisp ordinary-HTTP bootstrap GREEN
+#+startup: overview
+
+* Status
+- Lifecycle: AUTO-ARADR / DECISION / GO
+- Parent: https://github.com/lost-rob0t/llm-log/issues/10
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Corrected language boundary: https://github.com/lost-rob0t/llm-log/issues/20
+- Pre-implementation RED head: =0359d92e4e637d888079ddf55e72d2c9124de81a=
+- Executed RED run: https://github.com/lost-rob0t/llm-log/actions/runs/33282707089
+- Prior contract: =research/LLM-LOG-RESEARCH-015-http-fidelity-black-box-red.org=
+
+* Analyze
+The active #10 branch already contains the Tek9/SWI-Prolog substrate and an executed raw ordinary-HTTP RED contract.  The contract is deliberately stronger than lifecycle existence: it exercises an ephemeral loopback upstream and requires method/path/query fidelity, binary request/response bodies, an end-to-end request header, upstream status 418, and two independently preserved =Set-Cookie= fields.
+
+The current Common Lisp runtime lacks the proxy lifecycle and upstream-map configuration required to enter that behavioral contract.  Dotfiles remains a consumer pinned to merged =llm-log= main and must not move to this draft branch before the Common Lisp runtime is GREEN.
+
+* Research
+The long-term transport direction in =LLM-LOG-RESEARCH-012= remains appropriate: evented/server and protocol libraries should be used for SSE/WebSocket and higher-throughput production operation.  This bounded slice is intentionally narrower: prove the raw HTTP/1.1 forwarding semantics with SBCL's existing binary socket substrate already available to the executable test environment.
+
+Using =sb-bsd-sockets= here avoids adding an unverified package/dependency change in the same transaction as the first behavioral GREEN.  It also keeps the test at the octet boundary, which is exactly where duplicate-header and binary-body regressions are visible.  This does *not* authorize treating the bootstrap connection loop as the final SSE/WebSocket architecture; those later slices must return to the researched nonblocking/streaming stack and establish their own RED contracts first.
+
+* Design
+** Typed configuration
+Extend =runtime-config= with =upstreams=, an alist mapping stable provider selector strings to absolute base URLs.  Default is empty.  The constructor remains a normal DEFSTRUCT constructor so tests and non-Nix callers can supply explicit mappings.
+
+** Lifecycle
+Expose:
+- =start-http-proxy(config) -> proxy=
+- =stop-http-proxy(proxy)=
+- =proxy-listen-port(proxy)=
+
+The proxy object owns one listener and one accept thread.  Each accepted ordinary-HTTP connection is handled in its own bounded worker thread for this bootstrap slice.
+
+** Routing
+The request target is =/<selector>/<remainder>?query=.  Resolve =selector= against =runtime-config-upstreams=.  Remove exactly the first selector path segment and forward the remainder and original query string unchanged.
+
+For this GREEN slice, configured upstreams must be =http://host[:port]=.  HTTPS/TLS is a later transport dependency slice and is not silently claimed here.
+
+** Wire handling
+Read the complete HTTP/1.1 header block as octets, derive Content-Length case-insensitively, then read exactly that request body.  Preserve request method, remainder target, query, end-to-end headers and body octets.  Rewrite only proxy-required fields:
+- request line selector removal;
+- =Host= to the selected upstream authority;
+- =Connection: close= for the bounded one-request bootstrap connection.
+
+Forward the upstream response as raw octets until EOF.  Do not parse/regenerate response headers.  This preserves status, duplicate fields (especially =Set-Cookie=), ordering, and binary body bytes.
+
+** Evidence separation
+This slice implements transport only.  It does not write corpus records or Tek9 assertions.  Raw capture/recorder/redaction is the *next* independently RED-gated slice.  Keeping capture out of this transaction prevents transport fidelity evidence from being conflated with persistence evidence.
+
+* Adversarial review
+** Risk: bootstrap sockets become accidental final architecture
+Decision: explicitly scope this implementation to ordinary HTTP/1.1.  SSE/WebSocket require new RED contracts and may replace/refactor the connection ownership around the researched evented libraries.
+
+** Risk: header rewriting destroys fidelity
+Decision: never normalize the upstream response.  For requests, mutate only request-target routing, Host, and Connection; copy other fields byte-for-byte.
+
+** Risk: unbounded corpus/body behavior
+Decision: this test contract uses Content-Length and finite ordinary HTTP.  Streaming/chunked/SSE receive separate bounded contracts before implementation.  Do not claim them GREEN here.
+
+** Risk: provider selector becomes authority
+Decision: selector is routing data only.  It grants no expert or execution authority.
+
+** Risk: Tek9 mutation without need
+Decision: no Tek9 API change.  Existing #10 database boundary remains sufficient and is not touched by this transport slice.
+
+* Decision
+GO for one bounded Auto-RAGE realization: implement only the typed upstream map plus ordinary HTTP lifecycle/forwarder required by the already-executed RED.  Convert the hosted workflow from an expected-RED verifier to the direct Common Lisp transport contract after production mutation.  Stop after exact-head GREEN evidence or a genuine blocker.
+
+* RED-first acceptance
+Authoritative pre-implementation evidence is immutable run =33282707089= on =0359d92e4e637d888079ddf55e72d2c9124de81a=.  It confirms the Common Lisp transport contract failed on the missing lifecycle surface before production implementation.
+
+GREEN for this slice requires the same Rove/ASDF contract to pass on the exact implementation head, including:
+- lifecycle functions exist;
+- upstream map exists;
+- method/path/query preserved with one selector segment removed;
+- request header preserved;
+- binary request body preserved;
+- upstream status preserved;
+- two separate =Set-Cookie= fields preserved;
+- binary response body preserved.
+
+No claim is made for SSE, WebSocket, capture, redaction, HTTPS, provider-family conformance, or final zero-Python acceptance in this slice.

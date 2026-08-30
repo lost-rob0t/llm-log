@@ -1,0 +1,103 @@
+#+title: LLM-LOG-RESEARCH-011 — Zero-Python Rewrite
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION / APPROVED
+- Parent: https://github.com/lost-rob0t/llm-log/issues/8
+- Active substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Supersedes every earlier design statement that assigns runtime, proxy, capture, configuration, protocol, recorder, or test ownership to Python.
+
+* Hard language boundary
+llm-log SHALL contain no Python implementation.
+
+The target architecture is:
+
+#+begin_example
+LLM clients
+   |
+   v
+Common Lisp llm-log
+   |-- HTTP/SSE/WebSocket transparent proxy
+   |-- provider routing and configuration
+   |-- immutable raw capture + redaction
+   |-- recorder / state lifecycle
+   |-- typed local expert protocol
+   |-- Tek9 lifecycle and bounded retrieval
+   |-- SWI-Prolog supervision and result validation
+   v
+SWI-Prolog
+   |-- facts / rules / inference
+   v
+Tek9
+   `-- canonical durable document/graph KB
+#+end_example
+
+Python is not an application layer, transport layer, compatibility shim, protocol owner, test harness requirement, or fallback implementation.
+
+* Migration decision
+The existing =llm_log/*.py= package, =pyproject.toml=, Python package derivation, and Python tests are migration debt. They must be replaced rather than expanded.
+
+Do not delete working Python behavior before equivalent RED-first Common Lisp contracts exist. Migration proceeds capability by capability while the branch remains unmerged. Final acceptance requires the repository/runtime package to have no Python dependency and no Python source/test implementation.
+
+* Common Lisp ownership
+Common Lisp owns:
+- CLI and configuration;
+- default mutable state =~/.llm-proxy= and explicit data-directory overrides;
+- provider registry/routing;
+- transparent HTTP request/response forwarding;
+- SSE streaming without buffering semantic changes;
+- WebSocket upgrade/frame forwarding and incremental evidence journaling;
+- header/cookie credential forwarding with persistence redaction;
+- immutable raw event/frame evidence;
+- single-writer durable recorder semantics;
+- typed expert observations/queries;
+- expert fail-open / require-expert-plane fail-closed policy;
+- Tek9 access, typed objects, indexes and bounded graph/document retrieval;
+- SWI-Prolog worker lifecycle, timeout/crash recovery, closed predicate dispatch and result validation.
+
+* Prolog ownership
+SWI-Prolog owns facts, rules and inference. No Common Lisp rule-engine duplicate is introduced. The CL host may materialize bounded typed facts and validate typed results, but expert policy remains Prolog.
+
+* Tek9 ownership
+Tek9 remains the canonical durable document/graph KB. Existing public APIs are preferred. No Tek9 modification is justified merely by the language rewrite.
+
+* Evidence separation
+Raw capture evidence is immutable. Derived assertions remain separate and retain source IDs, rule/version, expert version and supersession provenance. Rewrite, classification, cost and outcome assertions never replace raw traffic.
+
+* RED-first migration acceptance
+Before replacing each Python capability, add a Common Lisp black-box contract that fails against the not-yet-implemented CL surface.
+
+Required migration gates:
+1. CL configuration + CLI: =~/.llm-proxy= default and explicit override precedence.
+2. CL HTTP transparent forwarding + redacted immutable capture.
+3. CL SSE byte/stream behavior and completed evidence.
+4. CL WebSocket bidirectional forwarding + incremental frame journal.
+5. arbitrary configured upstream/provider routing.
+6. CL recorder concurrency/single-writer durability.
+7. CL expert integration using the already-designed Tek9/SWI substrate.
+8. Nix package and Home Manager/systemd service contain no Python runtime dependency.
+9. non-Nix ASDF/launch path works with SBCL + SWI-Prolog + Tek9.
+10. repository scan rejects =*.py= and Python packaging after parity migration is complete.
+
+Tests for these contracts must themselves be Common Lisp, shell/Nix, or Prolog; Python is not accepted as the final conformance harness.
+
+* Consumer boundary
+=lost-rob0t/dotfiles= remains a consumer. It may configure =services.llm-log.dataDir= to =~/Documents/AI/proxy=, but that personal path must not become the reusable llm-log default.
+
+Codex, OpenCode, Claude Code and gptel integrations continue to point their configurable provider endpoints at llm-log. They do not own capture semantics.
+
+* Adversarial review
+** Risk: big-bang rewrite loses working transport behavior
+Mitigation: RED-first parity gates per transport capability before removing the corresponding Python implementation.
+
+** Risk: temporary dual implementation becomes permanent
+Mitigation: Python is explicitly migration debt; final zero-Python repository/package scan is a required acceptance gate.
+
+** Risk: CL becomes a second inference engine
+Mitigation: CL owns typed orchestration only; SWI-Prolog remains the sole facts/rules/inference engine.
+
+** Risk: language rewrite pollutes expert backlog
+Mitigation: #10 remains the active substrate. #12/#13/#15/#17 stay blocked until the CL transport/expert substrate is coherent and executable.
+
+* Decision
+GO. Rewrite llm-log to Common Lisp + SWI-Prolog + Tek9 with zero Python in the accepted implementation. Start with RED-first Common Lisp configuration/CLI and transport contracts, then migrate HTTP/SSE/WebSocket/recorder behavior. Do not add any new Python code.

@@ -1,0 +1,216 @@
+#+title: LLM-LOG-RESEARCH-004 — Symbolic Expert Plane
+#+startup: overview
+
+* Status
+- Lifecycle: DESIGN
+- Parent issue: https://github.com/lost-rob0t/llm-log/issues/8
+- First implementation slice: https://github.com/lost-rob0t/llm-log/issues/10
+- Implementation approval mode: Auto-RAGE decision gate
+- Canonical database: Tek9
+- Rule/inference engine: SWI-Prolog
+- Host/runtime shim: Common Lisp
+
+* Problem
+llm-log currently captures durable LLM traffic and has a deliberately small Prolog classifier. The next layer needs durable expert systems that can reason across user messages, tasks, requests, outcomes, costs, and explicit knowledge without turning the Python proxy into a second rule engine.
+
+The requested initial experts are:
+1. Beagle — KB-guided user-message rewriting.
+2. Request classifier — symbolic multi-label classification primarily for analysis.
+3. Task tracker — task/subtask identity plus token/cost accounting.
+4. Outcome expert — success/failure/partial/etc. labeling for dataset construction.
+
+* Storage/runtime decision
+Use Tek9 as the canonical durable KB.
+
+Tek9 is an embedded Common Lisp document/graph database over LMDB. The expert plane should use Tek9 documents for typed state/assertions and graph edges for provenance/relationships. Keep one Tek9 environment open for the expert-service lifetime and add explicit secondary indexes for hot expert queries.
+
+The reusable llm-log mutable-state root defaults to =~/.llm-proxy=. Expert-plane state defaults beneath that root (for example =~/.llm-proxy/expert/=), but the root is configuration, not a hardcoded machine-specific path. Standalone TOML/CLI and Home Manager =services.llm-log.dataDir= overrides take precedence. Consumer configuration may therefore place the corpus elsewhere without changing llm-log's reusable default.
+
+The runtime boundary is:
+
+#+begin_example
+llm-log Python proxy
+        |
+        | versioned local observation/query protocol
+        v
+Common Lisp expert service
+        |                     \
+        |                      \ bounded typed facts/results
+        v                       v
+Tek9                         SWI-Prolog
+canonical KB                rules + inference
+#+end_example
+
+Common Lisp owns process/runtime lifecycle, Tek9, typed domain objects, bounded fact materialization, Prolog invocation, result validation, and persistence. Prolog owns rules/inference. Python remains capture/transport and does not duplicate expert policy.
+
+* Evidence and provenance model
+Raw capture is immutable evidence. Expert output is derived state and never replaces raw events.
+
+Every derived assertion must retain:
+- stable assertion ID;
+- assertion kind/value;
+- source observation/event/message/task IDs;
+- rule ID and rule version;
+- creation timestamp;
+- expert name/version;
+- evidence state/confidence where applicable;
+- supersedes/replaced-by links when interpretations evolve.
+
+A derived label/rewrite/cost calculation must be reproducible from its recorded inputs and rule/pricing versions.
+
+* Canonical Tek9 entities
+Initial entities:
+- user-message
+- request
+- response
+- websocket-turn/frame reference
+- session
+- task
+- provider
+- model
+- usage-observation
+- pricing-snapshot
+- classification-assertion
+- rewrite-decision
+- outcome-evidence
+- outcome-assertion
+- rule-version
+- expert-run
+
+Initial graph relations:
+- task -> parent-task
+- task -> originating-user-message
+- task -> request
+- request -> response
+- assertion -> evidence
+- assertion -> rule-version
+- rewrite -> original-user-message
+- rewrite -> task
+- outcome -> task/request
+- usage -> request
+- cost -> usage
+- cost -> pricing-snapshot
+
+* Bounded Prolog materialization
+Do not load the full corpus into Prolog per request.
+
+For each expert query the Common Lisp host should:
+1. resolve query identity;
+2. fetch only indexed Tek9 records/graph neighborhood needed by that expert;
+3. translate to declared typed Prolog facts;
+4. invoke a declared expert predicate, never arbitrary model-controlled callable terms;
+5. bound execution by timeout/result count/term shape;
+6. validate the returned result;
+7. persist derived assertions with provenance.
+
+* Expert 1 — request classifier
+Run first because the other experts benefit from stable analytical features.
+
+Classification should be multi-label and explanation-bearing. Initial dimensions include activity, requested operation, artifact, locality, project/repository identity, tool need, authority/effect class, complexity/budget class, and validation expectation.
+
+Classification is analysis metadata. It must never imply permission.
+
+* Expert 2 — task and cost tracker
+A task is an explicit graph entity, not merely a chat/session.
+
+Prefer client-provided task identity when present. Otherwise assign/derive a local task identity and persist the reason/provenance for request membership. Support parent/child task graphs.
+
+Usage observations may contain input/output/cached/reasoning/provider-specific token classes, latency and request count. Cost assertions always reference a durable pricing snapshot. Unknown pricing remains unknown; never infer a numeric cost without evidence.
+
+* Expert 3 — outcome labeling
+Store evidence independently from labels. Distinguish success, failure, partial, cancelled, rejected/denied, timeout and unknown.
+
+Transport success is not task success. Explicit user rejection or deterministic test failure may outweigh HTTP 200. Weak evidence remains weak/unknown. Preserve historical label revisions.
+
+This expert is intended to build auditable training/evaluation datasets.
+
+* Expert 4 — Beagle rewrite engine
+Beagle consumes the exact original user message plus bounded grounded KB/task/classification facts and versioned rewrite rules.
+
+Modes:
+- off: no evaluation;
+- shadow: derive and store a proposed rewrite but forward the original unchanged;
+- apply: forward the rewrite through an explicit configured rewrite boundary after a separate conformance gate.
+
+The original user message is always retained verbatim.
+
+Beagle may make known constraints explicit, resolve grounded references, normalize task structure, and attach established validation/project constraints. It must not invent requirements, weaken explicit current-message constraints, grant authority, expose irrelevant private KB facts, or replace uncertainty with fabricated certainty.
+
+Current explicit message wins over conflicting older KB facts.
+
+Start Beagle in shadow mode so rewrite -> outcome/cost correlations can be measured before mutation is enabled.
+
+* Local protocol
+The first protocol must be versioned and typed. Initial operations:
+- observe_user_message
+- observe_request
+- observe_response
+- observe_usage
+- query_classification
+- query_task
+- query_outcome
+- query_rewrite
+- health
+
+Transport should be local-only (Unix-domain socket preferred on Unix; loopback fallback). Messages carry schema version plus event/request/session/task correlation IDs.
+
+Default proxy semantics are fail-open: expert failure must not stop transparent LLM forwarding. A separately configured require-expert-plane mode may fail closed.
+
+* Nix and standalone boundary
+The existing llm-log flake should eventually package:
+- Python proxy;
+- Common Lisp expert service;
+- Tek9 dependency;
+- SWI-Prolog rules/runtime.
+
+Home Manager should be able to enable/disable the expert service and configure its Tek9 path/mode. The default state root remains =~/.llm-proxy=; Home Manager and standalone configuration may override it. Credentials must not enter the Nix store.
+
+Non-Nix users need a normal configuration/launch path for the same service.
+
+* Implementation sequence
+1. #10 Common Lisp/Tek9/typed Prolog runtime substrate.
+2. #12 Request-classification expert.
+3. #13 Task graph + cost accounting expert.
+4. #15 Outcome expert + dataset query/export contract.
+5. #17 Beagle shadow mode.
+6. Separate Beagle apply-mode conformance gate.
+
+* Adversarial review
+** Risk: Python accidentally becomes policy owner
+Mitigation: Python only sends observations and consumes typed results; expert rules remain Prolog and durable domain state remains Tek9.
+
+** Risk: loading the full Tek9 corpus into Prolog becomes slow/unbounded
+Mitigation: bounded indexed materialization per declared expert query.
+
+** Risk: generated rules become trusted automatically
+Mitigation: rule/version objects have explicit trust/lifecycle state; outcome evidence can propose improvements but does not silently promote rules.
+
+** Risk: Beagle changes user intent
+Mitigation: immutable original, shadow-first deployment, explicit preserved-constraint output, current explicit message outranks older KB facts, apply mode is a separate gate.
+
+** Risk: cost history changes when providers update prices
+Mitigation: persist pricing snapshot and link every numeric cost assertion to it.
+
+** Risk: transport-level success poisons success dataset
+Mitigation: separate evidence from derived labels and preserve unknown/partial states.
+
+** Risk: Prolog escape hatch
+Mitigation: host invokes only declared expert predicates with typed facts/results; no arbitrary model-controlled callable term.
+
+* Decision
+GO for RED-first implementation of #10 only. The four domain experts remain dependent on the shared substrate. Beagle begins in shadow mode; apply mode is deliberately not part of the first Beagle implementation slice.
+
+* 2026-08-29 packaging boundary update
+The first Common Lisp host skeleton now exists on the active #10 branch and intentionally opens exactly one Tek9 environment for the host lifetime. The Python-side envelope implementation also exists, but the black-box CL/Tek9/SWI-Prolog service contract remains RED until a runnable Nix/SBCL environment executes it.
+
+A concrete reproducibility blocker was confirmed in Tek9 itself: the Tek9 flake exposed only an x86_64 development shell, so llm-log could not consume Tek9 as a package without assuming a developer-local Quicklisp/source checkout. That violates the expert-plane packaging contract.
+
+Upstream resolution transaction:
+- Tek9 issue: https://github.com/lost-rob0t/tek9/issues/7
+- Tek9 draft PR: https://github.com/lost-rob0t/tek9/pull/8
+- RED contract commit: =dd596fc= requires =.#tek9= / =.#default= and downstream =asdf:load-system :tek9= outside the source checkout.
+- implementation commit: =c4f8489= exposes Tek9 with current nixpkgs =pkgs.sbcl.buildASDFSystem= for x86_64-linux and aarch64-linux, declaring Lisp dependencies and LMDB as the native dependency.
+
+The Tek9 PR is not treated as GREEN until its exact head runs the Nix smoke and normal Tek9 correctness gate. llm-log #10 should not pin/consume that branch as a permanent dependency until the package contract is verified; temporary branch pinning is acceptable only for integration testing with explicit provenance.
+
+The selected boundary remains unchanged: packaging is an upstream Tek9 concern; storage semantics stay untouched. No Tek9 graph/document primitive change has been justified by the expert plane yet.

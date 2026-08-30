@@ -1,0 +1,108 @@
+#+title: LLM-LOG-RESEARCH-008 — Bounded Reasoner Crash Recovery
+#+startup: overview
+
+* Status
+- Lifecycle: IMPLEMENTED / UNEXECUTED
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Substrate issue: https://github.com/lost-rob0t/llm-log/issues/10
+- Active implementation PR: https://github.com/lost-rob0t/llm-log/pull/18
+- Database: Tek9
+- Rule engine: SWI-Prolog
+- Host/supervisor: Common Lisp
+
+* Problem
+The #10 substrate requires explicit failure when SWI-Prolog crashes and bounded recovery afterward. Before this slice, =prolog-worker-request= stopped a failed worker but every later request failed with =reasoner_unavailable= because no code restarted the supervised worker.
+
+The recovery boundary must not create at-least-once inference semantics accidentally. Retrying the request whose write/read channel failed could duplicate side effects if the reasoner processed it before dying.
+
+* Decision
+Use next-request recovery, not implicit same-request retry.
+
+#+begin_example
+request N
+  -> persistent SWI worker
+  -> worker dies / EOF / malformed reply
+  -> request N returns typed error
+  -> CL invalidates worker + session identity
+
+request N+1
+  -> CL observes no live worker
+  -> starts exactly one fresh SWI worker
+  -> creates a new session identity
+  -> executes request N+1 once
+#+end_example
+
+This keeps failure explicit and recovery bounded while avoiding ambiguous replay of the failed inference.
+
+* RED-first contract
+RED test commit: =0bf7bfc452bb3b692fae87c2a98144e181b4d992=
+
+Test fixture commit: =67a7dedded4e25c66016a713f7cc11ecc169e2e1=
+
+The black-box service test overrides =LLM_LOG_PROLOG_WORKER= with a deterministic crash-once SWI fixture. The first =health= request causes the child worker to exit without a reply. Required behavior:
+
+1. the first request returns =status:error= / =reasoner_unavailable=;
+2. the service process itself remains alive;
+3. the next request starts a fresh worker and succeeds;
+4. subsequent requests reuse that recovered worker/session rather than spawning per call.
+
+No test-only public expert operation was added. The fault is injected only through the existing packaged worker-path seam.
+
+No executed RED/GREEN result is claimed from the environment that authored this slice because it does not provide the required Nix/SBCL/SWI execution closure.
+
+* Implementation
+Implementation commit: =f788bf5e8393c89978496991688de7e3c86d3d92=
+
+=expert/prolog-supervisor.lisp= now has an internal =%ensure-prolog-worker= lifecycle step. A request checks the existing process and starts one worker only when the previous worker is absent/dead.
+
+Any request I/O, EOF, parse, correlation, or result-shape failure still:
+- stops the worker;
+- clears its process handle;
+- invalidates its session ID;
+- returns the original failure to the public dispatcher.
+
+It does not retry that request.
+
+* Invariants preserved
+- Python remains transport/protocol only; no Python inference policy was added.
+- SWI-Prolog still exposes only declared private operations.
+- There is no =call_prolog= or model-controlled callable-term path.
+- Tek9 state is not modified by recovery itself.
+- Raw capture remains immutable evidence.
+- A reasoner crash cannot silently convert a failed request into empty success.
+- The failed request is not automatically replayed.
+- A recovered worker receives a new session identity.
+
+* Storage contract reconciliation
+The reusable mutable-state root is =~/.llm-proxy/= and expert state defaults to =~/.llm-proxy/expert/=. This is configurable through standalone configuration/CLI and Home Manager. A consumer such as =lost-rob0t/dotfiles= may explicitly select another corpus root.
+
+Any older #10 prose describing =$XDG_DATA_HOME/llm-log/expert/= as the reusable default is superseded by the canonical configuration decision in PR #5 and the active expert-plane documents.
+
+* Tek9 boundary review
+No Tek9 primitive change is required for this slice. Recovery is process lifecycle state owned by Common Lisp. Tek9 remains the durable KB and its existing transaction/point-lookup APIs remain sufficient.
+
+* Adversarial review
+** Same-request retry duplicates inference
+Rejected. Failure is returned to the caller; retry policy belongs above this ambiguous boundary.
+
+** Crash loop spawns workers continuously
+A fresh worker is created only when another request arrives. There is no background restart loop in this slice.
+
+** Bad packaged worker causes every request to spawn
+Possible operational failure, but each attempt remains demand-driven and explicitly fails. Backoff/circuit-breaking is a later RED-first hardening slice if needed.
+
+** Old session ID survives crash
+Rejected by =stop-prolog-worker= clearing the process and session identity before propagation.
+
+** Recovery changes Tek9 evidence
+It does not. Process recovery is orthogonal to durable facts and KB revision.
+
+* Validation gate
+Before this slice can be called GREEN, exact PR head must execute:
+- the packaged =expert-service-contract= Nix check;
+- the crash-once black-box test;
+- the existing persistent-session/idempotency/conflict/restart fixtures;
+- existing proxy/capture tests;
+- normal Nix evaluation/package checks.
+
+Until those run successfully, PR #18 remains draft and #12/#13/#15/#17 remain blocked.

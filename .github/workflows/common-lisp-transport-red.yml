@@ -1,0 +1,36 @@
+name: Common Lisp transport contract
+
+on:
+  push:
+    branches:
+      - rage/10-expert-runtime-red
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  common-lisp-transport-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify existing Common Lisp transport contracts stay green
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
+          echo "COMMON_LISP_HTTP_GREEN: existing transport/capture contracts passed"
+
+      - name: Verify Sento recorder dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+          echo "SENTO_RECORDER_DEPS_GREEN: reproducible actor dependency closure is available"

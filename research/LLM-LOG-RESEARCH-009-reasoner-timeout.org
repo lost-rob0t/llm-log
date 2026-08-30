@@ -1,0 +1,67 @@
+#+title: LLM-LOG-RESEARCH-009 — Reasoner Timeout and Bounded Recovery
+#+startup: overview
+
+* Status
+- Lifecycle: DESIGN -> AUTO-RAGE
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Implementation dependency: https://github.com/lost-rob0t/llm-log/issues/10
+- Active PR: https://github.com/lost-rob0t/llm-log/pull/18
+
+* Analyze
+The #10 substrate now detects a dead SWI-Prolog child and can recover on the next request. The remaining liveness hole is a child process that stays alive but never emits a reply. =prolog-worker-request= performs a blocking =read-line= with no deadline, so one hung predicate can stall the entire Common Lisp expert service indefinitely.
+
+This violates the bounded expert-query contract already required by #8/#10.
+
+* Research
+The reasoner is a supervised child owned by the Common Lisp host. Timeout ownership therefore belongs in Common Lisp, not Python and not the Prolog rule itself.
+
+A timeout must bound one CL -> SWI request/reply transaction. It must not silently replay the timed-out request because the worker may have processed part or all of it before becoming unresponsive.
+
+The next public request may create one fresh SWI worker/session using the same recovery model already selected for crash recovery.
+
+* Design
+** Timeout source
+Use a finite host-side timeout for private reasoner replies. The default substrate value is 5 seconds and may be overridden for tests/runtime by =LLM_LOG_PROLOG_TIMEOUT_SECONDS=.
+
+Invalid/non-positive override values are rejected/fall back to the safe default; they do not disable the bound.
+
+** Semantics
+For request N:
+1. write exactly one declared JSON-lines request to the persistent worker;
+2. wait at most the configured timeout for exactly one correlated reply;
+3. on timeout, terminate/invalidate that worker and return a typed reasoner failure to the public dispatcher;
+4. do not retry request N;
+5. request N+1 may start one fresh worker with a new session ID;
+6. later requests reuse the recovered worker.
+
+** Failure typing
+The private supervisor raises =reasoner_timeout=. Public health remains =reasoner_unavailable= because health cannot establish a usable reasoner. Fixture/query paths remain explicit =fixture_error= with the reason embedded until a later stable public reasoner-error taxonomy is designed.
+
+** Test fixture
+Add a dedicated test worker that intentionally consumes a request and hangs without replying. The test must use a short configured timeout so the contract is deterministic and fast.
+
+The black-box contract proves:
+- the first request returns within a finite wall-clock bound rather than hanging;
+- no implicit retry occurs;
+- the timed-out worker is invalidated;
+- the next request starts a new session and succeeds;
+- a third request reuses that recovered session.
+
+* Adversarial review
+** Late reply after timeout
+The timed-out worker is terminated and discarded. A late reply cannot be accepted by a new session because the old process streams are not reused.
+
+** Duplicate side effects
+Never retry the timed-out request. This preserves at-most-once submission from the CL supervisor even when completion state is unknown.
+
+** Model-controlled timeout disabling
+Untrusted request payloads cannot select timeout values. Timeout configuration is process/operator state only.
+
+** Global service stall
+The timeout bounds the blocking reasoner read, preserving the service's ability to return a typed failure and recover on a later request.
+
+** Tek9 interaction
+No Tek9 API or schema change is required. Timeout is process-supervision behavior only. Existing durable event projection remains authoritative evidence even if downstream reasoning times out.
+
+* Decision
+GO for one RED-first timeout/recovery slice in #10. Do not start #12/#13/#15/#17. Do not change Tek9. Do not merge until the exact packaged SBCL/Tek9/SWI contract is executed green.

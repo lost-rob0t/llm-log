@@ -1,0 +1,63 @@
+#+title: LLM-LOG-EVIDENCE-003 — Finite HTTP capture/redaction RED → GREEN
+#+startup: overview
+
+* Scope
+Execution evidence for =research/LLM-LOG-RESEARCH-017-immutable-http-capture-redaction.org= on =rage/10-expert-runtime-red=.
+
+This file records test/implementation evidence only. It is not a replacement for the canonical research/design artifact and does not contain raw captured provider traffic.
+
+* Invalid pre-RED attempt
+- Workflow run: =33287589143=
+- Result: invalid as product evidence.
+- Cause: the new Common Lisp fixture contained a =FORMAT= arity defect and failed before exercising the intended capture contract.
+- Action: fix the test only; no production mutation before a valid RED.
+
+* Valid RED
+- Commit: =31426657f5bb68871e66a723cde33ce4a845a4bc=
+- Workflow run: =33287657011=
+- Conclusion: failure, as required before implementation.
+- Existing ordinary HTTP forwarding/fidelity behavior remained GREEN.
+- Credential sentinels were received unchanged by the upstream fixture.
+- The intended capture assertion failed because no event directory existed: =EVENTS = NIL=.
+
+This establishes that the Common Lisp transport did not satisfy the immutable-capture contract before the production change.
+
+* Implementation
+- Commit: =e3830e76a4713fa331c67e71739453247a9c8a01=
+- Change: finite ordinary HTTP capture persisted beneath the configured data directory with create-only event artifacts, exact binary bodies, ordered header evidence and persistence-only credential redaction.
+- Forwarding remains observational/fail-open with respect to capture persistence failure in this bounded slice.
+
+* GREEN
+- Commit: =e3830e76a4713fa331c67e71739453247a9c8a01=
+- Workflow run: =33287732659=
+- Job: =99193780462=
+- Conclusion: success.
+- Command executed by hosted gate: =nix build -L .#checks.x86_64-linux.common-lisp-transport-contract=.
+- Rove summary: all test assertions passed.
+
+Verified behavior:
+1. existing Common Lisp proxy lifecycle surface remains GREEN;
+2. ordinary HTTP method/path/query/request-header/body/status/response-body fidelity remains GREEN;
+3. duplicate downstream =Set-Cookie= fields remain distinct;
+4. =Authorization=, =X-Api-Key= and =Cookie= values are forwarded to the upstream fixture unchanged;
+5. exactly one capture event is produced for the bounded request;
+6. =metadata.json=, =request-body.bin= and =response-body.bin= exist;
+7. request/response body evidence preserves exact octets including NUL;
+8. persisted metadata identifies schema =llm-log.capture/http-v1=;
+9. non-secret request and response header values remain observable;
+10. duplicate response-header entries remain representable in metadata;
+11. persisted secret values are replaced by =<redacted>=;
+12. none of the request/response credential sentinels appears in persisted metadata.
+
+* Limits / not proven
+This GREEN does not establish:
+- concurrent recorder correctness or single-writer actor semantics;
+- SSE/chunked streaming capture;
+- WebSocket capture;
+- HTTPS upstream transport;
+- provider-family conformance;
+- crash consistency across multi-file event commits;
+- expert-plane invocation from the proxy;
+- final removal of Python migration debt.
+
+The next capture mutation must begin with an executed concurrency/crash RED before introducing the Sento/cl-gserver single-writer recorder actor.

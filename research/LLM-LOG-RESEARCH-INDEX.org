@@ -1,0 +1,71 @@
+#+title: LLM-LOG-RESEARCH-INDEX — Canonical Document Map
+#+startup: overview
+
+* Purpose
+This index is the entry point into llm-log's canonical Org documentation.
+Every substantive design decision, contract, and evidence record lives in
+=research/= as a numbered Org file; issue comments and chat transcripts are
+never substitutes. Remote GitHub state beats stale assumptions, and the exact
+branch head must pass its executable gates before anything merges.
+
+* Document map
+| Document | Title | Status |
+|---+---+---|
+| [[file:LLM-LOG-RESEARCH-001-capture-proxy-symbolic-corpus.org][001]] | Capture proxy + symbolic corpus (ARADR-001) | APPROVED (superseded where Python is assigned runtime ownership) |
+| [[file:LLM-LOG-RESEARCH-004-symbolic-expert-plane.org][004]] | ARADR-004: symbolic expert plane | APPROVED |
+| [[file:LLM-LOG-RESEARCH-005-persistent-prolog-supervisor.org][005]] | Persistent SWI-Prolog supervisor | APPROVED |
+| [[file:LLM-LOG-RESEARCH-006-runtime-reconciliation.org][006]] | Runtime reconciliation | APPROVED |
+| [[file:LLM-LOG-RESEARCH-007-expert-service-transaction.org][007]] | Expert service transaction | APPROVED |
+| [[file:LLM-LOG-RESEARCH-008-reasoner-crash-recovery.org][008]] | Reasoner crash recovery | APPROVED |
+| [[file:LLM-LOG-RESEARCH-009-reasoner-timeout.org][009]] | Bounded reasoner timeout | APPROVED |
+| [[file:LLM-LOG-RESEARCH-010-reasoner-result-validation.org][010]] | Reasoner result validation | APPROVED |
+| [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]] | Zero-Python rewrite decision | APPROVED (governs everything below) |
+| [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] | Common Lisp runtime slices 1–2 (Nix-packaged config/CLI + HTTP transport) | IN PROGRESS (slices 1–2 GREEN) |
+| [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]] | Common Lisp proxy runtime architecture reference | CURRENT |
+| [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]] | Configuration and operations guide | CURRENT |
+| [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]] | Testing and verification guide | CURRENT |
+
+002 and 003 are unused numbers; earlier session notes never produced numbered
+files for them and the numbers are not recycled.
+
+* Which document answers which question
+- *Why is llm-log being rewritten in Common Lisp?* → [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]]
+- *How does the Common Lisp proxy actually work?* → [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]]
+- *How do I configure, run, package, or deploy it?* → [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]]
+- *How are the contracts tested, and what counts as evidence?* → [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]]
+- *How does the expert plane (Tek9 + SWI-Prolog) work?* → 004–010
+- *What is the migration order and what is done?* → [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]] gates + [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] evidence
+
+* Module readmes
+- =expert/README.org= — Common Lisp expert runtime boundary (Tek9 + SWI-Prolog).
+- =proxy/= — Common Lisp capture proxy runtime; architecture in [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]].
+
+* Migration status snapshot
+| Migration slice (011) | Status | Contract gate |
+|---+---+---|
+| 1. Common Lisp config + CLI | GREEN | =checks.llm-log-config-contract= (Rove, 58 assertions) |
+| 2. HTTP transparent forwarding | GREEN | same gate (21 transport assertions, 79 total) |
+| 3. Immutable capture + redaction | pending | to be defined in slice 3 |
+| 4. Recorder actor (Sento, single writer) | pending | to be defined in slice 4 |
+| 5. SSE streaming | pending | to be defined in slice 5 |
+| 6. WebSocket relay + frame journal | pending | to be defined in slice 6 |
+| 7. Provider compatibility | pending | transparent routing already covered by slice 2 contract |
+| 8. Expert integration in the CL proxy | pending | existing expert-plane contracts |
+| 9. Delete Python (source, tests, packaging, Nix deps) | pending | repository acceptance scan |
+
+Python is migration debt: =llm_log/*.py=, =pyproject.toml=, =tests/*.py= and
+the legacy =checks.package= / =checks.expert-service-contract= harnesses remain
+only until slice 9. They must not be extended.
+
+* Hard rules every contributor must know
+1. Zero Python in the accepted implementation. No shims, no Python test
+   harness, no second rule engine in Common Lisp.
+2. RED-first: the contract must be committed and proven failing before the
+   implementation is committed; GREEN is only claimed with an observed run on
+   the exact head.
+3. Every Nix-run SBCL entrypoint loads the wrapper-provided ASDF
+   (=$ASDF=) before anything else. See [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]], troubleshooting.
+4. Raw capture is immutable evidence; secrets are forwarded but redacted
+   before persistence; derived assertions never overwrite history.
+5. SWI-Prolog stays the sole inference engine; Tek9 stays the canonical
+   durable KB; Common Lisp owns orchestration only.

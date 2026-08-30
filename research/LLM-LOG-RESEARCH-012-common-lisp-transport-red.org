@@ -1,0 +1,178 @@
+#+title: LLM-LOG-RESEARCH-012 — Common Lisp transport RED contract
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION / RED CONTRACT
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/20
+- Expert substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Parent expert plane: https://github.com/lost-rob0t/llm-log/issues/8
+- Active branch: =rage/10-expert-runtime-red=
+- Supersedes older Python transport ownership statements together with =LLM-LOG-RESEARCH-011-zero-python-rewrite.org=.
+
+* Analyze
+The current branch still contains the working Python proxy/recorder as migration evidence, while the accepted target is zero Python. The Common Lisp expert host exists, but no Common Lisp transparent HTTP/SSE/WebSocket proxy surface exists yet.
+
+The next production mutation must therefore be preceded by a Common Lisp transport contract. This slice intentionally stops at design + RED contract if the execution environment cannot run SBCL/Nix; an unexecuted test definition is not GREEN and does not authorize transport implementation.
+
+* Research
+** Inbound HTTP
+Use Woo through Clack/Lack where the server abstraction is useful. Woo is evented and exposes streaming response behavior suitable for long-running LLM responses.
+
+Upstream:
+- https://github.com/fukamachi/woo
+- https://github.com/fukamachi/clack
+
+** HTTP parsing / low-level forwarding
+Use =fast-http= for HTTP/1.1 request/response parsing. It is streaming-first, handles persistent connections and chunked transfer decoding, and exposes low-allocation parsing callbacks.
+
+Use =usocket= + =cl+ssl= for the outbound socket/TLS boundary and =quri= for URI parsing/composition.
+
+Upstream:
+- https://github.com/fukamachi/fast-http
+- https://github.com/usocket/usocket
+- https://github.com/cl-plus-ssl/cl-plus-ssl
+- https://github.com/fukamachi/quri
+
+Do not make a high-level convenience client the fidelity authority. Transparent proxying must preserve duplicate response headers such as multiple =Set-Cookie= fields and must not parse/regenerate provider JSON merely to forward it.
+
+** WebSocket
+Use =websocket-driver-server= / =websocket-driver-client=. It supports Woo/Clack and provides both client and server WebSocket roles.
+
+Upstream:
+- https://github.com/fukamachi/websocket-driver
+
+** Actor/state ownership
+Use Sento / cl-gserver for mutable asynchronous ownership where actor semantics materially help: recorder single-writer ownership, supervised connection/session state, and future expert-plane coordination. Do not make every pure function an actor.
+
+Upstream:
+- https://github.com/mdbergmann/cl-gserver
+
+** Tests
+Use Rove for Common Lisp unit/integration contracts. Black-box process/Nix boundaries may use shell, and Prolog inference contracts may use plunit. Python is not an accepted final test harness.
+
+Upstream:
+- https://github.com/fukamachi/rove
+
+* Design
+** Public Common Lisp transport boundary
+The first transport implementation must expose a narrow lifecycle, naming may evolve only before GREEN:
+
+- =start-http-proxy= -> starts one proxy instance from a typed runtime config;
+- =stop-http-proxy= -> bounded clean shutdown;
+- =proxy-listen-port= -> reports the bound local port for tests/ephemeral port 0;
+- runtime config contains listen address, port, data directory and upstream registry.
+
+The transport layer does not expose arbitrary callbacks from model-controlled input.
+
+** Request forwarding contract
+For ordinary HTTP requests preserve:
+- method;
+- path;
+- raw query semantics;
+- body octets;
+- content type;
+- ordinary end-to-end headers;
+- authorization/cookie values upstream while redacting configured secret values before persistence;
+- provider status;
+- response body octets;
+- semantically significant duplicate response headers.
+
+Handle hop-by-hop headers according to proxy semantics rather than blindly copying them.
+
+** SSE contract
+The proxy must forward SSE/body chunks incrementally. A caller must observe the first upstream chunk before upstream EOS. Capture may accumulate evidence separately, but capture must not become a buffering gate for forwarding.
+
+** WebSocket contract
+Bidirectional frame forwarding preserves ordering and text/binary type. Ping/pong/close behavior remains bounded. Each observed frame is journaled incrementally so an abrupt disconnect retains prior immutable frame evidence.
+
+** Provider contract
+Transport is generic. OpenAI, OpenRouter, Anthropic, ChatGPT/Codex and arbitrary configured upstreams differ primarily by configured prefix/base URL and genuine protocol-specific behavior. Provider adapters may normalize metadata for analysis, but transparent forwarding remains the lower layer.
+
+** Raw evidence vs derived assertions
+Keep four stores/concerns distinct:
+1. immutable raw request/response/frame capture evidence;
+2. derived Tek9 assertions and graph state;
+3. canonical Org research/design;
+4. test/build/implementation evidence.
+
+Raw capture IDs may be referenced by Tek9; Tek9 does not replace raw capture bytes.
+
+** Tek9 boundary
+No Tek9 change is needed for this transport RED slice. Existing public document/transaction APIs remain sufficient for #10. Transport must never load the full corpus into Prolog; expert queries continue to use bounded indexed materialization.
+
+** Failure semantics
+- forwarding failure: return/propagate the real transport failure;
+- capture persistence failure: never silently mutate payload; policy must be explicit and testable;
+- expert unavailable: forwarding remains fail-open by default;
+- =require_expert_plane=: explicit fail-closed mode only;
+- Prolog crash/timeout/malformed result: preserve existing #10 typed failure semantics and do not replay ambiguous in-flight inference;
+- secret redaction failure must not result in credentials being persisted.
+
+* Typed transport evidence seed
+The future Common Lisp recorder should produce stable IDs and at least:
+- event ID;
+- session/request linkage when known;
+- provider/upstream identity;
+- transport =http | sse | websocket=;
+- method/path/query metadata;
+- request/response byte hashes and raw-byte references;
+- HTTP status when applicable;
+- timestamps / duration;
+- model when observed without destructive body normalization;
+- redacted persisted headers;
+- frame sequence/type/direction for WebSockets.
+
+* Adversarial review
+** Header normalization corrupts semantics
+Risk: alist/hash-table convenience layers collapse duplicate response headers.
+Decision: contract explicitly tests duplicate =Set-Cookie= preservation and keeps raw/fidelity forwarding below metadata normalization.
+
+** SSE becomes buffered
+Risk: recorder waits for complete response before forwarding.
+Decision: RED requires first chunk visibility before EOS.
+
+** WebSocket evidence disappears on crash
+Risk: capture written only when socket closes.
+Decision: frame evidence is append/journal based and durable incrementally.
+
+** Temporary Python becomes permanent
+Risk: parity migration stalls with two stacks.
+Decision: no new Python. Final gate rejects Python source/tests/packaging/runtime dependencies once CL parity is complete.
+
+** Common Lisp accidentally becomes inference engine
+Risk: classification/rules drift into transport code.
+Decision: CL may normalize typed observations only. SWI-Prolog remains the sole facts/rules/inference engine.
+
+** Tek9 becomes raw packet store by accident
+Risk: transport bytes are duplicated into the symbolic KB without bounded purpose.
+Decision: immutable raw capture remains separate; Tek9 stores symbolic state, references and provenance.
+
+* Exact RED-first acceptance
+Before production HTTP transport implementation:
+1. add a Common Lisp test system, no Python;
+2. define a raw fixture upstream and raw client contract;
+3. assert that current CL runtime lacks the declared HTTP proxy surface, producing RED before implementation;
+4. once the test environment is executable, record immutable baseline SHA + exact command + actual failure;
+5. only then implement the minimum HTTP path;
+6. rerun the exact same contract and record GREEN only if observed.
+
+The first full HTTP contract must ultimately prove:
+- method/path/query preserved;
+- request body byte-identical;
+- status/body byte-identical;
+- duplicate response headers preserved;
+- secret headers reach upstream but persistence is redacted;
+- arbitrary configured upstream works;
+- no Python executable/module is involved.
+
+SSE and WebSocket get separate RED commits after ordinary HTTP is GREEN.
+
+* Nix / non-Nix packaging
+Final Nix closure for llm-log must contain the Common Lisp runtime and required native dependencies plus SWI-Prolog/Tek9, with no Python dependency introduced by llm-log.
+
+Home Manager/systemd remain configuration/launch frontends. Dotfiles remains a consumer and keeps the explicit =${HOME}/Documents/AI/proxy= override.
+
+Non-Nix launch path is ASDF/SBCL with documented dependency loading and runtime configuration.
+
+* Decision
+GO for RED contract only in this bounded slice. Do not implement Common Lisp HTTP forwarding until the new Common Lisp contract has actually been executed and shown RED on the pre-implementation state. No Python changes are authorized.
