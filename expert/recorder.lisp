@@ -79,8 +79,8 @@
 
 (defun start-recorder (data-directory)
   (let* ((directory (uiop:ensure-directory-pathname data-directory))
-         (system (sento-user:make-actor-system))
-         (actor (sento-user:actor-of
+         (system (asys:make-actor-system))
+         (actor (ac:actor-of
                  system
                  :name "llm-log-recorder"
                  :receive (lambda (message)
@@ -91,14 +91,14 @@
 
 (defun stop-recorder (recorder)
   (check-type recorder capture-recorder)
-  (sento-user:shutdown (capture-recorder-system recorder) :wait t)
+  (ac:shutdown (capture-recorder-system recorder) :wait t)
   t)
 
 (defun record-http-capture (recorder &key metadata request-body response-body)
   (check-type recorder capture-recorder)
   (check-type metadata string)
   (let ((result
-          (sento-user:ask-s
+          (act:ask-s
            (capture-recorder-actor recorder)
            (list :record
                  :metadata metadata
