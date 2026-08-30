@@ -1,0 +1,66 @@
+#+title: LLM-LOG-EVIDENCE-006 — Sento dependency closure GREEN
+#+startup: overview
+
+* Scope
+- Parent issue: https://github.com/lost-rob0t/llm-log/issues/10
+- Design: =research/LLM-LOG-RESEARCH-021-sento-pinned-packaging.org=
+- RED evidence: =evidence/LLM-LOG-EVIDENCE-005-sento-dependency-red.org=
+- Exact implementation head: =00077a450d88c5064e4d588945de2a4dd2bc9c80=
+- Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33296638853
+
+This file records packaging execution evidence only. It does not claim recorder behavioral GREEN.
+
+* Mutation under test
+The flake now exposes a first-class Sento package built with =pkgs.sbcl.buildASDFSystem=. Upstream =mdbergmann/cl-gserver= is pinned to:
+
+#+begin_example
+013ab6370042686e65943568b0d97e33319c0f54
+sha256-z+AKk8Y09rpF+NgyKhcHNvn0jsjeGe3dSibkv8yySKg=
+#+end_example
+
+The declared Sento runtime closure is:
+
+- alexandria
+- log4cl
+- bordeaux-threads
+- cl-speedy-queue
+- str
+- binding-arrows
+- timer-wheel
+- local-time-duration
+- atomics
+
+Nixpkgs resolved these as explicit SBCL packages; no ambient Quicklisp was used by the runtime/load gate.
+
+* Exact GREEN contract
+The independent =common-lisp-recorder-deps= job executed:
+
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
+#+end_src
+
+The derivation builds an SBCL closure carrying the packaged Sento system and runs:
+
+#+begin_src lisp
+(asdf:load-system :sento)
+#+end_src
+
+On exact head =00077a450d88c5064e4d588945de2a4dd2bc9c80= the job completed successfully.
+
+* RED -> GREEN chain
+1. Exact preimplementation dependency RED: =b914ec05fd4e3e8a29133d0984ec58213b10c1a4= / run =33294213110= / =Component :SENTO not found=.
+2. Package skeleton deliberately used =lib.fakeHash= so the hosted builder could independently reveal the immutable source hash.
+3. Hosted build produced =sha256-z+AKk8Y09rpF+NgyKhcHNvn0jsjeGe3dSibkv8yySKg==.
+4. Exact hash was pinned; the unchanged =(asdf:load-system :sento)= contract went GREEN at =00077a450d88c5064e4d588945de2a4dd2bc9c80=.
+
+* Boundary status
+- Raw capture evidence: unchanged.
+- Derived assertions / Tek9 KB: unchanged.
+- SWI-Prolog contracts: unchanged.
+- Recorder behavioral contract: still RED until =START-RECORDER= and its actor-backed semantics are implemented.
+- Dotfiles consumer: unchanged.
+
+* Result
+GREEN — reproducible Sento/cl-gserver dependency closure established.
+
+The dependency blocker identified by RESEARCH-019/020 is resolved. The next authorized implementation dependency is the existing RESEARCH-018 single-writer recorder actor behavioral RED; no mutex substitute and no Python rule/recorder engine is authorized.
