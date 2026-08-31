@@ -1,0 +1,60 @@
+#+title: LLM-LOG-EVIDENCE-013 — Concrete adapter transport lifecycle RED/GREEN
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Research: ../research/LLM-LOG-RESEARCH-029-concrete-adapter-transport-lifecycle.org
+
+This file is implementation evidence. It is not raw capture evidence, a derived expert assertion, or the normative research/design record.
+
+* RED evidence
+Exact test head: =15f3056ea6f43138334c198f333febac7a320f78=
+Hosted workflow run: =33327310653=
+
+Independent =common-lisp-expert-integration-contract=: GREEN.
+Python =python-expert-policy-contract=: RED.
+
+The Python run executed 13 tests. Existing policy and isolated adapter contracts remained GREEN. The new concrete lifecycle failures were:
+- =test_app_owns_healthy_adapter_lifecycle_and_http_required_forwarding=: failed because =expert.running= was false after application startup;
+- =test_healthy_required_websocket_relays_frames=: failed before upgrade with HTTP 503.
+
+The two unavailable-WebSocket policy cases already passed: default mode forwarded fail-open and required mode failed closed. Therefore the RED was isolated to missing application lifecycle ownership for a fresh healthy concrete adapter.
+
+* Production mutation
+Commit: =b2139233ee57161d67d17dddd1075b9d3e27ce27=
+File: =llm_log/proxy.py=
+
+Mutation:
+- aiohttp startup starts a configured =SubprocessExpertPlane=;
+- concrete adapter start errors are contained so default fail-open forwarding is preserved;
+- aiohttp cleanup closes the owned concrete adapter;
+- the existing pre-forward =health()= policy remains the authority for explicit =require_expert_plane= fail-closed behavior.
+
+No inference code, Python rule engine, Tek9 access, Prolog callable surface, automatic replay, pricing logic, outcome labeling, capture schema, or provider routing was added.
+
+* GREEN evidence
+Exact implementation head: =b2139233ee57161d67d17dddd1075b9d3e27ce27=
+Hosted workflow run: =33327391255=
+
+=common-lisp-expert-integration-contract=: GREEN.
+=python-expert-policy-contract=: GREEN.
+
+The Python job passed all 13 tests in the unchanged suite, including:
+- healthy required HTTP forwarding with app-owned adapter lifecycle;
+- healthy required WebSocket upgrade and frame relay;
+- unavailable WebSocket fail-open by default;
+- unavailable WebSocket fail-closed when required;
+- missing/unavailable expert HTTP policy;
+- one-child adapter reuse;
+- EOF, malformed reply and timeout failures without implicit replay;
+- absence of arbitrary Prolog-goal API.
+
+* Boundary result
+Verified architecture remains:
+- Python: transparent capture/transport and concrete adapter lifecycle;
+- Common Lisp: expert runtime, typed objects, Tek9 access, Prolog supervision/result validation;
+- Tek9: canonical durable expert KB;
+- SWI-Prolog: facts/rules/inference.
+
+No Tek9 mutation was required. Dotfiles was not mutated. The configured consumer capture path =~/Documents/AI/proxy= is unchanged.

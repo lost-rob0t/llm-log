@@ -1,0 +1,83 @@
+#+title: LLM-LOG-EVIDENCE-011 — Python expert availability policy RED → GREEN
+#+startup: overview
+
+* Scope
+Parent: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Design: =research/LLM-LOG-RESEARCH-027-python-expert-failure-policy.org=
+
+This is implementation evidence, not raw capture evidence and not a derived expert assertion.
+
+* RED
+Test-only/protocol-workflow head:
+
+- commit: =30b33cf2e1f908fe4dff9960051d1da8bcc48446=
+- hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33313690072
+- job: =python-expert-policy-contract= / =99263132676=
+- command: =nix develop --command python -m unittest tests.test_expert_proxy_policy -v=
+
+The independent =common-lisp-expert-integration-contract= job remained GREEN on the same exact head.
+
+All four new policy cases reached the intended missing production boundary and failed with:
+
+#+begin_example
+TypeError: build_app() got an unexpected keyword argument 'expert_plane'
+#+end_example
+
+This is accepted as the pre-production RED: no syntax/fixture/Nix failure prevented execution, and the failure was specifically the absent expert-policy surface.
+
+* Production mutation
+Implementation commit:
+
+- =c1a455bd10804a78ab7294f74cf0a5d4cf65ed03=
+
+The Python transport gained only a typed =ExpertPlane.health()= capability and an explicit availability gate before either HTTP/SSE forwarding or WebSocket upstream establishment.
+
+Policy:
+
+- no expert + default mode: forward;
+- unavailable expert + default mode: forward;
+- healthy expert + required mode: forward;
+- missing/unavailable expert + =require_expert_plane=true=: generic HTTP 503 before upstream contact.
+
+Exception text is intentionally discarded rather than reflected to the client. No request body or credentials are passed to =health=. The Python side performs no Prolog inference and gains no rule engine.
+
+* GREEN
+Exact production head:
+
+- commit: =c1a455bd10804a78ab7294f74cf0a5d4cf65ed03=
+- hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33313845134
+- Python job: =99263542300= — GREEN
+- Common Lisp/Tek9/SWI job: =99263542431= — GREEN
+
+Python contract output:
+
+#+begin_example
+test_healthy_expert_allows_required_forwarding ... ok
+test_missing_expert_fails_closed_when_required ... ok
+test_unavailable_expert_fails_closed_when_required ... ok
+test_unavailable_expert_fails_open_by_default ... ok
+
+Ran 4 tests in 0.062s
+OK
+#+end_example
+
+The tests use a real aiohttp upstream and a real llm-log proxy. The upstream hit counter proves required-mode failures occur before upstream side effects. The failure-detail assertion proves the generic 503 does not reflect the expert exception string.
+
+* Preserved invariants
+- Python remains capture/transport only.
+- Common Lisp remains the expert runtime owner.
+- Tek9 remains the canonical durable expert KB.
+- SWI-Prolog remains the facts/rules/inference engine.
+- No Tek9 repository mutation was required.
+- No dotfiles mutation was required.
+- No provider census work was displaced.
+- PR #5 configuration remains a separate transaction.
+- =~/Documents/AI/proxy= remains unchanged in the dotfiles consumer.
+
+* Explicit limitations / next boundary
+This slice proves transport policy with a typed fake expert capability. It does not yet provide the concrete long-lived Python adapter to the Common Lisp expert service or wire =require_expert_plane= through TOML/CLI/Home Manager/systemd configuration.
+
+The policy gate is placed before the shared HTTP/SSE vs. WebSocket branch, so WebSocket upstream establishment traverses it by construction; a dedicated WebSocket expert-policy conformance case is still useful before declaring full provider/transport conformance.
+
+Do not infer task success from transport status. This slice emits no outcome label and persists no derived expert assertion.

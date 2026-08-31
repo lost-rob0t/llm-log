@@ -2,12 +2,19 @@
 
 (defparameter +kb-revision-key+ "meta:kb-revision")
 (defparameter +event-schema-version+ 1)
+(defparameter +assertion-schema-version+ 1)
 
 (define-condition event-conflict (error)
   ((event-id :initarg :event-id :reader event-conflict-event-id))
   (:report (lambda (condition stream)
              (format stream "Conflicting projection for event ~A"
                      (event-conflict-event-id condition)))))
+
+(define-condition assertion-conflict (error)
+  ((assertion-id :initarg :assertion-id :reader assertion-conflict-assertion-id))
+  (:report (lambda (condition stream)
+             (format stream "Conflicting projection for assertion ~A"
+                     (assertion-conflict-assertion-id condition)))))
 
 (define-condition invalid-reasoner-result (error)
   ((message :initarg :message :reader invalid-reasoner-result-message))
@@ -22,6 +29,9 @@
 
 (defun %event-key (event-id)
   (format nil "event:~A" event-id))
+
+(defun %assertion-key (assertion-id)
+  (format nil "assertion:~A" assertion-id))
 
 (defun %ensure-kb-revision (host)
   (let ((database (expert-host-database host)))
@@ -72,6 +82,75 @@
 (defun fetch-request-event (host event-id)
   "Fetch exactly one projected event by stable primary key."
   (fetch* (expert-host-database host) (%event-key event-id)))
+
+(defun %non-empty-string-p (value)
+  (and (stringp value) (plusp (length value))))
+
+(defun %validate-assertion-inputs (assertion-id source-event-id expert-name
+                                   expert-version rule-version derivation-type
+                                   supersedes)
+  (dolist (value (list assertion-id source-event-id expert-name expert-version
+                       rule-version derivation-type))
+    (unless (%non-empty-string-p value)
+      (error "derived assertion identifiers and provenance must be non-empty strings")))
+  (when (and supersedes (not (%non-empty-string-p supersedes)))
+    (error "supersedes must be NIL or a non-empty assertion ID")))
+
+(defun %derived-assertion-projection
+    (assertion-id source-event-id expert-name expert-version rule-version
+     derivation-type value published-kb-revision supersedes)
+  (list :schema-version +assertion-schema-version+
+        :assertion-id assertion-id
+        :source-ids (list source-event-id)
+        :expert-name expert-name
+        :expert-version expert-version
+        :rule-version rule-version
+        :derivation-type derivation-type
+        :value value
+        :published-kb-revision published-kb-revision
+        :supersedes supersedes))
+
+(defun persist-derived-assertion
+    (host assertion-id source-event-id expert-name expert-version rule-version
+     derivation-type value &key supersedes)
+  "Persist one derived assertion with bounded provenance and immutable supersession."
+  (%validate-assertion-inputs assertion-id source-event-id expert-name
+                              expert-version rule-version derivation-type
+                              supersedes)
+  (let* ((database (expert-host-database host))
+         (assertion-key (%assertion-key assertion-id)))
+    (with-write-transaction (database)
+      (unless (fetch* database (%event-key source-event-id))
+        (error "unknown_source_event: ~A" source-event-id))
+      (when (and supersedes
+                 (null (fetch* database (%assertion-key supersedes))))
+        (error "unknown_superseded_assertion: ~A" supersedes))
+      (let* ((existing (fetch* database assertion-key))
+             (revision (or (fetch* database +kb-revision-key+) 1)))
+        (if existing
+            (let ((candidate
+                    (%derived-assertion-projection
+                     assertion-id source-event-id expert-name expert-version
+                     rule-version derivation-type value
+                     (getf existing :published-kb-revision)
+                     supersedes)))
+              (if (equal existing candidate)
+                  (values :existing revision)
+                  (error 'assertion-conflict :assertion-id assertion-id)))
+            (let* ((next-revision (1+ revision))
+                   (projection
+                     (%derived-assertion-projection
+                      assertion-id source-event-id expert-name expert-version
+                      rule-version derivation-type value next-revision
+                      supersedes)))
+              (put* database projection :id assertion-key)
+              (put* database next-revision :id +kb-revision-key+)
+              (values :created next-revision)))))))
+
+(defun fetch-derived-assertion (host assertion-id)
+  "Fetch exactly one derived assertion by stable primary key."
+  (check-type assertion-id string)
+  (fetch* (expert-host-database host) (%assertion-key assertion-id)))
 
 (defun %validate-event-transport-result (host reply expected-transport)
   "Validate the operation-specific typed result returned by SWI-Prolog."

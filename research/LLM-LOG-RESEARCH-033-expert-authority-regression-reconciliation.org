@@ -1,0 +1,136 @@
+#+title: LLM-LOG-RESEARCH-033 — Expert authority regression reconciliation
+#+startup: overview
+
+* Scope
+Parent issues: https://github.com/lost-rob0t/llm-log/issues/8 and https://github.com/lost-rob0t/llm-log/issues/10
+Active PR: https://github.com/lost-rob0t/llm-log/pull/24
+Consumer PR: https://github.com/lost-rob0t/dotfiles/pull/172
+
+This bounded Auto-ARADR decision reconciles remote GitHub issue prose that regressed to the superseded zero-Python architecture after the expert-plane branch had already established and tested the current ownership boundary.
+
+* Analyze
+Live remote state on 2026-08-30 shows:
+
+- issue #8 says the accepted implementation is zero Python;
+- issue #10 says Common Lisp owns HTTP/SSE/WebSocket proxying and Python must be deleted;
+- issue #20 exists solely to demand that zero-Python rewrite;
+- active PR #24 instead implements and documents Python as transparent capture/transport and Common Lisp as the expert runtime;
+- the current explicit user direction again requires Python llm-log to remain capture/transport while Common Lisp owns Tek9 access, typed objects, bounded fact materialization, Prolog supervision and result validation;
+- Tek9 remains the canonical durable document/graph KB;
+- SWI-Prolog remains the only facts/rules/inference authority;
+- dotfiles consumer PR #172 is correctly RED and must not consume an unreviewed upstream expert head.
+
+Current explicit user constraints outrank older issue/KB facts. Therefore #20 and zero-Python passages in #8/#10 are stale governance, not current architecture.
+
+* Research
+The active branch already contains executed contracts proving the current split:
+
+- Python expert availability policy and fail-open/fail-closed behavior;
+- one long-lived Python -> Common Lisp adapter with no arbitrary Prolog-goal API;
+- HTTP and WebSocket lifecycle integration;
+- Common Lisp -> bounded Tek9 -> declared SWI-Prolog inference;
+- typed reasoner failures and later-request recovery without implicit replay;
+- Home Manager projection of the same expert launch path;
+- separate expert mutable state from immutable raw capture evidence.
+
+Existing Tek9 public APIs remain sufficient for this boundary. No Tek9 mutation is justified.
+
+* Design
+The canonical runtime ownership for #8/#10 is:
+
+#+begin_example
+LLM clients
+    |
+    v
+Python llm-log capture/transport
+  - transparent HTTP/SSE/WebSocket forwarding
+  - provider/upstream compatibility
+  - immutable raw capture/redaction
+  - fail-open expert availability policy
+    |
+    v
+Common Lisp expert service
+  - runtime lifecycle
+  - typed objects/contracts
+  - Tek9 access + bounded fact materialization
+  - SWI-Prolog supervision
+  - result validation + durable derived assertions
+    |                 |
+    v                 v
+  Tek9             SWI-Prolog
+ durable KB        rules/inference
+#+end_example
+
+Hard constraints remain:
+
+- no second Python rule engine;
+- no arbitrary model-controlled callable Prolog term;
+- raw capture remains immutable evidence;
+- derived assertions link source IDs, rule/version and expert version;
+- bounded indexed Tek9 retrieval only;
+- classification metadata grants no authority;
+- unknown pricing remains unknown and binds to immutable pricing snapshots;
+- outcome evidence is separate from labels;
+- historical assertion revisions are superseded, not deleted;
+- expert unavailability is fail-open by default and explicit =require_expert_plane= is fail-closed;
+- credentials do not enter Tek9, Nix, prose or logs unless explicitly intended and safely handled.
+
+* Adversarial review
+A zero-Python rewrite would discard already-proven Python transport contracts, expand #10 back into a transport migration, and directly contradict the current requested architecture. Retaining stale zero-Python issue prose also creates a governance hazard: an autonomous worker could delete the accepted transport implementation while believing it is following #8/#10.
+
+Conversely, treating the current Python transport as permission to implement inference in Python would violate the same architecture. The correction is ownership-specific, not a general license for Python expert logic.
+
+The dotfiles consumer must not be made GREEN by pinning an upstream head that still fails the required review/discussion merge gate. A same-author bookkeeping comment must not be treated as an independent review.
+
+* Decision
+1. #20 is superseded by current explicit architecture and should be closed as not planned/superseded.
+2. #8 and #10 remain open and their bodies must state the current Python-transport/Common-Lisp-expert ownership directly; comments alone are insufficient authority.
+3. PR #24 remains the active #10 implementation branch.
+4. PR #24 must remain unmerged until its exact head is green, mergeable and satisfies required review/discussion gates.
+5. dotfiles PR #172 remains RED-only until an eligible upstream revision exists; do not advance the pin merely because the code is technically green.
+6. PR #5 remains a separate configuration transaction.
+7. #12/#13/#15/#17 remain blocked behind #10; provider census #6 remains backlog.
+8. No Tek9 repository change is authorized by this reconciliation.
+
+* RED-first acceptance for the next production slice
+The next production mutation remains the dotfiles consumer transaction only after upstream eligibility:
+
+- exact upstream reviewed/green revision exists;
+- dotfiles preserves =~/Documents/AI/proxy=;
+- =services.llm-log.expert.enable = true=;
+- initial =require = false=;
+- expert mutable state remains outside the raw capture corpus;
+- existing OpenAI/OpenRouter/Anthropic/ChatGPT and Codex/OpenCode/Claude Code/gptel routing remains unchanged;
+- unchanged consumer contract moves from the already-executed RED to GREEN.
+
+Until those prerequisites hold, no production consumer mutation is authorized.
+
+* 2026-08-30 bounded reconciliation execution
+Remote inspection again found #8/#10 bodies still declaring zero-Python ownership despite their later correction comments and PR #24's canonical split. This run therefore executes the governance part of the decision: rewrite both issue bodies so the top-level backlog authority matches this Org document. This is a documentation/governance mutation, not a production behavior change, so no synthetic RED is claimed or required. The active production head remains otherwise unchanged; exact-head GREEN is still required before merge or dotfiles consumption.
+
+* 2026-08-30 review-gate reconciliation
+A later bounded remote reconciliation found the architecture authority repaired and stable, but PR #24 still draft at exact head =6e2a01a6be752399084902692b9aa9f952bbbf6e= with no workflow run/status, no submitted reviews, and no PR conversation comments. The workflow itself is configured for pushes to =rage/10-expert-runtime-red= and manual dispatch, so the absence of an exact-head run is evidence of a CI-trigger gap rather than permission to reuse the preceding implementation head's GREEN result.
+
+Decision for this bounded cycle:
+
+1. promote PR #24 from draft to ready-for-review so an actual independent review can occur;
+2. do not self-approve or treat same-author comments as review evidence;
+3. make no production dotfiles mutation while #24 lacks exact-head GREEN + independent review/discussion;
+4. keep PR #172 test-only RED and isolated from unrelated dotfiles work;
+5. make no Tek9 mutation because live Tek9 still has no open issue/PR demonstrating a missing generic primitive.
+
+This is governance/documentation work only; it does not authorize production behavior changes and therefore does not invent a RED/GREEN claim.
+
+* 2026-08-30 late-cycle exact-head execution reconciliation
+Fresh remote inspection found the canonical ownership still stable in #8/#10 and the active implementation still on =rage/10-expert-runtime-red=. PR #24 was still draft and mergeable at =10d8133ab897e694f08a9ffa0e690ce70a4400a3=, with zero submitted reviews and zero PR conversation comments. GitHub reported no workflow run for that exact SHA. Dotfiles PR #172 remained the isolated test-only RED consumer transaction; no production pin/config change had landed. Tek9 again had zero open issues and zero open PRs, so no missing generic database primitive is proven.
+
+The connected ready-for-review mutation was retried and again failed inside the connector GraphQL selection because it requests the nonexistent =Repository.fullDatabaseId= field. This remains a tooling blocker, not repository evidence and not permission to bypass review.
+
+Decision for this bounded cycle:
+
+1. make no production mutation while #24 lacks exact-head execution plus legitimate review/discussion;
+2. persist this fresh remote-state reconciliation in the canonical Org artifact rather than issue-only prose;
+3. use this documentation push as a legitimate opportunity for the branch's configured push-triggered expert contract workflow to execute a new exact head;
+4. do not claim that new head GREEN until GitHub reports the run and all required expert jobs succeed;
+5. leave dotfiles #172 RED-only, PR #5 isolated, provider census #6 queued, and #12/#13/#15/#17 behind #10;
+6. keep Tek9 unchanged.

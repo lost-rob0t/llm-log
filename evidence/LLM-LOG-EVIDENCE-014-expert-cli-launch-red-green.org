@@ -1,0 +1,54 @@
+#+title: LLM-LOG-EVIDENCE-014 — Expert CLI launch RED/GREEN
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Research authority: =research/LLM-LOG-RESEARCH-030-expert-launch-configuration.org=
+
+This file is implementation/test evidence only. It does not redefine transport or expert authority and it is separate from raw capture evidence and durable derived assertions.
+
+* RED
+Test contract: =9a4d952b747f9a268074a4a5fa2b51fdbe855d6b=
+Exact executed RED head: =baf99df62535f970bda6aaf2bb1be5aa9597aba0=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33330277955
+
+The Python job executed 16 tests. The 13 existing expert-policy, subprocess-adapter and HTTP/WebSocket lifecycle tests passed. The three new launch tests failed exactly at the missing CLI boundary:
+- parser rejected =--expert-service-bin= / =--expert-data-dir= / =--require-expert-plane=;
+- =llm_log.cli= had no =SubprocessExpertPlane= symbol/construction path;
+- default CLI did not provide explicit expert policy arguments to =build_app=.
+
+The independent Common Lisp/Tek9/SWI-Prolog integration job was GREEN on the same RED head. Therefore the failure did not come from Tek9, SWI-Prolog, expert packaging, the established adapter contract or HTTP/WebSocket forwarding.
+
+* Production mutation
+Commit: =76e225298bcac9883936a81ca2400b43b3c2a6d2=
+
+Only =llm_log/cli.py= changed. It now:
+- imports the existing =SubprocessExpertPlane=;
+- exposes bounded expert executable/data-dir/require flags;
+- constructs one adapter from a path argv, never through a shell command string;
+- leaves expert integration disabled by default;
+- forwards =require_expert_plane= to the existing proxy policy;
+- defaults mutable expert state to =~/.llm-proxy/expert=.
+
+No Python inference/rule engine was added.
+
+* GREEN
+Exact implementation head: =76e225298bcac9883936a81ca2400b43b3c2a6d2=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33330385523
+
+Both hosted jobs completed GREEN:
+- Python expert contract: all 16 tests GREEN, including the unchanged 13 prior contracts and the three new CLI-launch assertions.
+- Common Lisp expert integration: GREEN with the existing Tek9 + SWI-Prolog contract.
+
+The result proves the normal CLI/non-Nix-facing launch surface can construct the already-tested long-lived Common Lisp expert adapter without transferring expert semantics into Python.
+
+* Separation and limits
+- Raw capture remains immutable Python-owned evidence.
+- Derived expert assertions remain Tek9-backed and separately revisioned/provenanced.
+- Common Lisp remains expert runtime and Tek9/SWI supervisor.
+- SWI-Prolog remains inference authority.
+- Tek9 public APIs remain sufficient; no Tek9 repository mutation occurred.
+- Dotfiles remains untouched and continues to preserve =~/Documents/AI/proxy= at its pinned stable llm-log revision.
+- Home Manager/systemd expert option wiring is not proven by this evidence and requires a fresh RED before mutation.
+- PR #5 remains a separate transaction.

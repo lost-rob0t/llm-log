@@ -14,6 +14,18 @@
           (cons "code" code)
           (cons "message" message)))))
 
+(defun %reasoner-failure-code (condition)
+  (case (reasoner-failure-kind condition)
+    (:unavailable "reasoner_unavailable")
+    (:crashed "reasoner_crashed")
+    (:timeout "reasoner_timeout")
+    (:malformed-reply "reasoner_malformed_reply")
+    (otherwise "reasoner_failure")))
+
+(defun %reasoner-failure-reply (condition)
+  (%reply-error (%reasoner-failure-code condition)
+                (reasoner-failure-message condition)))
+
 (defun %runtime-health (host)
   (let ((worker-reply
           (prolog-worker-request host "health" (%json-object))))
@@ -69,6 +81,8 @@
             (cons "kb_revision" revision)
             (cons "evidence_ids" (list event-id))
             (cons "prolog_session_id" (expert-host-prolog-session-id host)))))
+      (reasoner-failure (condition)
+        (%reasoner-failure-reply condition))
       (invalid-reasoner-result (condition)
         (%reply-error "invalid_reasoner_result" (princ-to-string condition)))
       (error (condition)
@@ -88,6 +102,8 @@
       ((equal operation "health")
        (handler-case
            (%reply-ok (%runtime-health host))
+         (reasoner-failure (condition)
+           (%reasoner-failure-reply condition))
          (error (condition)
            (%reply-error "reasoner_unavailable" (princ-to-string condition)))))
       ((equal operation "observe_request")

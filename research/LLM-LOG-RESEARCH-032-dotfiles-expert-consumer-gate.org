@@ -1,0 +1,70 @@
+#+title: LLM-LOG-RESEARCH-032 Dotfiles expert consumer gate
+#+filetags: :llm-log:research:expert:dotfiles:nix:home-manager:
+
+* Scope
+This decision consumes llm-log #10 only and defines the bounded consumer-integration gate for lost-rob0t/dotfiles after the upstream Home Manager expert-plane surface proved GREEN.
+
+Stable links:
+- https://github.com/lost-rob0t/llm-log/issues/8
+- https://github.com/lost-rob0t/llm-log/issues/10
+- https://github.com/lost-rob0t/llm-log/pull/24
+- https://github.com/lost-rob0t/llm-log/pull/5
+
+* Analyze
+Remote state is authoritative. lost-rob0t/dotfiles master currently pins llm-log revision =94b79dccd9010b429eff0472c74391fa50b4db0a= in =nix/home-manager/mods/llm.nix= and preserves raw capture storage at =${config.home.homeDirectory}/Documents/AI/proxy=.
+
+The active expert implementation is on =rage/10-expert-runtime-red= / PR #24. PR #24 is draft and mergeable but has zero submitted reviews and zero PR conversation comments. Therefore it is not an eligible production pin under the merge/review rules, even though prior hosted evidence recorded the current expert-plane head GREEN.
+
+PR #5 is a separate llm-log configuration transaction and must not be mixed into this consumer slice.
+
+* Research
+The consumer must use the upstream =services.llm-log.expert= Home Manager interface rather than reimplement expert launch logic in dotfiles. The accepted upstream interface is:
+- =services.llm-log.expert.enable=
+- =services.llm-log.expert.package=
+- =services.llm-log.expert.dataDir=
+- =services.llm-log.expert.require=
+
+The proxy remains Python capture/transport. The configured child remains the Common Lisp expert service. Common Lisp remains the only Tek9 client and SWI-Prolog supervisor. Dotfiles owns only consumer configuration.
+
+Raw capture evidence and expert mutable KB state remain distinct. The existing raw capture path =~/Documents/AI/proxy= must not move. Expert state must use a separate directory; the reusable upstream default =~/.llm-proxy/expert= is acceptable unless a consumer-specific override is explicitly required.
+
+No credential or provider token belongs in Nix expressions, expert state configuration, research prose, or test fixtures.
+
+* Design
+The consumer change is one isolated dotfiles branch/PR, never PR #5 and never an unrelated dotfiles branch.
+
+The RED-first acceptance contract must prove the current dotfiles master lacks the new consumer configuration while preserving all existing capture routing. Required assertions:
+1. =services.llm-log.dataDir= remains exactly =${config.home.homeDirectory}/Documents/AI/proxy=.
+2. OpenAI/OpenRouter/Anthropic/ChatGPT upstream routing remains unchanged.
+3. Codex/OpenCode/Claude Code/gptel continue to route through the same local proxy boundary.
+4. the consumer opts into =services.llm-log.expert.enable = true= only after its llm-log pin is an eligible reviewed/green upstream revision.
+5. =services.llm-log.expert.require= defaults/sets false for initial consumer rollout so expert unavailability preserves fail-open proxy forwarding.
+6. expert state is not placed under the immutable raw capture corpus path.
+7. the consumer does not add Tek9 access, Prolog rules, a Python rule engine, credentials, or a second expert daemon.
+
+The executable acceptance should live in dotfiles and run in its existing Nix/CI gate. A test-only branch may define the contract before the upstream pin is eligible, but production pin/config mutation must remain blocked until PR #24 satisfies review/discussion requirements and lands or otherwise yields an explicitly eligible reviewed/green revision.
+
+* Adversarial review
+Pinning the draft PR #24 head directly would technically expose the options but would bypass the required review/discussion gate and create a moving consumer dependency. Reject.
+
+Mixing the consumer change into llm-log PR #5 would couple two transactions and make rollback/review ambiguous. Reject.
+
+Using =~/Documents/AI/proxy= as expert dataDir would mix mutable derived KB state with raw evidence and violate evidence separation. Reject.
+
+Enabling =require = true= in the first consumer rollout would turn an expert startup failure into capture outage despite the accepted fail-open default. Reject.
+
+Adding any direct Tek9/Prolog configuration logic to dotfiles beyond selecting the packaged expert service would move authority into the consumer. Reject.
+
+* Decision
+Proceed with a test-only dotfiles consumer RED on a fresh branch from current master. Do not mutate the production llm-log pin or enable the expert consumer until an upstream revision is both GREEN and eligible under review/discussion rules.
+
+When that upstream gate clears, the production GREEN mutation is bounded to:
+- advance =llmLogRevision= to the eligible upstream revision;
+- enable =services.llm-log.expert.enable=;
+- pass the packaged expert service through the upstream module surface as required;
+- keep =services.llm-log.expert.require = false= initially;
+- preserve =~/Documents/AI/proxy= exactly;
+- keep expert state separate;
+- run the unchanged dotfiles Nix/Home Manager acceptance to GREEN.
+
+No Tek9 repository mutation is authorized by this slice.

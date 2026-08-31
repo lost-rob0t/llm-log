@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
+from .expert_adapter import SubprocessExpertPlane
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
@@ -35,6 +36,10 @@ _SESSION_KEY = web.AppKey("session", ClientSession)
 
 class Classifier(Protocol):
     def classify(self, text: str) -> list[str]: ...
+
+
+class ExpertPlane(Protocol):
+    async def health(self) -> None: ...
 
 
 def _now() -> str:
@@ -93,6 +98,23 @@ async def _classify(classifier: Classifier | None, request_body: bytes) -> list[
         return await asyncio.to_thread(classifier.classify, text)
     except Exception:
         return []
+
+
+async def _enforce_expert_policy(
+    expert_plane: ExpertPlane | None,
+    *,
+    require_expert_plane: bool,
+) -> None:
+    if expert_plane is None:
+        if require_expert_plane:
+            raise web.HTTPServiceUnavailable(text="expert plane unavailable")
+        return
+
+    try:
+        await expert_plane.health()
+    except Exception:
+        if require_expert_plane:
+            raise web.HTTPServiceUnavailable(text="expert plane unavailable") from None
 
 
 async def _relay_websocket(
@@ -267,6 +289,8 @@ def build_app(
     classifier: Classifier | None,
     *,
     timeout_seconds: float = 600.0,
+    expert_plane: ExpertPlane | None = None,
+    require_expert_plane: bool = False,
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
     app = web.Application(client_max_size=1024**3)
@@ -277,8 +301,15 @@ def build_app(
             timeout=ClientTimeout(total=timeout_seconds),
             auto_decompress=False,
         )
+        if isinstance(expert_plane, SubprocessExpertPlane):
+            try:
+                await expert_plane.start()
+            except Exception:
+                pass
 
     async def cleanup(application: web.Application) -> None:
+        if isinstance(expert_plane, SubprocessExpertPlane):
+            await expert_plane.close()
         session = application.get(_SESSION_KEY)
         if session is not None:
             await session.close()
@@ -294,6 +325,11 @@ def build_app(
         upstream_url = f"{upstream}/{tail}"
         if request.query_string:
             upstream_url = f"{upstream_url}?{request.query_string}"
+
+        await _enforce_expert_policy(
+            expert_plane,
+            require_expert_plane=require_expert_plane,
+        )
 
         session = request.app[_SESSION_KEY]
         if request.headers.get("Upgrade", "").lower() == "websocket":

@@ -1,0 +1,57 @@
+#+title: LLM-LOG-EVIDENCE-010 — Reasoner failure recovery RED/GREEN
+#+filetags: :llm-log:evidence:issue-10:prolog:tek9:red-green:
+
+* Scope
+Execution evidence for =research/LLM-LOG-RESEARCH-026-reasoner-failure-recovery-contract.org=.
+
+No raw LLM capture evidence is stored in this file. No derived expert assertion is stored in this file. This is implementation/test evidence only.
+
+* RED
+- Exact test-only head: =cc0df4b213db4acfd97d970c236da2e0edf0200a=
+- Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33310846343
+- Result: RED.
+
+The existing bounded Tek9 -> SWI-Prolog roundtrip and derived-assertion provenance/supersession tests remained GREEN. The new recovery contract also proved that explicitly invalidating the worker removes its session and that a later independent declared inference starts a fresh SWI session and succeeds.
+
+The sole new failure was:
+
+#+begin_example
+malformed/correlation-invalid replies must use the typed reasoner-failure condition
+#+end_example
+
+This is a valid product RED: the baseline emitted generic Common Lisp errors for malformed/correlation-invalid reasoner replies and did not define the required typed failure condition.
+
+* GREEN
+- Production head: =89173d685bbbb841b6c4848ca7ce63cd3eb168fa=
+- Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33310965653
+- Result: GREEN.
+
+The implementation adds a bounded =reasoner-failure= condition with read-only =kind= and =message= metadata. Runtime classifications are finite:
+- =:unavailable=
+- =:crashed=
+- =:timeout=
+- =:malformed-reply=
+
+Malformed JSON, reply shape/status errors, and request/operation correlation errors now classify as =:malformed-reply=. EOF classifies as =:crashed=. The bounded deadline classifies as =:timeout=. Worker launch/liveness failure classifies as =:unavailable=.
+
+The service maps those runtime classes to stable protocol error codes rather than collapsing them into =fixture_error=:
+- =reasoner_unavailable=
+- =reasoner_crashed=
+- =reasoner_timeout=
+- =reasoner_malformed_reply=
+
+* Verified invariants
+- Existing bounded primary-key Tek9 retrieval remains GREEN.
+- Existing declared-operation allow-list remains GREEN.
+- Existing derived assertion provenance/idempotence/conflict/supersession remains GREEN.
+- A failed/dead worker is not reused.
+- A later independent request may create a fresh SWI session and succeed.
+- No automatic retry/replay was added to the failed in-flight inference.
+- No Tek9 repository change was required.
+- No Python capture/transport or dotfiles change was made.
+
+* Not claimed
+- A synthetic process-level timeout fixture was not executed in this slice.
+- A malformed live worker stdout fixture was not executed; malformed/correlation validation was exercised directly at the Common Lisp supervisor boundary.
+- Python proxy fail-open versus =require_expert_plane= fail-closed behavior remains a later RED-first integration slice.
+- Provider-family transport conformance remains backlog.
