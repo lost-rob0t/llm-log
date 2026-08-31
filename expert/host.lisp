@@ -32,6 +32,8 @@ projection fields."
                     (value-field :request-id))
     (register-index database "classification-source-user-message-id"
                     (value-field :user-message-id))
+    (register-index database "classification-source-task-id"
+                    (value-field :task-id))
     (register-index database "classification-source-provider"
                     (value-field :provider))
     (register-index database "classification-source-model"

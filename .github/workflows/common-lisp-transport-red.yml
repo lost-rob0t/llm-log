@@ -7,6 +7,7 @@ on:
       - rage/12-request-classifier-red
       - rage/12-classifier-query-red
       - rage/12-classifier-time-range-red
+      - rage/12-classifier-task-id-red
   workflow_dispatch:
 
 permissions:

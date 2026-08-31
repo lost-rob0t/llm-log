@@ -69,6 +69,7 @@
   "Return KIND, INDEX, START and END for one mandatory bounded selector."
   (let ((request-id (%history-string-filter payload "request_id"))
         (message-id (%history-string-filter payload "user_message_id"))
+        (task-id (%history-string-filter payload "task_id"))
         (provider (%history-string-filter payload "provider"))
         (model (%history-string-filter payload "model")))
     (cond
@@ -76,6 +77,8 @@
        (values :source "classification-source-request-id" request-id request-id))
       (message-id
        (values :source "classification-source-user-message-id" message-id message-id))
+      (task-id
+       (values :source "classification-source-task-id" task-id task-id))
       (provider
        (values :source "classification-source-provider" provider provider))
       (model
@@ -84,7 +87,7 @@
        (values :event "classification-source-started-at" lower upper))
       (t
        (error
-        "bounded_query_required: request_id, user_message_id, provider, model, or a complete started_at range is required")))))
+        "bounded_query_required: request_id, user_message_id, task_id, provider, model, or a complete started_at range is required")))))
 
 (defun %classification-source-matches-p (source event payload lower upper)
   (flet ((matches (payload-key source-key)
@@ -96,6 +99,7 @@
            event
            (matches "request_id" :request-id)
            (matches "user_message_id" :user-message-id)
+           (matches "task_id" :task-id)
            (matches "provider" :provider)
            (matches "model" :model)
            (or (null lower)
@@ -126,6 +130,7 @@
      (cons "event_id" (getf source :event-id))
      (cons "user_message_id" (getf source :user-message-id))
      (cons "request_id" (getf source :request-id))
+     (cons "task_id" (getf source :task-id))
      (cons "provider" (getf source :provider))
      (cons "model" (getf source :model))
      (cons "client" (getf source :client))
