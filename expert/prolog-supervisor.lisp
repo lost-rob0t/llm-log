@@ -8,8 +8,13 @@
   (cons :obj pairs))
 
 (defun %new-prolog-session-id ()
-  (format nil "swipl-~36R-~36R"
+  "Session identity must differ across host processes even when they share a
+precompiled SBCL core with an identical frozen random state: mix in the OS
+process id alongside the clock."
+  (format nil "swipl-~36R-~36R-~36R"
           (get-universal-time)
+          #+sbcl (sb-unix:unix-getpid)
+          #-sbcl 0
           (random most-positive-fixnum)))
 
 (defun %prolog-worker-path ()
@@ -95,14 +100,16 @@ fall back to the bounded substrate default rather than disabling the deadline."
 (defun %read-prolog-reply-line (output)
   "Read one worker reply with a hard deadline.
 
-The packaged expert runtime is SBCL. Timing out invalidates the entire worker;
-callers must not reuse its streams or retry the in-flight inference."
+Uses an fd readiness poll instead of interrupting a blocking read: SBCL
+defers timer delivery while a read(2) auto-restarts, so a hung worker would
+otherwise hold the request past the bounded deadline. Timing out invalidates
+the entire worker; callers must not reuse its streams or retry the in-flight
+inference."
   #+sbcl
-  (handler-case
-      (sb-ext:with-timeout (%prolog-timeout-seconds)
-        (read-line output nil nil))
-    (sb-ext:timeout ()
-      (error "reasoner_timeout")))
+  (let ((fd (sb-sys:fd-stream-fd output)))
+    (unless (sb-sys:wait-until-fd-usable fd :input (%prolog-timeout-seconds))
+      (error "reasoner_timeout"))
+    (read-line output nil nil))
   #-sbcl
   (error "reasoner_timeout_requires_supported_runtime"))
 
