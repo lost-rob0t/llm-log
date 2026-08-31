@@ -1,0 +1,42 @@
+#+title: LLM-LOG-EVIDENCE-023 Task rollup restart RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: pr https://github.com/lost-rob0t/llm-log/pull/37
+#+property: research research/LLM-LOG-RESEARCH-041-task-rollup-restart.org
+#+property: red_head 9976d5239e80de79a92a66a8b4b6fe0d1704f211
+#+property: workflow_run 33413493088
+
+* Boundary
+This evidence records execution of the RED-only task-rollup/restart contract before any production accounting mutation on =rage/13-task-rollup-red=.
+
+* Exact head
+=9976d5239e80de79a92a66a8b4b6fe0d1704f211=
+
+The exact head contains only:
+- canonical research =research/LLM-LOG-RESEARCH-041-task-rollup-restart.org=;
+- RED contract =expert/tests/task-rollup-restart-red.lisp=;
+- integration-test registration;
+- CI branch trigger.
+
+It does not contain a =query_task_accounting= production implementation.
+
+* Executed RED
+GitHub Actions run =33413493088= executed the exact head.
+
+- =python-expert-policy-contract=: GREEN.
+- =home-manager-expert-contract=: GREEN.
+- =common-lisp-expert-integration-contract=: RED.
+
+Within the Common Lisp integration job, all earlier #10, #12 and first-slice #13 contracts pass, including =task-accounting-red-contract=. The new fixture successfully persists the parent usage, child usage and an exact replay of the child usage, stops the host, and starts a fresh host against the same Tek9 directory.
+
+The first post-restart =query_task_accounting= request returns:
+
+#+begin_example
+status = error
+code = unknown_operation
+message = operation is not declared
+#+end_example
+
+Rove then reports =TASK-ROLLUP-RESTART-RED-CONTRACT= as the sole failed test. The downstream result assertions fail only because the undeclared query returns no result object.
+
+* Decision
+Accepted as the mandatory RED gate. The failure is the intended missing product surface, not an unavailable dependency, malformed fixture, Nix failure, or unrelated regression. Production mutation may now add the bounded durable task-accounting query described by research 041. No Tek9 repository mutation is authorized by this evidence.
