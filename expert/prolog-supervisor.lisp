@@ -1,7 +1,7 @@
 (in-package #:llm-log-expert)
 
 (defparameter +prolog-worker-protocol-version+ 1)
-(defparameter +prolog-worker-operations+ '("health" "event_transport"))
+(defparameter +prolog-worker-operations+ '("health" "event_transport" "request_classification"))
 (defparameter +default-prolog-timeout-seconds+ 5.0)
 
 (define-condition reasoner-failure (error)

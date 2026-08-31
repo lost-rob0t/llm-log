@@ -1,0 +1,109 @@
+#+title: LLM-LOG-RESEARCH-036 — Request-classification expert
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Parent: https://github.com/lost-rob0t/llm-log/issues/8
+Substrate: #10 merged in main at b6a7b74fd7a3aca3a8af94d83e18390f2fc37d62.
+
+This document is the canonical bounded ARADR decision for the first #12 slice. RESEARCH-004/033 remain architectural authority where broader expert-plane invariants apply.
+
+* Analyze
+Current =query_classification= is only the #10 fixture path: it accepts fixture=event_transport and derives one deterministic transport value. It is not a request classifier and cannot produce multi-label analytical assertions, ambiguity, rule provenance, or indexed durable query surfaces.
+
+Python remains capture/transport and must not gain classification rules. The Common Lisp expert service owns bounded retrieval, typed validation, Tek9 persistence and Prolog supervision. SWI-Prolog owns classification rules/inference. Tek9 remains durable KB.
+
+* Research — bounded typed contract
+** Operation
+Keep the declared versioned operation =query_classification=. Replace fixture-only semantics with a typed payload after RED evidence exists.
+
+Required request payload for this slice:
+- =user_message_id= stable source ID
+- =request_id= stable request identity
+- =message= exact user text, unchanged
+- optional =session_id=, =task_id=, =provider=, =model=, =client=
+- optional bounded =signals= object containing explicit artifact/tool/execution cues
+
+No callable Prolog term, goal string, =term_string/2= or =read_term/3= crosses the protocol.
+
+** Assertion shape
+Each returned classification assertion is typed data with:
+- =dimension=
+- =value=
+- =state= one of asserted/ambiguous/unknown
+- =confidence= bounded symbolic state, not authorization
+- =rule_id= and =rule_version=
+- =evidence_ids= non-empty list of source/fact IDs
+- =expert_version=
+
+Multi-label output is required. Conflicting labels may coexist as ambiguous assertions.
+
+** Initial dimensions
+activity; operation; artifact_target; execution_locality; project_repository; tool_capability_need; authority_effect; complexity_budget; expected_validation.
+
+Classification is metadata only. It MUST NOT grant tool access, mutate prompts, alter forwarding, or change authority checks.
+
+* Tek9 entity/index/graph schema
+Reuse existing public document/index/graph APIs first. No Tek9 repository change is authorized by this slice.
+
+Durable entities:
+- =classification_assertion/<assertion-id>=
+- source =user_message/<id>= and =request/<id>= references
+- =rule/<rule-id>/<version>= reference
+
+Required indexed fields for bounded retrieval/query:
+- assertion kind/dimension/value/state
+- user_message_id, request_id, session_id, task_id when present
+- provider, model, client when present
+- rule_id/rule_version
+- observed/created timestamp
+
+Graph edges are provenance links, not replacements for indexed lookup: assertion -> source evidence; assertion -> rule-version; assertion -> request/task/session where known.
+
+Historical revisions are superseded by new assertion entities/edges; never delete prior assertions.
+
+* Prolog boundary
+Declare one classifier predicate family only, conceptually =classify_request/2= over materialized typed facts and validated result terms. The exact worker encoding may use JSON-safe typed values, but callers never supply predicate names or executable terms.
+
+Materialize only facts selected by indexed source/task IDs plus explicit request signals. Enforce hard result-count and fact-count bounds. Never load the corpus into Prolog.
+
+* Provenance and failure semantics
+Raw capture remains immutable. Derived assertions link exact source IDs + rule/version + expert version. Classifier failure returns a typed expert error and does not block proxy forwarding unless =require_expert_plane= is explicitly enabled. Unknown is a valid analytical result.
+
+Credentials and secret headers are excluded from classifier facts and Tek9 derived documents.
+
+* Packaging
+No new runtime language or daemon. The existing SBCL expert package + Tek9 + SWI-Prolog remains the package boundary. Home Manager/systemd and non-Nix launch paths inherit #10 packaging; #12 adds no consumer configuration requirement in this first slice.
+
+* Adversarial review
+- A Python keyword classifier would violate ownership: reject.
+- Whole-corpus Prolog loading would violate bounded retrieval: reject.
+- A generic call_prolog operation would create a model-controlled execution surface: reject.
+- Treating classification as permission/authority would be a privilege escalation: reject.
+- Persisting only final labels without source/rule IDs destroys dataset auditability: reject.
+- Forcing ambiguous requests into one label creates false certainty: reject.
+- Mutating the user message as part of classification would steal #17 Beagle scope: reject.
+
+* Decision
+Proceed with RED-only contract first on =rage/12-request-classifier-red=. The baseline must demonstrably fail compound multi-label classification while #10 integration contracts stay intact. Only after that executed RED may production classifier rules/storage/service behavior mutate.
+
+* Exact RED-first acceptance
+The first RED fixture submits: “Fix the llm-log #12 classifier, add tests, and open a PR; do not merge it.”
+
+It requires, at minimum, simultaneous assertions for:
+- activity=coding
+- operation=fix
+- operation=test or expected_validation=test
+- artifact_target=code
+- artifact_target=pr
+- execution_locality=remote or connected-service for the PR effect, while local/code work may coexist
+- authority_effect=write_without_merge (or equivalent explicit non-merge effect state)
+
+Every non-unknown assertion must include rule/version and evidence IDs. The exact original message must be unchanged in durable source evidence. No classification result may claim authority.
+
+Additional GREEN acceptance after implementation:
+1. ambiguous fixture can return coexisting ambiguous labels;
+2. no-applicable-rule produces explicit unknown rather than fabricated certainty;
+3. assertions survive restart through Tek9;
+4. bounded query by request/user-message/provider/model/time works;
+5. unavailable classifier remains fail-open for proxy forwarding by default.

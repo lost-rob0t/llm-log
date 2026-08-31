@@ -88,8 +88,37 @@
       (error (condition)
         (%reply-error "fixture_error" (princ-to-string condition))))))
 
+(defun %dispatch-classification-query (host request)
+  (let ((event-id (%require-event-id request))
+        (payload (%request-payload request)))
+    (handler-case
+        (progn
+          ;; Retain the #10 event identity/provenance substrate and persist the
+          ;; exact classifier source as a separate immutable Tek9 projection.
+          (project-request-event host event-id payload)
+          (project-classification-source host event-id payload)
+          (multiple-value-bind (assertions revision)
+              (derive-request-classification host event-id)
+            (%reply-ok
+             (%json-object
+              (cons "expert" "request.classifier")
+              (cons "expert_version" "request-classifier/1")
+              (cons "assertions" assertions)
+              (cons "kb_revision" revision)
+              (cons "prolog_session_id" (expert-host-prolog-session-id host))))))
+      (event-conflict ()
+        (%reply-error "event_conflict" "stable classifier source has contradictory data"))
+      (assertion-conflict ()
+        (%reply-error "assertion_conflict" "stable classification assertion has contradictory data"))
+      (reasoner-failure (condition)
+        (%reasoner-failure-reply condition))
+      (invalid-reasoner-result (condition)
+        (%reply-error "invalid_reasoner_result" (princ-to-string condition)))
+      (error (condition)
+        (%reply-error "classification_error" (princ-to-string condition))))))
+
 (defun dispatch-expert-request (host request)
-  "Dispatch only the declared public expert-service operations for #10."
+  "Dispatch only declared public expert-service operations."
   (unless (and (consp request) (eq (first request) :obj))
     (return-from dispatch-expert-request
       (%reply-error "invalid_request" "request must be a JSON object")))
@@ -112,7 +141,12 @@
          (error (condition)
            (%reply-error "invalid_request" (princ-to-string condition)))))
       ((equal operation "query_classification")
-       (%dispatch-fixture-query host request))
+       (let ((payload (%request-payload request)))
+         ;; Preserve the old #10 event_transport fixture only for its explicit
+         ;; fixture payload; all typed request payloads use the #12 classifier.
+         (if (equal (jsown:val-safe payload "fixture") "event_transport")
+             (%dispatch-fixture-query host request)
+             (%dispatch-classification-query host request))))
       (t
        (%reply-error "unknown_operation" "operation is not declared")))))
 
