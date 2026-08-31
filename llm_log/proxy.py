@@ -117,6 +117,113 @@ async def _enforce_expert_policy(
             raise web.HTTPServiceUnavailable(text="expert plane unavailable") from None
 
 
+_INGEST_TASKS_KEY = web.AppKey("expert-ingest-tasks", set)
+_USER_MESSAGE_LIMIT = 4000
+
+
+def _user_message_from_api_body(body: dict) -> str:
+    for message in reversed(body.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+    return ""
+
+
+def _extract_user_message(request_body: bytes) -> str:
+    """Extract the last user message from one captured request body.
+
+    Handles JSON API bodies and newline-delimited WebSocket frame envelopes;
+    returns "" when no user text can be found.
+    """
+    text = request_body.decode("utf-8", errors="replace")
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError:
+        body = None
+    if isinstance(body, dict) and "messages" in body:
+        return _user_message_from_api_body(body)[:_USER_MESSAGE_LIMIT]
+    for line in text.splitlines():
+        try:
+            frame = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(frame, dict) and frame.get("type") == "text":
+            inner = frame.get("text")
+            if not isinstance(inner, str):
+                continue
+            try:
+                parsed = json.loads(inner)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return _user_message_from_api_body(parsed)[:_USER_MESSAGE_LIMIT]
+    return ""
+
+
+def _expert_base_payload(event: CaptureEvent) -> dict:
+    return {
+        "provider": event.provider,
+        "model": event.model or "unknown",
+        "transport": event.transport,
+        "started_at": event.started_at,
+        "completed_at": event.completed_at,
+        "request_sha256": event.request_sha256,
+        "response_sha256": event.response_sha256,
+    }
+
+
+async def _expert_ingest(expert_plane, event: CaptureEvent, request_body: bytes) -> None:
+    try:
+        payload = _expert_base_payload(event)
+        await expert_plane.observe_request(
+            event_id=event.event_id,
+            payload=payload,
+            session_id="proxy",
+            task_id="proxy",
+        )
+        message = _extract_user_message(request_body)
+        if message:
+            await expert_plane.classify_request(
+                event_id=event.event_id,
+                payload={
+                    **payload,
+                    "message": message,
+                    "user_message_id": "um-" + event.event_id[:8],
+                    "request_id": event.event_id,
+                    "client": "proxy",
+                },
+                session_id="proxy",
+                task_id="proxy",
+            )
+    except Exception:
+        return
+
+
+def _schedule_expert_ingest(
+    app: web.Application,
+    expert_plane,
+    event: CaptureEvent,
+    request_body: bytes,
+) -> None:
+    if expert_plane is None or not hasattr(expert_plane, "observe_request"):
+        return
+    tasks = app[_INGEST_TASKS_KEY]
+    task = asyncio.create_task(
+        _expert_ingest(expert_plane, event, request_body),
+        name="llm-log-expert-ingest",
+    )
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
 async def _relay_websocket(
     source,
     target,
@@ -205,6 +312,7 @@ async def _proxy_websocket(
             transport="websocket",
         )
         await recorder.record(event)
+        _schedule_expert_ingest(request.app, expert_plane, event, b"")
         return web.Response(status=502, text="upstream websocket connection failed")
 
     selected_protocol = upstream_socket.protocol
@@ -280,6 +388,7 @@ async def _proxy_websocket(
         transport="websocket",
     )
     await recorder.record(event)
+    _schedule_expert_ingest(request.app, expert_plane, event, bytes(client_frames))
     return downstream
 
 
@@ -301,6 +410,7 @@ def build_app(
             timeout=ClientTimeout(total=timeout_seconds),
             auto_decompress=False,
         )
+        application[_INGEST_TASKS_KEY] = set()
         if isinstance(expert_plane, SubprocessExpertPlane):
             try:
                 await expert_plane.start()
@@ -308,6 +418,9 @@ def build_app(
                 pass
 
     async def cleanup(application: web.Application) -> None:
+        pending = application.get(_INGEST_TASKS_KEY)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         if isinstance(expert_plane, SubprocessExpertPlane):
             await expert_plane.close()
         session = application.get(_SESSION_KEY)
@@ -400,6 +513,7 @@ def build_app(
             intents=intents,
         )
         await recorder.record(event)
+        _schedule_expert_ingest(request.app, expert_plane, event, request_body)
         return downstream
 
     app.on_startup.append(startup)
