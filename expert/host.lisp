@@ -74,8 +74,10 @@ execution must use them rather than enumerating the expert corpus."
    database "outcome-assertion-scope-key"
    (lambda (document)
      (let ((assertion-id (%plist-index-value document :assertion-id))
-           (scope-key (%plist-index-value document :scope-key)))
-       (and assertion-id scope-key))))
+           (scope (%plist-index-value document :scope))
+           (scope-id (%plist-index-value document :scope-id)))
+       (and assertion-id scope scope-id
+            (format nil "~A:~A" scope scope-id)))))
   (register-index
    database "outcome-assertion-supersedes"
    (lambda (document)
