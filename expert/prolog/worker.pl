@@ -117,21 +117,28 @@ contains(Text, Needle) :-
     string_lower(Text, Lower),
     sub_string(Lower, _, _, _, Needle).
 
-classifier_assertion(Message, Evidence, "activity", "coding", "activity.coding", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "activity", "coding", "activity.coding", "asserted", "high") :-
     (contains(Message, "fix"); contains(Message, "code"); contains(Message, "classifier")).
-classifier_assertion(Message, Evidence, "operation", "fix", "operation.fix", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "operation", "review", "operation.review.conditional", "ambiguous", "medium") :-
+    contains(Message, "review"),
+    (contains(Message, "maybe fix"); contains(Message, "if needed"); contains(Message, "unless necessary")).
+classifier_assertion(Message, _Evidence, "operation", "fix", "operation.fix.conditional", "ambiguous", "medium") :-
+    contains(Message, "review"),
+    contains(Message, "fix"),
+    (contains(Message, "maybe"); contains(Message, "if needed"); contains(Message, "unless necessary")).
+classifier_assertion(Message, _Evidence, "operation", "fix", "operation.fix", "asserted", "high") :-
     contains(Message, "fix").
-classifier_assertion(Message, Evidence, "operation", "test", "operation.test", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "operation", "test", "operation.test", "asserted", "high") :-
     (contains(Message, "test"); contains(Message, "tests")).
-classifier_assertion(Message, Evidence, "expected_validation", "test", "validation.test", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "expected_validation", "test", "validation.test", "asserted", "high") :-
     (contains(Message, "test"); contains(Message, "tests")).
-classifier_assertion(Message, Evidence, "artifact_target", "code", "artifact.code", "asserted", "medium") :-
+classifier_assertion(Message, _Evidence, "artifact_target", "code", "artifact.code", "asserted", "medium") :-
     (contains(Message, "fix"); contains(Message, "code"); contains(Message, "classifier")).
-classifier_assertion(Message, Evidence, "artifact_target", "pr", "artifact.pr", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "artifact_target", "pr", "artifact.pr", "asserted", "high") :-
     (contains(Message, " pr"); contains(Message, "pull request")).
-classifier_assertion(Message, Evidence, "execution_locality", "connected_service", "locality.connected_service", "asserted", "medium") :-
+classifier_assertion(Message, _Evidence, "execution_locality", "connected_service", "locality.connected_service", "asserted", "medium") :-
     (contains(Message, " pr"); contains(Message, "pull request")).
-classifier_assertion(Message, Evidence, "authority_effect", "write_without_merge", "authority.write_without_merge", "asserted", "high") :-
+classifier_assertion(Message, _Evidence, "authority_effect", "write_without_merge", "authority.write_without_merge", "asserted", "high") :-
     (contains(Message, "do not merge"); contains(Message, "don't merge"); contains(Message, "without merging")).
 
 assertion_dict(Dimension, Value, RuleId, State, Confidence, Evidence, Assertion) :-
