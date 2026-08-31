@@ -74,4 +74,4 @@
            (rove:ok (= (jsown:val-safe result "request_count") 2)))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
-        (uiop:delete-directory-tree data-dir :validate t :if-does-not-exist :ignore)))))
+        (uiop:delete-directory-tree data-dir :validate t :if-does-not-exist :ignore))))))
