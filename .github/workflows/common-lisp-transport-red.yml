@@ -34,6 +34,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The RED contract must fail on product behavior, never fixture syntax.
           nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract \
             2>&1 | tee "$RUNNER_TEMP/common-lisp-expert.log"
 
