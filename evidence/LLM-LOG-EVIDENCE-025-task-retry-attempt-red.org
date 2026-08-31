@@ -1,0 +1,30 @@
+#+title: LLM-LOG-EVIDENCE-025 — Task retry/attempt accounting RED
+#+filetags: :llm-log:evidence:red:task-accounting:
+
+* Links
+Design: [[../research/LLM-LOG-RESEARCH-042-task-retry-attempt-accounting.org][LLM-LOG-RESEARCH-042]]
+Issue: [[https://github.com/lost-rob0t/llm-log/issues/13][#13]]
+PR: [[https://github.com/lost-rob0t/llm-log/pull/41][#41]]
+
+* Baseline
+Branch base: =7b1d4359764fcc87fb967ed6e6577a9eaf6f3045=
+Tested RED head: =fdc351217621efa6efafc4a7131b1753b2bb0828=
+Workflow run: =33423647092=
+
+No production implementation changed before this RED run.
+
+* Results
+- Common Lisp/Tek9/SWI-Prolog integration: RED on the new contract.
+- Python expert policy/adapter/transport/launch: GREEN.
+- Home Manager expert wiring: GREEN.
+- Existing integration contracts passed before the new fixture.
+
+The new fixture preserved existing accounting after restart: =request_count= 3, =input_tokens= 240, =output_tokens= 120, known cost =0.48 USD=, and all three usage/cost IDs remained present.
+
+The new expectations failed because the durable rollup did not contain =attempt_count=, =retry_request_count=, =attempt_ids=, or =retry_request_ids=. This matches source inspection: explicit attempt/retry metadata supplied with usage observations is not retained by the current immutable usage projection.
+
+* Interpretation
+This is accepted product-contract RED rather than an environment or syntax failure. Build, fixture compilation, expert startup, previous contracts, and existing accounting all succeeded; only the newly required durable attempt/retry projection was absent.
+
+* Next mutation boundary
+The next bounded implementation may validate and persist explicit attempt/retry metadata in Common Lisp/Tek9 and expose bounded restart-durable attempt/retry counts and IDs through =query_task_accounting=. Existing token/cost arithmetic remains unchanged. No whole-corpus scan, Python rule engine, historical rewrite, outcome-label dependency, or Tek9 repository change is part of this slice.

@@ -1,0 +1,112 @@
+#+title: LLM-LOG-RESEARCH-042 — Task retry/attempt accounting
+#+filetags: :llm-log:aradr:expert:tek9:prolog:task-accounting:
+
+* Status
+Decision-ready bounded slice for [[https://github.com/lost-rob0t/llm-log/issues/13][llm-log#13]].
+
+This document is research/design authority. Raw capture evidence remains in the capture corpus, durable derived expert records remain in Tek9, and executed RED/GREEN implementation evidence belongs under =evidence/=.
+
+* Analyze
+The merged task-accounting substrate already persists immutable task, usage, pricing and cost projections and reconstructs bounded parent/child rollups after restart. Current usage projection identity is =usage_id + request_id + task_id= and the rollup deduplicates by immutable usage ID/request ID. It does not persist an explicit attempt identity or retry predecessor, and =query_task_accounting= cannot report retry/attempt counts or provenance.
+
+A retry with a new request ID is currently charged, but it is observationally indistinguishable from another ordinary request. This blocks the #13 analysis requirement for expensive retries and later token-burn-before-success analysis.
+
+The capture/transport boundary remains Python. This slice does not create retry heuristics in Python. The expert service receives explicit bounded attempt metadata when it is present in normalized evidence. Missing attempt metadata remains unknown rather than inferred from session adjacency.
+
+* Research
+** Typed durable contracts
+Extend the immutable usage observation projection, not raw capture, with optional normalized fields:
+- =attempt_id=: stable attempt identity when provided/derived by an authorized expert contract;
+- =attempt_ordinal=: positive integer within the task/request retry chain when known;
+- =retry_of_request_id=: immediate predecessor request ID when this observation is an explicit retry;
+- =client=: normalized client surface when present (Codex/OpenCode/Claude Code/gptel/etc.);
+- =transport=: HTTP/SSE/WebSocket when present.
+
+The existing =usage_id= remains the immutable observation primary key. Existing records are not rewritten. Schema evolution must be backward compatible: old records without attempt metadata remain valid and report attempt/retry state as unknown/incomplete where required.
+
+** Tek9 schema/index boundary
+No Tek9 repository mutation is justified by this slice. Existing durable document storage, secondary-index registration, exact fetch, and bounded index-range APIs are sufficient.
+
+Required llm-log-owned indexes, if implementation needs them:
+- =usage-task-id= (already present);
+- optional =usage-attempt-id= for future point/range analysis;
+- optional =usage-client= only when a bounded cross-task analysis query is introduced.
+
+This slice must not introduce a corpus scan. Retry rollup for one task is derived only from the already bounded task subtree and its bounded =usage-task-id= candidates.
+
+** Graph semantics
+Retry linkage is an evidence edge from the current request/attempt to =retry_of_request_id=. It does not replace task parent/child edges.
+
+A request may be a retry only when explicit bounded evidence says so. Temporal proximity, same model/provider, transport failure, or same session alone are insufficient.
+
+Malformed retry chains are rejected or surfaced as invalid/partial; they must not silently create cycles or grant authority.
+
+** Prolog predicates
+No new Prolog predicate is required merely to count explicitly materialized retry edges. SWI-Prolog continues to own pricing rules and future outcome/retry inference rules. Common Lisp may perform bounded deterministic aggregation of already-materialized typed records; it must not become a second rule engine.
+
+If later work derives retry identity from evidence rather than receiving explicit retry metadata, that derivation requires a declared versioned Prolog operation and separate RED-first contract.
+
+** Provenance
+Every usage/cost assertion keeps its immutable usage/request/task identity and pricing/rule provenance. Retry fields are evidence metadata, not authorization.
+
+The query result must expose enough IDs to audit counts. It may report:
+- =attempt_count=;
+- =retry_request_count=;
+- sorted =attempt_ids=;
+- sorted =retry_request_ids=;
+- =attempt_metadata_complete= boolean.
+
+It must not erase or mutate original raw request evidence.
+
+** Failure semantics
+- missing optional attempt metadata: preserve usage/cost; mark metadata incomplete;
+- =attempt_ordinal <= 0=: typed validation failure for that mutation;
+- =retry_of_request_id == request_id=: typed validation failure;
+- duplicate immutable =usage_id= with conflicting attempt metadata: immutable conflict;
+- expert unavailable: proxy remains fail-open unless =require_expert_plane= is explicitly enabled;
+- malformed expert records never affect proxy forwarding authority.
+
+** Nix/non-Nix
+No packaging boundary changes are needed. Existing flake/SBCL/Tek9/SWI package and Home Manager/systemd wiring remain authoritative. Non-Nix launch/config paths remain unchanged. Consumer capture data remains configurable and dotfiles continues to preserve =~/Documents/AI/proxy=.
+
+* Design
+Implement one bounded #13 slice only:
+1. Accept optional explicit attempt/retry/client/transport metadata in =account_task_usage= usage observations.
+2. Persist it immutably in the Common Lisp-owned usage projection.
+3. During =query_task_accounting=, traverse only the already-bounded task subtree and usage index candidates.
+4. Deduplicate immutable usage observations as today.
+5. Return explicit attempt/retry counts and provenance IDs without changing cost arithmetic.
+6. Preserve restart behavior because all metadata is reconstructed from Tek9.
+
+No cross-task analytics API, outcome-dependent token-burn query, provider census work, Beagle work, or dotfiles mutation belongs in this slice.
+
+* Adversarial review
+- Counting each request as an attempt would fabricate retry semantics. Rejected.
+- Inferring retries from sequential timestamps would conflate normal multi-turn work with retries. Rejected.
+- Treating =retry_of_request_id= as authority to reassign tasks would violate the classification/authority boundary. Rejected.
+- Repricing retry requests during query would violate immutable pricing snapshot semantics. Rejected; use stored cost assertions.
+- Loading all usage records to find retry chains would violate bounded Tek9 retrieval. Rejected.
+- Rewriting existing usage records to add attempt fields would violate immutable history. Rejected.
+- Depending on #15 outcome labels in this slice would invert dependency order. Rejected.
+
+* Decision
+Proceed RED-first on branch =rage/13-retry-attempt-red=.
+
+Exact untouched baseline is the current remote =main= head at branch creation. RED acceptance must demonstrate that current production behavior drops explicit attempt/retry metadata and therefore cannot reconstruct retry counts after restart.
+
+* RED-first acceptance
+A single integration fixture must:
+- create one task with at least three usage observations;
+- represent two attempts in one explicit retry chain plus one ordinary request;
+- include immutable pricing snapshots so retry cost remains charged normally;
+- restart the expert host before query;
+- query the task through the existing bounded =query_task_accounting= operation;
+- require exact request/cost/token totals to stay unchanged;
+- require =attempt_count= and =retry_request_count=;
+- require persisted =attempt_ids= and =retry_request_ids=;
+- require incomplete metadata to be explicit when one ordinary request lacks attempt metadata;
+- prove no whole-corpus API is needed.
+
+The legitimate RED reason on untouched production is missing durable attempt/retry fields/result projection, not a fixture syntax error, packaging failure, or unavailable test environment.
+
+Production mutation is forbidden until that RED is independently executed.
