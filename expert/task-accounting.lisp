@@ -168,8 +168,6 @@
          (cons "task_id" task-id)
          (cons "pricing_snapshot_id" known-snapshot-id)
          (cons "known_cost_currency" known-currency)
-         ;; Preserve exact arithmetic in durable assertions; normalize only the
-         ;; protocol response to JSON-style floating-point representation.
          (cons "known_cost_amount" (float known-total 0.0))
          (cons "unknown_cost_state" (if unknown-p "unknown" "known"))
          (cons "request_count" (length seen-requests))
@@ -228,8 +226,6 @@
                                (setf queue
                                      (nconc queue
                                             (list (cons child-id (1+ depth)))))))))
-                       ;; Reaching the depth boundary is only truncation when a
-                       ;; durable child actually exists beyond it.
                        (when (%indexed-task-children database task-id 1)
                          (setf truncated t)))))))
     (values (nreverse visited) truncated)))
@@ -329,7 +325,7 @@ predicate."
                           (when (and (listp cost)
                                      (%non-empty-string-p
                                       (getf cost :cost-assertion-id)))
-                            (push (getf cost :cost-assertion-id) cost-ids)))))))))))
+                            (push (getf cost :cost-assertion-id) cost-ids))))))))))
         (let* ((currency-list
                  (loop for currency being the hash-keys of currencies collect currency))
                (currency-count (length currency-list))
