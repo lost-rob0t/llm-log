@@ -1,0 +1,45 @@
+#+title: LLM-LOG-EVIDENCE-024 Task rollup restart GREEN
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: pr https://github.com/lost-rob0t/llm-log/pull/37
+#+property: research research/LLM-LOG-RESEARCH-041-task-rollup-restart.org
+#+property: red_evidence evidence/LLM-LOG-EVIDENCE-023-task-rollup-restart-red.org
+#+property: implementation_head a614ba76031d182491456c35d0b8d734cf5a0d9a
+#+property: workflow_run 33414198987
+
+* Boundary
+This evidence records the first exact-head GREEN execution of the bounded #13 parent/child task rollup and restart accounting implementation. It is implementation evidence, not raw capture evidence and not a replacement for the canonical research/design authority.
+
+* Exact implementation head
+=a614ba76031d182491456c35d0b8d734cf5a0d9a=
+
+The head implements the previously accepted RED contract from =evidence/LLM-LOG-EVIDENCE-023-task-rollup-restart-red.org= without modifying =lost-rob0t/tek9= or the Python capture/transport architecture.
+
+* Executed GREEN
+GitHub Actions run =33414198987= executed the exact implementation head and completed with conclusion =success=.
+
+The workflow is =Expert plane contracts= on branch =rage/13-task-rollup-red=. The successful gate covers the Common Lisp/Tek9/SWI-Prolog expert integration plus the existing Python expert-policy/transport and Home Manager contracts registered in that workflow.
+
+No unavailable local result is claimed.
+
+* Verified expert behavior
+The bounded slice now provides:
+- declared =query_task_accounting= in the Common Lisp expert plane;
+- durable restart reconstruction from Tek9 task, usage and immutable cost assertions;
+- indexed parent/child task traversal with explicit =max_depth= and =max_nodes= limits;
+- cycle-safe visited-task handling and immutable usage/request deduplication;
+- token aggregation that preserves unknown token classes rather than fabricating zero observations;
+- known/partial/unknown cost projection without repricing history;
+- coherent-currency validation and no implicit cross-currency sum;
+- contributing usage/cost provenance IDs and KB revision in the typed result;
+- explicit truncation when graph or observation bounds prevent a complete projection.
+
+Per-request price inference remains owned by the declared SWI-Prolog =task_cost= predicate. Common Lisp reconstructs bounded totals from durable derived assertions; it does not implement a second pricing/rules engine.
+
+* Database boundary
+Existing Tek9 public point fetch, write transaction and secondary-index/range APIs were sufficient. No missing generic database primitive was proven, so no Tek9 repository mutation is authorized or required by this slice.
+
+* Remaining #13 scope
+This GREEN does not complete the whole #13 epic. Remaining acceptance/backlog includes retry/attempt analysis and cross-dimensional queries by model/provider/client/classification/outcome, including expensive failures and token burn before successful completion. Those require their own bounded RED-first slices.
+
+* Merge decision
+This implementation is eligible for merge only after the new documentation head containing this evidence independently passes the required exact-head checks and the PR is mergeable with all review/discussion requirements satisfied. Use expected-head protection for the merge.
