@@ -53,13 +53,19 @@ projection fields."
 
 These are process-local index handles over Tek9's durable documents. Query
 execution must use them rather than enumerating the expert corpus."
-  (flet ((value-field (field)
-           (lambda (document)
-             (%plist-index-value document field))))
-    (register-index database "task-parent-task-id"
-                    (value-field :parent-task-id))
-    (register-index database "usage-task-id"
-                    (value-field :task-id)))
+  (register-index
+   database "task-parent-task-id"
+   (lambda (document)
+     (let ((task-id (%plist-index-value document :task-id))
+           (rule-id (%plist-index-value document :rule-id))
+           (parent-id (%plist-index-value document :parent-task-id)))
+       (and task-id rule-id parent-id))))
+  (register-index
+   database "usage-task-id"
+   (lambda (document)
+     (let ((usage-id (%plist-index-value document :usage-id))
+           (task-id (%plist-index-value document :task-id)))
+       (and usage-id task-id))))
   database)
 
 (defun start-expert-host (data-directory)
