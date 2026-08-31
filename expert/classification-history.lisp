@@ -73,26 +73,28 @@
         (model (%history-string-filter payload "model")))
     (cond
       (request-id
-       (values :equality "classification-source-request-id" request-id request-id))
+       (values :source "classification-source-request-id" request-id request-id))
       (message-id
-       (values :equality "classification-source-user-message-id" message-id message-id))
+       (values :source "classification-source-user-message-id" message-id message-id))
       (provider
-       (values :equality "classification-source-provider" provider provider))
+       (values :source "classification-source-provider" provider provider))
       (model
-       (values :equality "classification-source-model" model model))
+       (values :source "classification-source-model" model model))
       ((and lower upper)
-       (values :time-range "classification-source-started-at" lower upper))
+       (values :event "classification-source-started-at" lower upper))
       (t
        (error
         "bounded_query_required: request_id, user_message_id, provider, model, or a complete started_at range is required")))))
 
-(defun %classification-source-matches-p (source payload lower upper)
+(defun %classification-source-matches-p (source event payload lower upper)
   (flet ((matches (payload-key source-key)
            (let ((wanted (jsown:val-safe payload payload-key)))
              (or (null wanted)
                  (equal wanted (getf source source-key))))))
-    (let ((started-at (getf source :started-at)))
-      (and (matches "request_id" :request-id)
+    (let ((started-at (and event (getf event :started-at))))
+      (and source
+           event
+           (matches "request_id" :request-id)
            (matches "user_message_id" :user-message-id)
            (matches "provider" :provider)
            (matches "model" :model)
@@ -105,10 +107,19 @@
   "Use Tek9's ordered secondary-index cursor with an explicit finite bound."
   (select-index-range database index-name start :end end :limit limit))
 
+(defun %history-source-event (host seed-kind candidate)
+  "Resolve one bounded candidate into classifier SOURCE and request EVENT."
+  (let ((event-id (getf candidate :event-id)))
+    (ecase seed-kind
+      (:source
+       (values candidate (fetch-request-event host event-id)))
+      (:event
+       (values (fetch-classification-source host event-id) candidate)))))
+
 (defun %classifier-assertion-p (projection)
   (equal "request.classifier" (getf projection :expert-name)))
 
-(defun %classification-history-json (projection source)
+(defun %classification-history-json (projection source event)
   (let ((value (getf projection :value)))
     (%json-object
      (cons "assertion_id" (getf projection :assertion-id))
@@ -118,7 +129,7 @@
      (cons "provider" (getf source :provider))
      (cons "model" (getf source :model))
      (cons "client" (getf source :client))
-     (cons "started_at" (getf source :started-at))
+     (cons "started_at" (getf event :started-at))
      (cons "dimension" (getf value :dimension))
      (cons "value" (getf value :value))
      (cons "state" (getf value :state))
@@ -134,7 +145,7 @@
   "Return a finite Tek9-indexed classification history slice.
 
 A selective equality predicate or a complete timestamp range is mandatory.
-Retrieval is bounded at both source-index and assertion-index boundaries; this
+Retrieval is bounded at source/event and assertion-index boundaries; this
 function never falls back to Tek9 SELECT or whole-corpus materialization."
   (unless (and (consp payload) (eq (first payload) :obj))
     (error "payload must be a JSON object"))
@@ -147,26 +158,30 @@ function never falls back to Tek9 SELECT or whole-corpus materialization."
         (%classification-history-time-bounds payload)
       (multiple-value-bind (seed-kind index-name start-key end-key)
           (%classification-history-seed payload lower upper)
-        (declare (ignore seed-kind))
-        (let ((sources
+        (let ((candidates
                 (%bounded-index-range
                  database index-name start-key end-key candidate-limit)))
-          (dolist (source sources)
-            (when (%classification-source-matches-p source payload lower upper)
-              (let* ((remaining (- limit (length results)))
-                     (event-id (getf source :event-id))
-                     (assertions
-                       (%bounded-index-range
-                        database
-                        "classification-assertion-source-event"
-                        event-id
-                        event-id
-                        remaining)))
-                (dolist (projection assertions)
-                  (when (%classifier-assertion-p projection)
-                    (push (%classification-history-json projection source) results)
-                    (when (>= (length results) limit)
-                      (return))))))
+          (dolist (candidate candidates)
+            (multiple-value-bind (source event)
+                (%history-source-event host seed-kind candidate)
+              (when (%classification-source-matches-p
+                     source event payload lower upper)
+                (let* ((remaining (- limit (length results)))
+                       (event-id (getf source :event-id))
+                       (assertions
+                         (%bounded-index-range
+                          database
+                          "classification-assertion-source-event"
+                          event-id
+                          event-id
+                          remaining)))
+                  (dolist (projection assertions)
+                    (when (%classifier-assertion-p projection)
+                      (push (%classification-history-json
+                             projection source event)
+                            results)
+                      (when (>= (length results) limit)
+                        (return)))))))
             (when (>= (length results) limit)
               (return))))))
     (nreverse results)))
