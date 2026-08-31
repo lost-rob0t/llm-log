@@ -9,6 +9,7 @@ on:
       - rage/12-classifier-time-range-red
       - rage/12-classifier-task-id-red
       - rage/13-task-accounting-red
+      - rage/13-task-rollup-red
   workflow_dispatch:
 
 permissions:
