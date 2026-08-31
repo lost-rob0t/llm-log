@@ -86,7 +86,7 @@ back to Tek9 SELECT or whole-corpus materialization."
   (let* ((limit (%classification-history-limit payload))
          (database (expert-host-database host))
          (candidate-limit (min +max-classification-history-candidates+
-                               (max limit (* 4 limit)))))
+                               (max limit (* 4 limit))))
          (results nil))
     (multiple-value-bind (index-name index-key)
         (%classification-history-seed payload)
