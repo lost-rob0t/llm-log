@@ -109,10 +109,26 @@
                            (%classification-breakdown-price
                             "price-classification-breakdown-b"
                             "anthropic" "fixture/model-b" 0.002 0.003)))))))))
-             (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
+             (rove:ok (equal "ok" (jsown:val-safe reply "status")))
+             (rove:ok
+              (> (jsown:val-safe (jsown:val-safe reply "result")
+                                 "known_cost_amount")
+                 0)))
 
            (llm-log-expert:stop-expert-host host)
            (setf host (llm-log-expert:start-expert-host data-dir))
+           (rove:ok
+            (consp
+             (llm-log-expert::fetch*
+              (llm-log-expert::expert-host-database host)
+              (llm-log-expert::%cost-key
+               "usage-classification-breakdown-a"))))
+           (rove:ok
+            (consp
+             (llm-log-expert::fetch*
+              (llm-log-expert::expert-host-database host)
+              (llm-log-expert::%cost-key
+               "usage-classification-breakdown-b"))))
 
            (let* ((reply
                     (llm-log-expert:dispatch-expert-request
