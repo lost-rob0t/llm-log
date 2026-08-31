@@ -1,0 +1,55 @@
+#+title: LLM-LOG-EVIDENCE-018 — Request classifier indexed query + restart RED/GREEN
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+PR: https://github.com/lost-rob0t/llm-log/pull/28
+Canonical design: research/LLM-LOG-RESEARCH-037-request-classifier-indexed-query-restart.org
+
+This file is implementation evidence, not design authority and not raw capture evidence.
+
+* Baseline RED
+Executed RED head: =2b95c54dd4a1436f06eccbc11e8b6d48cfb512da=
+Hosted run: =33381478690=
+
+The existing #10 substrate and first #12 compound classifier continued to execute, while the new bounded slice failed for the intended missing behavior:
+- =query_classification_history= was not a declared expert-service operation;
+- the ambiguity fixture had no explicit =state=ambiguous= rule pair.
+
+No production mutation preceded that executed RED.
+
+* GREEN implementation
+Exact GREEN implementation head before this evidence-only commit:
+=8ae79b424d6c47b485d859f6e0fdb8ed0875467c=
+Hosted run: =33387281428=
+
+All three authoritative lanes completed successfully on that exact head:
+- =common-lisp-expert-integration-contract= — GREEN;
+- =python-expert-policy-contract= — GREEN;
+- =home-manager-expert-contract= — GREEN.
+
+* Behavior proven
+- Common Lisp exposes only the declared typed =query_classification_history= operation.
+- History retrieval requires a finite =limit= (service maximum 64) and at least one selective equality filter.
+- The service uses existing Tek9 secondary indexes and =select-index-range= with explicit bounds/candidate caps; it never falls back to whole-corpus =select= for this operation.
+- Source evidence remains separate from derived assertion records. Query results join bounded source metadata to classifier assertions through the source-event provenance index.
+- Classification history remains queryable after the Common Lisp expert host is stopped and restarted against the same Tek9 directory.
+- Returned records preserve assertion/source/rule/expert provenance.
+- Empty unbounded history queries are rejected rather than scanned.
+- SWI-Prolog owns explicit ambiguity rules; the ambiguity fixture produces competing same-dimension =state=ambiguous= assertions.
+- Classification metadata grants no authority.
+- Python remains capture/transport and its expert fail-open/fail-closed policy tests remain GREEN.
+- Existing Home Manager expert wiring remains GREEN.
+
+* Tek9 boundary
+No Tek9 repository mutation was required. The llm-log flake remains pinned to Tek9 =a9f5b595f5d965163d2b7c518c72a2efd9be13fe=, whose exported public API already includes =doc-value=, =register-index= and =select-index-range=.
+
+The new process-local index extractors explicitly tolerate heterogeneous Tek9 main-database values. This matters because the durable KB revision metadata shares the same main document space as expert source/assertion projections.
+
+* Failure evidence during realization
+The first GREEN attempt exposed a real Common Lisp source error rather than a semantic Tek9 gap. CI failure logs were preserved as short-lived workflow artifacts before repair. The final GREEN run skipped those failure-artifact steps because both relevant lanes passed.
+
+* Remaining #12 acceptance
+This bounded slice does NOT claim full #12 completion. Timestamp/time-range querying remains open because the current persisted classifier-source contract has no timestamp-bearing acceptance fixture. Add a RED contract for source timestamp + bounded time-range retrieval before closing #12.
+
+No dotfiles consumer pin/config change is justified solely by this evidence file; consumer movement remains a separate transaction after llm-log merge eligibility is established.
