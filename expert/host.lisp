@@ -48,6 +48,20 @@ projection fields."
               (first source-ids))))))
   database)
 
+(defun %register-task-accounting-indexes (database)
+  "Register bounded task graph and usage lookup indexes.
+
+These are process-local index handles over Tek9's durable documents. Query
+execution must use them rather than enumerating the expert corpus."
+  (flet ((value-field (field)
+           (lambda (document)
+             (%plist-index-value document field))))
+    (register-index database "task-parent-task-id"
+                    (value-field :parent-task-id))
+    (register-index database "usage-task-id"
+                    (value-field :task-id)))
+  database)
+
 (defun start-expert-host (data-directory)
   "Open Tek9 and one persistent supervised SWI-Prolog worker for HOST."
   (let* ((root (uiop:ensure-directory-pathname data-directory))
@@ -63,6 +77,7 @@ projection fields."
     (handler-case
         (progn
           (%register-classification-indexes database)
+          (%register-task-accounting-indexes database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)
