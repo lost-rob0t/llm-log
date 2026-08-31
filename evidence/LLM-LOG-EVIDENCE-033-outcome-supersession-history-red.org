@@ -1,0 +1,28 @@
+#+title: LLM-LOG-EVIDENCE-033 Outcome supersession/history RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: pr https://github.com/lost-rob0t/llm-log/pull/46
+#+property: design research/LLM-LOG-RESEARCH-046-outcome-supersession-history.org
+
+* Baseline
+Exact RED head: =aeb8e3620ea2bf457611657f756a87fdf4594de8=
+Workflow run: =33449631820=
+Base main: =00e960a9e75c386054d293eaf72a3678f6fbea5a=
+
+* Gate result
+- Common Lisp/Tek9/SWI-Prolog integration: RED.
+- Python expert policy/transport: GREEN.
+- Home Manager expert wiring: GREEN.
+
+The new fixture compiled and executed. Existing expert-plane contracts, including the prior outcome-evidence substrate contract, remained GREEN.
+
+* Product RED
+The new contract failed on missing product behavior rather than fixture syntax:
+- authoritative =test_result/failure= derived =unknown= instead of =failure=;
+- authoritative =test_result/success= derived =unknown= instead of =success=;
+- authoritative partial/cancelled/timeout fixtures derived =unknown=;
+- HTTP 200 alone correctly remained =unknown=;
+- cross-scope supersession was accepted instead of rejected;
+- =query_outcome_history= returned =unknown_operation= after restart.
+
+* Decision
+Accept this run as the mandatory RED. It proves the bounded design gap while preserving the existing capture/transport, packaging, and prior expert contracts. Production mutation is authorized only inside the implementation boundary in LLM-LOG-RESEARCH-046.
