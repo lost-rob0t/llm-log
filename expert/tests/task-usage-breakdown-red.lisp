@@ -27,17 +27,19 @@
 (defun %breakdown-entry (entries value)
   (find value entries
         :test #'equal
-        :key (lambda (entry) (and entry (jsown:val-safe entry "value")))))
+        :key (lambda (entry)
+               (and entry (jsown:val-safe entry "value")))))
 
 (defun %close-enough-p (actual expected)
   (and (numberp actual)
        (< (abs (- actual expected)) 0.000001)))
 
 (rove:deftest task-usage-breakdown-red-contract
-  (let* ((data-dir (uiop:ensure-directory-pathname
-                    (merge-pathnames
-                     (format nil "llm-log-task-breakdown-red-~A/" (gensym))
-                     (uiop:temporary-directory))))
+  (let* ((data-dir
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "llm-log-task-breakdown-red-~A/" (gensym))
+             (uiop:temporary-directory))))
          (host (llm-log-expert:start-expert-host data-dir))
          (task
            (jsown:new-js
@@ -78,14 +80,13 @@
                          ("task" task)
                          ("children" '())
                          ("usage_observations" usages)
-                         ("pricing_snapshots" prices))))))))
+                         ("pricing_snapshots" prices)))))))
              (rove:ok (equal "ok" (jsown:val-safe reply "status")))
-             (rove:ok (equal 3
-                             (jsown:val-safe
-                              (jsown:val-safe reply "result")
-                              "request_count"))))
-           ;; Prove the grouped projection is restart-durable and comes only from
-           ;; the canonical Tek9 usage/cost records, not process-local state.
+             (rove:ok
+              (= 3
+                 (jsown:val-safe
+                  (jsown:val-safe reply "result")
+                  "request_count"))))
            (llm-log-expert:stop-expert-host host)
            (setf host (llm-log-expert:start-expert-host data-dir))
            (let* ((reply
@@ -102,67 +103,89 @@
                           ("max_nodes" 8)
                           ("include_children" nil))))))
                   (result (jsown:val-safe reply "result"))
-                  (breakdowns (and result (jsown:val-safe result "breakdowns")))
-                  (providers (and breakdowns (jsown:val-safe breakdowns "provider")))
-                  (models (and breakdowns (jsown:val-safe breakdowns "model")))
-                  (clients (and breakdowns (jsown:val-safe breakdowns "client")))
+                  (breakdowns
+                    (and result (jsown:val-safe result "breakdowns")))
+                  (providers
+                    (and breakdowns
+                         (jsown:val-safe breakdowns "provider")))
+                  (models
+                    (and breakdowns
+                         (jsown:val-safe breakdowns "model")))
+                  (clients
+                    (and breakdowns
+                         (jsown:val-safe breakdowns "client")))
                   (openrouter (%breakdown-entry providers "openrouter"))
                   (anthropic (%breakdown-entry providers "anthropic"))
                   (model-a (%breakdown-entry models "fixture/model-a"))
                   (opencode (%breakdown-entry clients "opencode"))
                   (claude-code (%breakdown-entry clients "claude-code")))
              (rove:ok (equal "ok" (jsown:val-safe reply "status")))
-             ;; Existing aggregate semantics remain intact.
-             (rove:ok (equal 3 (jsown:val-safe result "request_count")))
-             (rove:ok (equal 210 (jsown:val-safe result "input_tokens")))
-             (rove:ok (equal 90 (jsown:val-safe result "output_tokens")))
+             (rove:ok (= 3 (jsown:val-safe result "request_count")))
+             (rove:ok (= 210 (jsown:val-safe result "input_tokens")))
+             (rove:ok (= 90 (jsown:val-safe result "output_tokens")))
              (rove:ok (equal "partial" (jsown:val-safe result "cost_state")))
-             ;; Untouched main has no grouped task breakdown surface: these are
-             ;; the intentional RED expectations for this bounded slice.
              (rove:ok breakdowns)
-             (rove:ok (equal '("anthropic" "openrouter")
-                             (mapcar (lambda (entry)
-                                       (jsown:val-safe entry "value"))
-                                     providers)))
-             (rove:ok (equal 2 (and openrouter
-                                    (jsown:val-safe openrouter "request_count"))))
-             (rove:ok (equal 140 (and openrouter
-                                      (jsown:val-safe openrouter "input_tokens"))))
-             (rove:ok (equal 60 (and openrouter
-                                     (jsown:val-safe openrouter "output_tokens"))))
-             (rove:ok (equal "known" (and openrouter
-                                           (jsown:val-safe openrouter "cost_state"))))
-             (rove:ok (%close-enough-p
-                       (and openrouter
-                            (jsown:val-safe openrouter "known_cost_amount"))
-                       0.31))
-             (rove:ok (equal "USD" (and openrouter
-                                         (jsown:val-safe openrouter
-                                                         "known_cost_currency"))))
-             (rove:ok (equal '(
-                              "usage-breakdown-or-a"
-                              "usage-breakdown-or-b")
-                             (and openrouter
-                                  (jsown:val-safe openrouter
-                                                  "usage_observation_ids"))))
-             (rove:ok (equal 1 (and anthropic
-                                    (jsown:val-safe anthropic "request_count"))))
-             (rove:ok (equal "unknown" (and anthropic
-                                             (jsown:val-safe anthropic
-                                                             "cost_state"))))
-             (rove:ok (equal 1 (and model-a
-                                    (jsown:val-safe model-a "request_count"))))
-             (rove:ok (equal 100 (and model-a
-                                      (jsown:val-safe model-a "input_tokens"))))
-             (rove:ok (equal 1 (and opencode
-                                    (jsown:val-safe opencode "request_count"))))
-             (rove:ok (equal "known" (and opencode
-                                           (jsown:val-safe opencode "cost_state"))))
-             (rove:ok (equal 1 (and claude-code
-                                    (jsown:val-safe claude-code "request_count"))))
-             (rove:ok (equal "unknown" (and claude-code
-                                             (jsown:val-safe claude-code
-                                                             "cost_state"))))))
+             (rove:ok
+              (equal '("anthropic" "openrouter")
+                     (mapcar
+                      (lambda (entry) (jsown:val-safe entry "value"))
+                      providers)))
+             (rove:ok
+              (= 2 (and openrouter
+                        (jsown:val-safe openrouter "request_count"))))
+             (rove:ok
+              (= 140 (and openrouter
+                          (jsown:val-safe openrouter "input_tokens"))))
+             (rove:ok
+              (= 60 (and openrouter
+                         (jsown:val-safe openrouter "output_tokens"))))
+             (rove:ok
+              (equal "known"
+                     (and openrouter
+                          (jsown:val-safe openrouter "cost_state"))))
+             (rove:ok
+              (%close-enough-p
+               (and openrouter
+                    (jsown:val-safe openrouter "known_cost_amount"))
+               0.31))
+             (rove:ok
+              (equal "USD"
+                     (and openrouter
+                          (jsown:val-safe
+                           openrouter "known_cost_currency"))))
+             (rove:ok
+              (equal '("usage-breakdown-or-a" "usage-breakdown-or-b")
+                     (and openrouter
+                          (jsown:val-safe
+                           openrouter "usage_observation_ids"))))
+             (rove:ok
+              (= 1 (and anthropic
+                        (jsown:val-safe anthropic "request_count"))))
+             (rove:ok
+              (equal "unknown"
+                     (and anthropic
+                          (jsown:val-safe anthropic "cost_state"))))
+             (rove:ok
+              (= 1 (and model-a
+                        (jsown:val-safe model-a "request_count"))))
+             (rove:ok
+              (= 100 (and model-a
+                          (jsown:val-safe model-a "input_tokens"))))
+             (rove:ok
+              (= 1 (and opencode
+                        (jsown:val-safe opencode "request_count"))))
+             (rove:ok
+              (equal "known"
+                     (and opencode
+                          (jsown:val-safe opencode "cost_state"))))
+             (rove:ok
+              (= 1 (and claude-code
+                        (jsown:val-safe claude-code "request_count"))))
+             (rove:ok
+              (equal "unknown"
+                     (and claude-code
+                          (jsown:val-safe claude-code "cost_state"))))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
-        (uiop:delete-directory-tree data-dir :validate t :if-does-not-exist :ignore)))))
+        (uiop:delete-directory-tree
+         data-dir :validate t :if-does-not-exist :ignore)))))
