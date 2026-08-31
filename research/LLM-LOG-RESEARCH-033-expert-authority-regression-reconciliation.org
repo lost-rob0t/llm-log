@@ -107,3 +107,16 @@ Until those prerequisites hold, no production consumer mutation is authorized.
 
 * 2026-08-30 bounded reconciliation execution
 Remote inspection again found #8/#10 bodies still declaring zero-Python ownership despite their later correction comments and PR #24's canonical split. This run therefore executes the governance part of the decision: rewrite both issue bodies so the top-level backlog authority matches this Org document. This is a documentation/governance mutation, not a production behavior change, so no synthetic RED is claimed or required. The active production head remains otherwise unchanged; exact-head GREEN is still required before merge or dotfiles consumption.
+
+* 2026-08-30 review-gate reconciliation
+A later bounded remote reconciliation found the architecture authority repaired and stable, but PR #24 still draft at exact head =6e2a01a6be752399084902692b9aa9f952bbbf6e= with no workflow run/status, no submitted reviews, and no PR conversation comments. The workflow itself is configured for pushes to =rage/10-expert-runtime-red= and manual dispatch, so the absence of an exact-head run is evidence of a CI-trigger gap rather than permission to reuse the preceding implementation head's GREEN result.
+
+Decision for this bounded cycle:
+
+1. promote PR #24 from draft to ready-for-review so an actual independent review can occur;
+2. do not self-approve or treat same-author comments as review evidence;
+3. make no production dotfiles mutation while #24 lacks exact-head GREEN + independent review/discussion;
+4. keep PR #172 test-only RED and isolated from unrelated dotfiles work;
+5. make no Tek9 mutation because live Tek9 still has no open issue/PR demonstrating a missing generic primitive.
+
+This is governance/documentation work only; it does not authorize production behavior changes and therefore does not invent a RED/GREEN claim.
