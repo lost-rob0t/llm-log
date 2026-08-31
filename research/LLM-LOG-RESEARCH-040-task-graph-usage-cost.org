@@ -1,0 +1,52 @@
+#+title: LLM-LOG-RESEARCH-040 Task graph, usage and cost expert
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+
+* Decision
+Implement #13 as a bounded Common Lisp/Tek9/SWI-Prolog expert slice. Python remains capture/transport only. Tek9 remains canonical durable task/usage/pricing/assertion storage. SWI-Prolog owns task-assignment and rollup rules. Common Lisp owns typed request/result validation, bounded indexed retrieval, Prolog supervision, persistence and restart-safe queries.
+
+* Source-state findings
+- #10 expert runtime and #12 request-classification substrate are merged on main.
+- Existing classifier source records already carry task identity, but there is no task graph, usage observation, pricing snapshot, cost assertion or task accounting operation in the current expert service.
+- Existing Tek9 public indexed entity APIs are sufficient for the first slice; no Tek9 repository mutation is justified yet.
+
+* Typed durable model
+** task
+Fields: task_id, parent_task_id?, session_id?, originating_user_message_id?, created_at, rule_id, rule_version, evidence_ids.
+Edges: parent->child, task->request, task->message.
+
+** usage_observation
+Immutable normalized observation linked to request/response/turn and provider/model/client. Token classes are optional typed values: input, output, cached_input, cached_output, reasoning, provider-specific billable classes. Missing values remain unknown.
+
+** pricing_snapshot
+Immutable snapshot_id, provider, model, currency, unit, effective_at, source, source_version, token-class prices. Credentials are forbidden. A later price never mutates an earlier snapshot.
+
+** cost_assertion
+Derived assertion linking task/request, usage_observation_id, pricing_snapshot_id, rule_id/version, expert_version, amount or explicit unknown state. Supersession creates a new assertion; history is retained.
+
+* Bounded operations
+First declared operation: =account_task_usage=. Input contains one task graph fragment plus bounded request usage observations and an explicit pricing snapshot reference/snapshot. Output returns persisted task/usage/cost IDs and a task total. No whole-corpus materialization.
+
+Follow-up query operation must require task_id and finite limit/depth and use Tek9 indexes; recursive child rollup is bounded by explicit depth/node caps.
+
+* Prolog predicates
+Only declared predicates may be invoked, initially:
+- task_attachment(TaskId, RequestId, EvidenceId, RuleId, RuleVersion)
+- child_task(ParentId, ChildId, EvidenceId, RuleId, RuleVersion)
+- task_cost_state(TaskId, State, Amount, Currency, EvidenceIds, RuleId, RuleVersion)
+
+No arbitrary callable term, term_string/read_term escape hatch, or model-controlled predicate selection.
+
+* Failure semantics
+- Missing usage remains queryable as unknown fields.
+- Missing/ambiguous pricing yields cost state =unknown=; never estimate.
+- Unknown child cost makes recursive total explicitly partial/unknown according to the declared rule, never silently zero.
+- Duplicate request attachment must not double-count usage or cost.
+- Expert unavailability does not block proxy forwarding unless require_expert_plane is enabled.
+
+* Adversarial review
+Risks: session-based accidental task merging; retry double-counting; mutable provider pricing rewriting history; transport success being treated as task success; unbounded recursive graph traversal; credential leakage in pricing sources. Controls: stable task IDs + attachment provenance, immutable usage/snapshot IDs, idempotent request linkage, bounded traversal, outcome kept separate for #15, and secret-free snapshot schema.
+
+* RED-first acceptance for this slice
+Untouched main must fail a Common Lisp integration contract that asks =account_task_usage= to persist one parent task with two requests and one child task, account exact known-price request costs, preserve an unknown-priced request as unknown, avoid retry/dedup double-counting, and preserve immutable pricing snapshot IDs. Existing #10/#12 tests must stay green.
+
+Production implementation is forbidden until that RED is independently executed and fails for the missing declared operation/behavior rather than environment breakage.
