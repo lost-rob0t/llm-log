@@ -1,0 +1,96 @@
+#+title: LLM-LOG-RESEARCH-041 Task rollup and restart accounting
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+
+* Analyze
+Remote =main= at =176f0f67ad512c9c19fb725b5fccd10f3d308118= contains the first #13 substrate plus the later expert-runtime cold-start/reasoner reliability fix from PR #36. The merged task substrate persists immutable task, usage, pricing and cost objects and derives one request cost through declared SWI-Prolog =task_cost=. Its response aggregates only the bounded observations supplied to that one =account_task_usage= call. It has no durable task-total query, no bounded recursive child traversal, and no restart contract for task totals.
+
+Issue #13 was remotely closed as completed even though its own existing comment says it must remain open for recursive parent/child rollups, restart-preserved totals/query surfaces, retries and cross-dimension analysis. Reopen #13 before implementation work.
+
+Existing Tek9 public APIs remain sufficient: stable point fetch, write transactions and secondary/indexed retrieval are already exposed. This slice does not prove a missing generic Tek9 primitive and therefore must not mutate =lost-rob0t/tek9=.
+
+* Research
+** Durable authority
+Raw request/response/capture evidence remains immutable outside the task expert. Task accounting creates separate durable projections in Tek9:
+- =task=: stable task identity, optional parent identity, session/message links, attachment rule/version/evidence.
+- =usage_observation=: immutable normalized usage keyed by usage ID and request ID.
+- =pricing_snapshot=: immutable provider/model/currency/source/version/effective time.
+- =cost_assertion=: derived assertion keyed by usage observation, linked to pricing snapshot, task/request, rule/version and expert version.
+
+No recursive total is stored as an unversioned mutable truth. Query-time totals are reproducible projections over immutable task/cost records. A later materialized rollup assertion, if introduced, must be versioned and superseded rather than rewritten in place.
+
+** Bounded query contract
+Add one declared expert operation =query_task_accounting=.
+
+Input fields:
+- =task_id= required non-empty string.
+- =max_depth= required integer in [0, 16].
+- =max_nodes= required integer in [1, 512].
+- =include_children= boolean, default true only when explicitly present in the versioned request contract; no implicit unbounded traversal.
+
+Result fields for this slice:
+- root =task_id=;
+- bounded task IDs visited in stable order;
+- =request_count= across unique durable request attachments/usage records in the visited task set;
+- normalized token totals for known token classes, while missing token classes remain unknown/not fabricated;
+- =known_cost_amount= and =known_cost_currency= only when currency is coherent;
+- =cost_state= in {known, partial, unknown};
+- exact contributing =cost_assertion_ids= and =usage_observation_ids=;
+- =truncated= when the depth/node bound prevents a complete subtree projection;
+- current KB revision.
+
+A child task cost contributes once to its ancestors. A request/usage observation reachable through more than one path or repeated ingestion must be deduplicated by immutable identity, not by arithmetic coincidence. Parent own cost plus child cost must not cause the child observation to be counted twice.
+
+** Tek9 entity/index/graph schema
+Use existing task =parent_task_id= as the graph edge source. Register/use bounded indexes only inside llm-log's expert host for:
+- task by =parent_task_id=;
+- usage by =task_id=;
+- cost by =task_id=;
+- cost by =request_id= / usage identity where needed for dedup joins.
+
+Traversal algorithm is breadth-first or depth-first with explicit =max_depth= and =max_nodes= counters. Child enumeration must be indexed. Per-task usage/cost retrieval must be indexed. No full-database scan and no loading the whole corpus into SWI-Prolog.
+
+** Prolog boundary
+This slice does not need a generic recursive Prolog graph walk. Common Lisp owns bounded Tek9 graph retrieval and typed materialization. SWI-Prolog remains authority for declared accounting inference only. Existing =task_cost= stays declared; if rollup-state inference needs a Prolog predicate, add a finite declared operation such as =task_rollup_state= with typed fact lists, never an arbitrary callable term. No Python or Common Lisp rule engine.
+
+** Provenance and failure semantics
+- Every returned cost contribution names its immutable usage/cost IDs.
+- Unknown child pricing makes an otherwise known parent rollup =partial=; it is never silently treated as zero.
+- A subtree containing only unknown-priced cost is =unknown= while usage remains queryable.
+- Mixed currencies must not be numerically summed without an explicit immutable conversion snapshot; this slice returns a typed non-known state instead.
+- Missing task yields a typed not-found error, not an empty successful total.
+- Hitting =max_depth= or =max_nodes= returns =truncated=true= and must not claim a complete total.
+- Expert/prolog failure remains fail-open for proxy forwarding unless =require_expert_plane= is configured.
+- Credentials are forbidden from task, usage, pricing provenance prose and test fixtures.
+
+** Restart semantics
+The acceptance fixture must stop the expert host after accounting parent/child observations, start a new host against the same Tek9 data directory, then execute =query_task_accounting=. The result must reconstruct the same totals and provenance exclusively from durable Tek9 state. No in-memory cache may be required for correctness.
+
+** Nix/non-Nix
+No packaging topology change is needed. The expert service remains the SBCL + Tek9 + SWI-Prolog package from the existing flake, including PR #36's precompiled SBCL core. The query is protocol-level behavior and must work through the normal standalone expert service as well as the Home Manager/systemd consumer. Dotfiles storage remains =~/Documents/AI/proxy= for raw capture; expert mutable state stays separate.
+
+* Design
+Bound this RAGE slice to parent/child rollup + restart query only. Do not pull #15 outcome labels or #17 Beagle into it. Do not add provider-census implementation. Cross-dimension analysis by model/provider/client/classification/outcome remains a later #13 slice after the durable query primitive is green.
+
+Fixture:
+1. account parent task with one known-priced request costing 0.20 USD;
+2. account child task linked to parent with one known-priced request costing 0.05 USD;
+3. re-submit the child request/usage identity once to prove immutable-id dedup does not inflate totals;
+4. stop the expert host;
+5. restart from the same Tek9 directory;
+6. query parent with =max_depth=1, finite =max_nodes= and expect exactly 0.25 USD, two unique requests, both usage/cost provenance IDs and =truncated=false=;
+7. query parent with =max_depth=0 and expect only 0.20 USD;
+8. add an unknown-priced child fixture and require parent =partial= while known amount remains auditable;
+9. verify invalid/unbounded query requests are rejected.
+
+* Adversarial review
+- Graph cycle: malformed parent links could create cycles. Keep a visited task-ID set and consume each task once.
+- Diamond/repeated attachment: dedup usage/cost by immutable ID before summing.
+- Hidden full scan: tests should use enough unrelated records to make an unbounded fallback visible in later instrumentation; implementation review must use indexes, not document enumeration.
+- Currency trap: never sum USD with another currency absent an immutable conversion snapshot.
+- Restart trap: construct a new host process/object against the same directory; do not reuse cached projections.
+- Partial subtree trap: truncation is not a complete total; expose it explicitly.
+- Authority trap: classification/outcome metadata may be future query dimensions but cannot grant task authority.
+
+* Decision
+Proceed with a RED-only mutation on =rage/13-task-rollup-red=. Add the Common Lisp integration contract and CI branch trigger. Production implementation is forbidden until the untouched merged baseline fails specifically because =query_task_accounting= is undeclared/missing or lacks the required bounded durable semantics, while existing #10/#12/#13 substrate, Python proxy policy and Home Manager gates stay green.
