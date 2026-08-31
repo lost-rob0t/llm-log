@@ -1,0 +1,96 @@
+#+title: LLM-LOG-RESEARCH-043 Bounded task usage/cost breakdowns
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+
+* Decision
+Implement the next #13 slice as restart-durable, bounded per-task usage/cost breakdowns by provider, model, and client. Reuse the existing =query_task_accounting= task-tree and usage-index materialization instead of adding an unbounded cross-corpus analytics scan.
+
+Python remains capture/transport only. Common Lisp owns typed bounded materialization and result projection. Tek9 remains the canonical durable task/usage/cost store. SWI-Prolog remains the sole owner of per-request pricing inference through the already-declared =task_cost= predicate. This slice does not add a second pricing/rules engine.
+
+* Analyze: current source state
+- #10 substrate and #12 classifier are merged; #13 base accounting, bounded child rollup/restart, and retry/attempt metadata are merged.
+- =query_task_accounting= already walks only a bounded task subtree using =task-parent-task-id= and =usage-task-id= indexes, deduplicates immutable usage IDs/requests, and point-fetches derived cost assertions.
+- Base usage projections durably retain provider/model. The retry/accounting extension already preserves optional client/transport when present while intentionally omitting absent optional keys so legacy immutable projection replay remains byte-for-byte compatible.
+- Current query output exposes only aggregate totals. It cannot answer #13's required cost/usage-by-model/provider/client questions without callers fetching/re-deriving corpus state themselves.
+- Existing Tek9 public index/range/point APIs are sufficient. No Tek9 repository mutation is justified.
+
+* Research: typed result contract
+Extend =query_task_accounting= with a =breakdowns= object containing three deterministic arrays: =provider=, =model=, and =client=.
+
+Each entry is a projection over the same finite usage set already admitted by the task rollup and contains:
+- =value=: exact persisted dimension value, or JSON null when that optional dimension is absent;
+- =request_count= and =usage_observation_count=;
+- normalized token totals using the same unknown semantics as the parent query;
+- =known_cost_amount= and =known_cost_currency= only when the group's known cost assertions have one coherent currency;
+- =cost_state= in =known | partial | unknown=, derived only from already-persisted immutable cost assertions;
+- sorted =usage_observation_ids= and =cost_assertion_ids= for provenance/audit.
+
+Missing client metadata is not guessed from user-agent/session/provider. It forms an explicit null-valued group. Provider/model remain required on new usage observations by the existing typed ingest contract.
+
+* Bounded retrieval and Tek9 schema
+No new durable entity type is required. No global provider/model/client index is required for this slice because the query is explicitly rooted at a task ID and reuses the already-bounded task/usage retrieval path:
+1. resolve root task by point read;
+2. traverse child tasks with =task-parent-task-id= under =max_depth/max_nodes=;
+3. fetch usage candidates per admitted task with =usage-task-id= under the existing per-task candidate cap;
+4. point-read each already-derived cost assertion by immutable usage ID;
+5. aggregate only that finite materialized set.
+
+This preserves the invariant that the expert plane never loads the entire corpus into Prolog or Common Lisp for a request.
+
+* Local protocol
+No new operation is needed. =query_task_accounting= remains versioned/declared and requires:
+- =task_id=;
+- finite =max_depth=;
+- finite =max_nodes=;
+- explicit =include_children=.
+
+The response gains =breakdowns=. Existing fields and retry metadata remain backward compatible.
+
+* Prolog boundary
+No new Prolog predicate is needed for this slice. Per-request cost assertions were already derived by declared SWI-Prolog =task_cost= against immutable pricing snapshots. Common Lisp grouping is a bounded projection/query operation over durable assertions, not pricing inference.
+
+Classification and outcome breakdowns are deliberately not smuggled into this slice. Classification requires provenance-preserving joins to #12 assertions; outcome requires #15's evidence/label contract. Those remain separate RED-first slices.
+
+* Provenance and failure semantics
+- Raw capture remains immutable and separate from derived records.
+- Group totals never synthesize missing usage or pricing.
+- Unknown pricing remains unknown; known amounts are never silently treated as full totals when unknown assertions coexist.
+- Mixed currencies make the group's cost state partial and do not fabricate a converted total.
+- A missing optional client stays explicit null/unknown metadata, not inferred.
+- Truncation on the parent bounded rollup means breakdowns cover only the returned finite materialization; the existing =truncated= flag remains authoritative.
+- Historical immutable cost assertions and pricing snapshots are not mutated.
+
+* Nix / non-Nix
+No packaging/configuration mutation is required. The Common Lisp expert service continues to be packaged by the existing flake with Tek9/SWI-Prolog and launched through the established Home Manager/systemd or standalone path. Consumer storage remains a dotfiles concern; no path change is authorized.
+
+* Adversarial review
+** Risk: grouped costs become a second pricing engine
+Control: group only persisted cost assertions. Never recompute provider prices in Common Lisp.
+
+** Risk: whole-corpus analytics scan
+Control: task_id remains mandatory and grouping consumes only the finite task rollup materialization.
+
+** Risk: retry double counting
+Control: preserve existing immutable usage-ID/request dedup semantics before grouping; distinct retry requests remain distinct billable observations, while duplicate replay is not counted twice.
+
+** Risk: missing client metadata is guessed
+Control: explicit null-valued group; no session/user-agent inference.
+
+** Risk: mixed currencies look additive
+Control: coherent-currency requirement; mixed currency => partial with no fabricated converted amount.
+
+** Risk: future classification/outcome work is coupled prematurely
+Control: provider/model/client only in this slice. Classification joins and #15 outcome labels get independent designs and RED gates.
+
+* RED-first acceptance
+Before production mutation, untouched main must execute a Common Lisp integration fixture that:
+- persists one task with three usage observations across two providers/models and two clients;
+- includes one known-price OpenRouter request, one second known-price OpenRouter request for a different model/client, and one unknown-priced Anthropic request;
+- restarts the expert host before querying;
+- requires deterministic provider/model/client breakdown arrays;
+- proves provider/model/client token and request counts are exact;
+- proves known vs unknown group cost state remains explicit;
+- proves usage/cost provenance IDs are retained;
+- proves existing aggregate/retry contracts remain green.
+
+The untouched baseline should fail only because =breakdowns= is absent (or equivalent missing grouped behavior). Environment/setup failures do not count as RED. Production mutation is forbidden until that exact RED is executed.
