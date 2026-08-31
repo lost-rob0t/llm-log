@@ -1,0 +1,95 @@
+#+title: LLM-LOG-RESEARCH-045 Outcome evidence substrate
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+
+* Decision
+Implement the first #15 slice as a provenance-first outcome evidence substrate. Python remains capture/transport only. Common Lisp owns typed validation, bounded Tek9 persistence/materialization, SWI-Prolog supervision, result validation, and durable derived outcome assertions. Tek9 remains the canonical durable KB. SWI-Prolog alone owns outcome inference.
+
+This slice deliberately does not finish #15 export/query breadth or #13 outcome analytics. It establishes the evidence/label semantic boundary they depend on.
+
+* Analyze
+Current main already has the #10 expert runtime, #12 classifier, and #13 task/usage/cost graph. There is no declared outcome operation, no durable outcome-evidence projection, no outcome assertion type, and no outcome predicate in the supervised Prolog worker. Therefore #13 cannot truthfully implement expensive-failure or token-burn-before-success analytics yet.
+
+Tek9 already supplies immutable keyed puts, point fetches, transactions, and bounded secondary indexes. No generic Tek9 primitive is missing for the first outcome slice, so the Tek9 repository must remain unchanged.
+
+* Typed contract
+Add a versioned declared operation =record_outcome_evidence=.
+
+Input payload:
+- =scope=: =request= or =task=;
+- =scope_id=: stable request/task ID;
+- finite =evidence= list, maximum 64;
+- each evidence item contains stable =evidence_id=, =observed_at=, =evidence_type=, =authority=, exact =observed_value=, and optional =source_id=;
+- optional =supersedes_assertion_id= only when a later assertion explicitly supersedes an older interpretation.
+
+Initial evidence types are finite: =provider_transport=, =tool_result=, =test_result=, =user_feedback=, =task_state=, =manual_label=. Unknown evidence types are rejected, not converted into arbitrary Prolog terms.
+
+Initial authorities are finite: =weak=, =normal=, =authoritative=. Authority is metadata used by declared rules; it never grants runtime permissions.
+
+Output:
+- stable =outcome_assertion_id=;
+- =outcome= from the finite set =success failure partial cancelled rejected timeout unknown=;
+- =evidence_state=;
+- =rule_id= and =rule_version=;
+- exact evidence IDs used;
+- =expert_version=;
+- optional supersession link.
+
+* Tek9 schema
+Durable keys:
+- =outcome-evidence:<evidence_id>= immutable observed evidence;
+- =outcome-assertion:<scope>:<scope_id>:<revision-id>= immutable derived assertion.
+
+Indexes for later bounded retrieval:
+- outcome evidence by scope ID;
+- outcome assertions by scope ID;
+- outcome assertions by outcome value.
+
+Historical assertions are never deleted. A later stronger interpretation writes a new assertion and a supersession relation; the old assertion remains auditable.
+
+* Prolog contract
+Declare only =outcome_decision=. Common Lisp materializes at most 64 typed evidence facts for one scope into the worker request. No callable term, goal string, =term_string/2=, =read_term/3=, or model-controlled predicate name is accepted.
+
+The first rule fixture proves a critical invariant: =provider_transport= with observed HTTP 200 alone is insufficient to claim task success. An authoritative =user_feedback=rejected= for the same scope outweighs transport success and derives =rejected=. Weak transport-only evidence derives =unknown= in this first slice rather than fabricating success.
+
+* Provenance
+Every derived assertion records source evidence IDs, rule ID/version, expert version, scope/scope ID, and supersession metadata. Raw proxy capture remains immutable evidence and is not rewritten by this operation.
+
+* Failure semantics
+Malformed typed evidence returns an expert error and persists nothing for that operation. Prolog crash/timeout/malformed result follows the existing supervised reasoner failure semantics. Python forwarding remains fail-open unless =require_expert_plane= is enabled; classification/outcome metadata never grants authority.
+
+* Nix and non-Nix
+No packaging redesign is needed. The existing flake already packages SBCL, Tek9 and SWI-Prolog and Home Manager/systemd already launches the expert service. The new operation rides that service. Standalone launch/config remains unchanged. Dotfiles capture remains =~/Documents/AI/proxy= and no consumer mutation is required for this expert-only slice.
+
+* Adversarial review
+Threats considered:
+- treating HTTP 200 as task success: forbidden by rule contract;
+- evidence injection becoming arbitrary Prolog: blocked by finite enums and declared operation;
+- whole-corpus load: forbidden; one scope and <=64 evidence items only;
+- overwriting historical labels: forbidden; assertions are append-only/superseded;
+- credentials entering KB: evidence values must not contain headers/secrets; capture redaction remains upstream;
+- authority escalation: evidence authority influences only label inference, never execution authorization;
+- duplicated evidence IDs with changed values: immutable conflict, never silent replacement;
+- unavailable expert service: proxy remains fail-open by default.
+
+* RED-first acceptance
+On untouched main, add a Common Lisp/Tek9/SWI integration fixture that submits one request scope with provider transport 200 plus authoritative user rejection and expects a durable =rejected= assertion carrying both evidence IDs and rule provenance. Restart the host and require evidence/assertion records to remain durable. Also require a transport-200-only scope to derive =unknown=, not =success=.
+
+The untouched baseline must fail because =record_outcome_evidence= is not a declared operation. That failure is the accepted product RED. Production mutation is authorized only after that exact RED executes.
+
+* Bounded implementation boundary after RED
+Authorized after accepted RED:
+- Common Lisp typed evidence validation and immutable Tek9 writes;
+- bounded scope indexes;
+- one declared SWI-Prolog =outcome_decision= operation;
+- validated durable outcome assertion with provenance;
+- restart durability for evidence/assertions.
+
+Not authorized in this slice:
+- #13 outcome analytics;
+- full #15 dataset export/query matrix;
+- Beagle integration;
+- Python rule logic;
+- Tek9 repository changes;
+- dotfiles changes;
+- provider census implementation.

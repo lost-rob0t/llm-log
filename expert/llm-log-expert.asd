@@ -15,6 +15,8 @@
                (:file "task-accounting")
                (:file "retry-accounting")
                (:file "task-breakdowns")
+               (:file "outcome")
                (:file "service")
                (:file "task-dispatch")
+               (:file "outcome-dispatch")
                (:static-file "prolog/worker.pl")))

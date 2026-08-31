@@ -4,6 +4,7 @@
 worker_protocol_version(1).
 classifier_rule_version("request.classifier/v1").
 task_cost_rule_version("task.cost/v1").
+outcome_rule_version("outcome.decision/v1").
 
 main :-
     set_stream(user_output, buffer(line)),
@@ -61,6 +62,15 @@ dispatch_operation("task_cost", RequestId, Data, Reply) :-
         Reply = _{status:ok,request_id:RequestId,operation:"task_cost",rule_version:RuleVersion,result:_{state:State,amount:Amount}}
     ;   Reply = _{status:error,request_id:RequestId,operation:"task_cost",error:_{code:invalid_data}}
     ).
+dispatch_operation("outcome_decision", RequestId, Data, Reply) :-
+    !,
+    (   valid_outcome_data(Data, Evidence, EvidenceIds)
+    ->  outcome_decision(Evidence, Outcome, RuleId),
+        outcome_rule_version(RuleVersion),
+        Reply = _{status:ok,request_id:RequestId,operation:"outcome_decision",rule_version:RuleVersion,
+                  result:_{outcome:Outcome,rule_id:RuleId,expert_version:"outcome-expert/1",evidence_ids:EvidenceIds}}
+    ;   Reply = _{status:error,request_id:RequestId,operation:"outcome_decision",error:_{code:invalid_data}}
+    ).
 dispatch_operation(Operation, RequestId, _Data, Reply) :-
     Reply = _{status:error,request_id:RequestId,operation:Operation,error:_{code:unknown_operation}}.
 
@@ -73,6 +83,32 @@ valid_task_cost_data(Data, "known", Amount) :-
     get_dict(input_per_token, Data, InputPrice), number(InputPrice), InputPrice >= 0,
     get_dict(output_per_token, Data, OutputPrice), number(OutputPrice), OutputPrice >= 0,
     Amount is InputTokens * InputPrice + OutputTokens * OutputPrice.
+
+valid_outcome_data(Data, Evidence, EvidenceIds) :-
+    get_dict(scope, Data, Scope), memberchk(Scope, ["request", "task"]),
+    get_dict(scope_id, Data, ScopeId), string(ScopeId), ScopeId \= "",
+    get_dict(evidence, Data, Evidence), is_list(Evidence), Evidence \= [],
+    length(Evidence, Count), Count =< 64,
+    maplist(valid_outcome_evidence, Evidence),
+    maplist(outcome_evidence_id, Evidence, EvidenceIds).
+
+valid_outcome_evidence(Item) :-
+    is_dict(Item),
+    get_dict(evidence_id, Item, Id), string(Id), Id \= "",
+    get_dict(observed_at, Item, ObservedAt), string(ObservedAt), ObservedAt \= "",
+    get_dict(evidence_type, Item, Type),
+    memberchk(Type, ["provider_transport", "tool_result", "test_result", "user_feedback", "task_state", "manual_label"]),
+    get_dict(authority, Item, Authority), memberchk(Authority, ["weak", "normal", "authoritative"]),
+    get_dict(observed_value, Item, _).
+
+outcome_evidence_id(Item, Id) :- get_dict(evidence_id, Item, Id).
+
+outcome_decision(Evidence, "rejected", "outcome.authoritative_user_rejection") :-
+    member(Item, Evidence),
+    get_dict(evidence_type, Item, "user_feedback"),
+    get_dict(authority, Item, "authoritative"),
+    get_dict(observed_value, Item, "rejected"), !.
+outcome_decision(_Evidence, "unknown", "outcome.insufficient_evidence").
 
 valid_classifier_data(Data, Message, MessageId, SourceRequestId) :-
     get_dict(message, Data, Message), string(Message),
