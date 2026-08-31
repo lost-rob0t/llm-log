@@ -1,0 +1,30 @@
+#+title: LLM-LOG-EVIDENCE-031 Outcome evidence accepted RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: research ../research/LLM-LOG-RESEARCH-045-outcome-evidence-substrate.org
+
+* Exact head
+RED commit: =6da93978808564e6d5242ec17ea72e0b80e647f2=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33445207439
+
+* Result
+The Common Lisp/Tek9/SWI-Prolog integration gate failed on the intended missing product behavior. The new =outcome-evidence-red-contract= compiled and executed after every pre-existing #10/#12/#13 integration contract passed. =record_outcome_evidence= returned:
+
+- status =error=;
+- code =unknown_operation=;
+- message =operation is not declared=.
+
+The transport-200-only fixture failed through the same missing declared operation. The expected outcome evidence records were absent because production support had not been implemented.
+
+The Python expert-policy/transport gate was GREEN. The Home Manager expert-service gate was GREEN.
+
+* Acceptance
+This is an accepted product RED, not a fixture/build failure. It independently verifies the baseline predicted by research/LLM-LOG-RESEARCH-045-outcome-evidence-substrate.org. Production mutation for the bounded #15 outcome-evidence substrate is authorized after this record.
+
+* Boundary
+Authorized next mutation only:
+- Common Lisp typed bounded outcome evidence ingestion;
+- immutable Tek9 outcome evidence/assertion records;
+- one declared SWI-Prolog =outcome_decision= operation;
+- validated provenance and restart durability.
+
+Still excluded: #13 outcome analytics, full dataset export, Beagle, Python rule logic, Tek9 repository changes, dotfiles changes, and provider census implementation.
