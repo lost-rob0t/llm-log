@@ -50,7 +50,7 @@
             text = ''
               : "''${LLM_LOG_PROLOG_WORKER:=${./expert/prolog/worker.pl}}"
               export LLM_LOG_PROLOG_WORKER
-              exec sbcl --noinform --core ${expertCore}/lib/llm-log-expert.core --non-interactive \
+              exec sbcl --noinform --core ${expertCore}/lib/llm-log-expert.core --no-sysinit --no-userinit --non-interactive \
                 --eval '(uiop:quit (llm-log-expert:main (uiop:command-line-arguments)))' \
                 "$@"
             '';
