@@ -120,3 +120,17 @@ Decision for this bounded cycle:
 5. make no Tek9 mutation because live Tek9 still has no open issue/PR demonstrating a missing generic primitive.
 
 This is governance/documentation work only; it does not authorize production behavior changes and therefore does not invent a RED/GREEN claim.
+
+* 2026-08-30 late-cycle exact-head execution reconciliation
+Fresh remote inspection found the canonical ownership still stable in #8/#10 and the active implementation still on =rage/10-expert-runtime-red=. PR #24 was still draft and mergeable at =10d8133ab897e694f08a9ffa0e690ce70a4400a3=, with zero submitted reviews and zero PR conversation comments. GitHub reported no workflow run for that exact SHA. Dotfiles PR #172 remained the isolated test-only RED consumer transaction; no production pin/config change had landed. Tek9 again had zero open issues and zero open PRs, so no missing generic database primitive is proven.
+
+The connected ready-for-review mutation was retried and again failed inside the connector GraphQL selection because it requests the nonexistent =Repository.fullDatabaseId= field. This remains a tooling blocker, not repository evidence and not permission to bypass review.
+
+Decision for this bounded cycle:
+
+1. make no production mutation while #24 lacks exact-head execution plus legitimate review/discussion;
+2. persist this fresh remote-state reconciliation in the canonical Org artifact rather than issue-only prose;
+3. use this documentation push as a legitimate opportunity for the branch's configured push-triggered expert contract workflow to execute a new exact head;
+4. do not claim that new head GREEN until GitHub reports the run and all required expert jobs succeed;
+5. leave dotfiles #172 RED-only, PR #5 isolated, provider census #6 queued, and #12/#13/#15/#17 behind #10;
+6. keep Tek9 unchanged.
