@@ -68,6 +68,22 @@ execution must use them rather than enumerating the expert corpus."
        (and usage-id task-id))))
   database)
 
+(defun %register-outcome-indexes (database)
+  "Register exact-scope and supersession indexes for bounded outcome history."
+  (register-index
+   database "outcome-assertion-scope-key"
+   (lambda (document)
+     (let ((assertion-id (%plist-index-value document :assertion-id))
+           (scope-key (%plist-index-value document :scope-key)))
+       (and assertion-id scope-key))))
+  (register-index
+   database "outcome-assertion-supersedes"
+   (lambda (document)
+     (let ((assertion-id (%plist-index-value document :assertion-id))
+           (supersedes (%plist-index-value document :supersedes)))
+       (and assertion-id supersedes))))
+  database)
+
 (defun start-expert-host (data-directory)
   "Open Tek9 and one persistent supervised SWI-Prolog worker for HOST."
   (let* ((root (uiop:ensure-directory-pathname data-directory))
@@ -84,6 +100,7 @@ execution must use them rather than enumerating the expert corpus."
         (progn
           (%register-classification-indexes database)
           (%register-task-accounting-indexes database)
+          (%register-outcome-indexes database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)
