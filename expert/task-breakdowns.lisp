@@ -299,10 +299,15 @@
                 value-order))
           dimension-order))))
 
+(defun %json-merge-objects (&rest objects)
+  (cons :obj
+        (loop for object in objects
+              append (copy-list (cdr object)))))
+
 (defun %classification-breakdown-entry-json (accumulator)
   (let* ((base (%classification-breakdown-accumulator-usage accumulator))
          (entry (%breakdown-entry-json base)))
-    (append
+    (%json-merge-objects
      (%json-object
       (cons "dimension"
             (%classification-breakdown-accumulator-dimension accumulator))
