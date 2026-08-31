@@ -1,0 +1,90 @@
+#+title: LLM-LOG-RESEARCH-037 — Request classifier indexed query + restart
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Parent: https://github.com/lost-rob0t/llm-log/issues/8
+Prior classifier design: research/LLM-LOG-RESEARCH-036-request-classification-expert.org
+Merged classifier substrate: d9e961dbfad2db3111ff68f58c980318e7f333d5
+
+This document is the canonical ARADR decision for the next bounded #12 slice. RESEARCH-036 remains authority for classifier semantics; RESEARCH-004/033 remain authority for the wider expert plane.
+
+* Analyze
+The first #12 slice persists provenance-bearing request-classification assertions, but #12 acceptance still requires explicit ambiguity plus bounded indexed retrieval by request/user-message/provider/model/time and restart/query conformance.
+
+The database boundary does not justify a Tek9 change. Current Tek9 public APIs already expose durable DUPSORT secondary indexes, exact equality lookup through =select-index= / =index-document-ids=, ordered secondary range lookup through =select-index-range=, direct bulk point reads, and graph adjacency APIs. A new generic Tek9 primitive is therefore not proven missing.
+
+* Research — typed local query contract
+Add one declared expert operation, =query_classification_history=, owned by the Common Lisp expert service. It accepts only typed JSON-safe filters; callers cannot name Tek9 indexes, supply predicates, or pass executable Prolog terms.
+
+Allowed filters for this slice:
+- =request_id=
+- =user_message_id=
+- =provider=
+- =model=
+- optional =created_from= / =created_to= timestamp bounds
+- =limit= with a hard service maximum
+
+At least one selective identity/provider/model/time filter is required. Empty unbounded corpus scans are rejected with a typed error.
+
+Returned records are durable derived assertion documents, not reconstructed raw capture. Each record retains assertion ID, dimension/value/state/confidence, source IDs, rule ID/version, expert version, provider/model when known, created timestamp and supersession metadata when present.
+
+* Tek9 schema/index decision
+Use existing Tek9 secondary-index APIs from Common Lisp. Register indexes over durable classification assertion documents for:
+- =kind=
+- =request_id=
+- =user_message_id=
+- =provider=
+- =model=
+- =created_at= as an ordered integer timestamp index
+
+Query planning stays bounded:
+1. choose the most selective supplied equality index or the bounded time index;
+2. retrieve at most the service cap plus a small validation margin;
+3. intersect remaining typed filters in Common Lisp over that bounded candidate set;
+4. never use Tek9 full-scan =select= for this operation;
+5. never materialize the whole classification corpus into Prolog.
+
+Graph provenance links remain supplementary and are not used as a substitute for indexed assertion lookup.
+
+* Restart semantics
+Classification assertion documents and indexes live in the canonical expert Tek9 data directory. Closing and reopening the expert host against the same data directory must preserve query results. Runtime caches, if any, are disposable projections only.
+
+Raw capture files remain separate immutable evidence. Restart tests operate on synthetic expert data and must not mutate capture fixtures outside their temporary test directory.
+
+* Ambiguity contract
+The classifier must represent ambiguity explicitly. For a deliberately ambiguous message, two competing labels in the same dimension may coexist with =state=ambiguous=. Unknown remains distinct from ambiguous. Ambiguity is analytical metadata only and grants no authority.
+
+This slice does not add probabilistic ranking or model-generated labels. Rules remain declared SWI-Prolog rules; Common Lisp validates and persists results.
+
+* Provenance / failure semantics
+Every queried assertion must still link exact source evidence IDs and rule/version/expert version. Historical revisions are retained and superseded rather than deleted.
+
+Unavailable Tek9/query/classifier behavior returns a typed expert error. Python proxy forwarding remains fail-open unless =require_expert_plane= is explicitly true. Query failures never mutate or drop the original user request.
+
+* Nix / non-Nix
+No packaging boundary change is required. Existing SBCL + Tek9 + SWI-Prolog packaging and Home Manager/systemd service remain authoritative. Non-Nix launch/config paths are unchanged.
+
+* Adversarial review
+- Full corpus scan then Lisp filtering: reject; violates bounded indexed retrieval.
+- Caller-provided index names or Lisp predicates: reject; expands execution surface.
+- Query through Prolog over all persisted facts: reject; persistence/query belongs to CL + Tek9 and would load excess state into Prolog.
+- Rebuild labels from raw traffic at query time: reject; conflates immutable evidence with derived assertions.
+- Delete old conflicting assertions: reject; revisions must remain auditable.
+- Treat ambiguous authority labels as permission: reject.
+- Modify Tek9 before demonstrating an API gap: reject.
+
+* Decision
+Proceed RED-first on =rage/12-classifier-query-red=. Add a Common Lisp integration contract that first creates classified records, restarts the expert host on the same temporary Tek9 directory, then requires a bounded declared =query_classification_history= operation to retrieve only matching assertions by request/provider/model/time. Add a separate ambiguity fixture requiring explicit coexisting ambiguous labels.
+
+Production query/index or ambiguity-rule mutation is forbidden until the untouched merged baseline demonstrably fails these tests for the intended missing behavior while existing #10/#12 substrate tests remain otherwise intact.
+
+* Exact RED-first acceptance
+1. Start expert host in a temporary data directory.
+2. Classify at least two synthetic requests with different request IDs/provider/model metadata.
+3. Stop and restart the host against the same directory.
+4. Invoke declared =query_classification_history= with filters matching only one request/provider/model and a finite =limit=.
+5. Require status =ok=, a bounded result list, no records from the other request, and preserved assertion/rule/source/expert provenance.
+6. Require an empty/unbounded history query to fail as =invalid_request= or equivalent typed bounded-query error rather than scanning the corpus.
+7. Submit an ambiguity fixture and require at least two same-dimension =state=ambiguous= assertions; no assertion may grant authority.
+8. Existing request-classifier compound fixture and expert roundtrip/failure contracts must remain unchanged.
