@@ -6,6 +6,7 @@ on:
       - rage/10-expert-runtime-red
       - rage/12-request-classifier-red
       - rage/12-classifier-query-red
+      - rage/12-classifier-time-range-red
   workflow_dispatch:
 
 permissions:

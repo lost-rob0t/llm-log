@@ -1,0 +1,84 @@
+#+title: LLM-LOG-RESEARCH-038 — Request classifier timestamp/range history
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Parent: https://github.com/lost-rob0t/llm-log/issues/8
+Prior query design: research/LLM-LOG-RESEARCH-037-request-classifier-indexed-query-restart.org
+Baseline: 7fda17e25195b21bc7cbac9e3bd850923874e42b
+Branch: rage/12-classifier-time-range-red
+
+This document is the canonical ARADR decision for the remaining bounded #12 acceptance gap: history queries by timestamp/time range. RESEARCH-036 remains classifier semantic authority; RESEARCH-037 remains equality/restart/ambiguity authority.
+
+* Analyze
+Current =query_classification_history= accepts request/user-message/provider/model equality filters plus a finite limit, but it has no typed timestamp filters or time-range query plan. The expert host already registers the durable =classification-source-started-at= ordered index. Source inspection shows that =started_at= is already stored on the immutable request-event projection, while classifier-source projections intentionally preserve exact user-message/request metadata without duplicating event timing.
+
+That separation is useful: event timing is raw-derived capture evidence, classifier source is inference input evidence, and classifier assertions remain derived facts. Duplicating =started_at= into classifier-source records would introduce needless schema/replay risk. Time filtering therefore belongs to Common Lisp + bounded Tek9 event retrieval, never Prolog and never a second copied timestamp field.
+
+No Tek9 repository change is justified because the existing ordered secondary-index range API plus stable point lookup is sufficient.
+
+* Research — typed time contract
+Add optional =started_at_gte= and =started_at_lt= filters to =query_classification_history=. This bounded slice accepts canonical sortable UTC whole-second timestamps in =YYYY-MM-DDTHH:MM:SSZ= form; widening the accepted syntax later requires preserving a normalized sortable index key.
+
+Rules:
+- at least one bounded selector remains mandatory;
+- a time range may itself be the selective seed only when both lower and upper bounds are present;
+- one-sided time filters are allowed only when an equality selector already bounds the candidate set;
+- =started_at_gte < started_at_lt= is mandatory when both are supplied;
+- finite =limit= remains mandatory and capped at 64;
+- callers cannot provide Tek9 index names, predicates, Prolog terms, or unbounded scan requests.
+
+Use half-open interval =[started_at_gte, started_at_lt)= to avoid duplicate boundary rows when paging adjacent windows. Returned history records expose the request-event =started_at= evidence alongside existing assertion provenance.
+
+* Tek9 entity/index/graph decision
+Use the already-registered =classification-source-started-at= secondary index and existing =select-index-range= primitive. Despite the historical index name, current source shows the index extractor keys any expert document carrying =:started-at=; today those are request-event projections. No Tek9 mutation and no classifier-source schema mutation are required.
+
+Query planning:
+1. prefer request/user-message/provider/model classifier-source equality seed when present;
+2. for equality-seeded queries, bounded-point fetch each matching request-event projection to apply optional time predicates;
+3. otherwise require both time bounds and seed the ordered =classification-source-started-at= range over request-event projections;
+4. for each bounded event candidate, point-fetch the classifier source by stable event ID;
+5. enforce the half-open upper bound in Common Lisp because Tek9 range end semantics may include the endpoint;
+6. apply remaining typed equality/time predicates only to that bounded candidate set;
+7. join assertions through =classification-assertion-source-event= with the remaining result limit;
+8. never use Tek9 full scan or materialize corpus state into Prolog.
+
+Historical classifier-source documents require no migration because timestamp ownership remains with the event projection. Events without =started_at= simply do not satisfy time filters. No destructive backfill or guessed timestamp is authorized.
+
+* Local protocol / Prolog boundary
+=query_classification_history= remains a declared local expert operation owned by the Common Lisp service. Timestamp filters are typed JSON request fields validated by Common Lisp. No timestamp term, index name, or query expression is passed to SWI-Prolog. SWI-Prolog continues to own only declared classifier facts/rules/inference.
+
+* Provenance
+Raw capture remains immutable outside Tek9. Request-event projections retain observed timing. Classifier-source projections retain exact user-message/request evidence. Returned history rows combine those durable evidence references with assertion ID, rule/version, expert version, evidence IDs, KB publication revision, and supersession metadata. No classification field grants authority.
+
+* Failure semantics
+Malformed/non-canonical timestamps, inverted/empty ranges, or an unbounded request return typed =invalid_request=. A time-only query lacking either bound is rejected. Missing historical event timestamps are not synthesized. Query failure never affects proxy forwarding. Python remains fail-open unless =require_expert_plane= is configured.
+
+* Nix / non-Nix packaging
+No dependency or packaging change is needed. The slice stays inside the existing Common Lisp expert package and current Tek9/SWI-Prolog runtime. Existing flake, Home Manager/systemd wiring and ordinary non-Nix expert-service launch path remain authoritative.
+
+* Adversarial review
+- Full scan followed by Lisp timestamp filtering: reject.
+- Caller-supplied index name: reject.
+- Prolog corpus/time querying: reject.
+- Duplicate =started_at= into classifier-source documents: reject; event projection already owns this evidence.
+- Guess timestamp from assertion publication revision: reject.
+- Rewrite historical documents in place: reject; evidence stays immutable.
+- Treat missing historical timestamp as now/current: reject.
+- Inclusive result upper bound: reject; half-open intervals compose cleanly.
+- Assume Tek9 range endpoint exclusivity: reject; explicitly filter the endpoint after bounded retrieval.
+
+* Decision
+Proceed RED-first on =rage/12-classifier-time-range-red=. The exact baseline RED is independently demonstrated on head =b3a1fcab67e17bf5de46f68c6e99d3bcbe8e8077=: all pre-existing #10/#12, Python and Home Manager gates pass, while the new time-only query is rejected with =invalid_request= / =bounded_query_required= and returns no assertions.
+
+Implement only the Common Lisp bounded event-index -> classifier-source point-join query required to drive that same contract GREEN. SWI-Prolog rules, Python transport, dotfiles and Tek9 repository remain unchanged.
+
+* Exact RED-first acceptance
+1. Start host in a temporary data directory.
+2. Classify synthetic requests whose request-event evidence is timestamped at =2026-08-31T10:00:00Z=, =11:00:00Z= and =12:00:00Z=.
+3. Restart host against the same directory.
+4. Query =[10:30Z,12:00Z)= with finite limit and no equality selector.
+5. Require exactly the 11:00Z source and its classifier assertions; exclude 10:00Z and the exact 12:00Z upper boundary.
+6. Require returned records to include request-event =started_at= and existing assertion/rule/evidence/expert provenance.
+7. Require an inverted range and an empty selector set to fail typed, never scan.
+8. Existing equality/restart/ambiguity, expert substrate, Python policy/transport and Home Manager gates stay unchanged.
