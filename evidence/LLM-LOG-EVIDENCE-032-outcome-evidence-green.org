@@ -1,0 +1,35 @@
+#+title: LLM-LOG-EVIDENCE-032 Outcome evidence GREEN
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: research ../research/LLM-LOG-RESEARCH-045-outcome-evidence-substrate.org
+#+property: red ./LLM-LOG-EVIDENCE-031-outcome-evidence-red.org
+
+* Implementation head
+Production implementation commit: =287ac94e30327ed3f987e02c03f1aa290ee95a4c=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33445559581
+Result: GREEN across Common Lisp/Tek9/SWI-Prolog integration, Python expert policy/transport, and Home Manager.
+
+* Adversarial restart head
+Conformance-tightening commit: =704417d5ccf822c8fe18d37be9aa301bb4fcfa9a=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33445653420
+Result: GREEN across all three gates. The strengthened fixture verifies both raw evidence and the derived outcome assertion after host restart, including exact outcome, rule ID/version, and evidence IDs.
+
+* Verified behavior
+- =record_outcome_evidence= is a versioned declared expert-service operation.
+- Common Lisp accepts only request/task scope, at most 64 evidence items, finite evidence-type/authority enums, scalar observed values, and unique stable evidence IDs.
+- SWI-Prolog alone executes the declared =outcome_decision= inference.
+- authoritative =user_feedback=rejected= derives =rejected= even when another evidence item reports provider transport HTTP 200.
+- transport HTTP 200 alone derives =unknown= with =outcome.insufficient_evidence=; transport success is not task success.
+- Common Lisp validates the returned finite outcome, rule provenance, exact evidence IDs, and expert version before persistence.
+- Tek9 stores immutable =outcome-evidence:<id>= records separately from immutable =outcome-assertion:<id>= derived records.
+- assertion provenance survives expert-host restart.
+- contradictory reuse of a stable evidence/assertion ID is rejected rather than overwritten.
+- historical supersession is represented by an explicit assertion link; prior records are not deleted.
+
+* Architecture proof
+Python was not given outcome rule logic. Common Lisp was not given outcome inference rules: it performs typed validation, bounded materialization, supervision/result validation, and durable persistence. SWI-Prolog owns the actual rule. Tek9 required no repository change because its existing transaction, point-fetch, and keyed-put primitives were sufficient for this bounded substrate.
+
+* Consumer boundary
+No dotfiles mutation was required. The existing consumer remains fail-open and retains =~/Documents/AI/proxy= as its configured capture directory. No provider-census or PR #5 work was mixed into this slice.
+
+* Remaining #15 boundary
+This does not close #15. Later bounded slices still need richer success/failure/partial/cancelled/timeout evidence rules, supersession/history query surfaces, bounded dataset export with raw evidence and labels kept separate, and downstream #13 outcome analytics.
