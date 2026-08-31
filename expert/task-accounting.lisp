@@ -4,6 +4,9 @@
 (defparameter +usage-schema-version+ 1)
 (defparameter +pricing-schema-version+ 1)
 (defparameter +cost-schema-version+ 1)
+(defparameter +max-task-rollup-depth+ 16)
+(defparameter +max-task-rollup-nodes+ 512)
+(defparameter +max-task-rollup-usage-candidates+ 4096)
 
 (defun %task-key (task-id) (format nil "task:~A" task-id))
 (defun %usage-key (usage-id) (format nil "usage:~A" usage-id))
@@ -171,3 +174,184 @@
          (cons "unknown_cost_state" (if unknown-p "unknown" "known"))
          (cons "request_count" (length seen-requests))
          (cons "kb_revision" (current-kb-revision host)))))))
+
+(defun %required-rollup-integer (payload field minimum maximum)
+  (let ((value (jsown:val-safe payload field)))
+    (unless (and (integerp value) (<= minimum value maximum))
+      (error "~A must be an integer from ~D through ~D" field minimum maximum))
+    value))
+
+(defun %task-record-p (projection)
+  (and (listp projection)
+       (%non-empty-string-p (getf projection :task-id))
+       (%non-empty-string-p (getf projection :rule-id))))
+
+(defun %usage-record-p (projection task-id)
+  (and (listp projection)
+       (%non-empty-string-p (getf projection :usage-id))
+       (equal task-id (getf projection :task-id))))
+
+(defun %indexed-task-children (database task-id limit)
+  (remove-if-not
+   #'%task-record-p
+   (select-index-range database "task-parent-task-id"
+                       task-id :end task-id :limit limit)))
+
+(defun %bounded-task-rollup-ids (host root-task-id max-depth max-nodes include-children)
+  "Return visited task IDs and whether the requested subtree was truncated."
+  (let* ((database (expert-host-database host))
+         (root (fetch* database (%task-key root-task-id)))
+         (queue (list (cons root-task-id 0)))
+         (seen (make-hash-table :test #'equal))
+         (visited '())
+         (truncated nil))
+    (unless (%task-record-p root)
+      (error "unknown_task: ~A" root-task-id))
+    (loop while queue
+          do (let* ((entry (pop queue))
+                    (task-id (car entry))
+                    (depth (cdr entry)))
+               (unless (gethash task-id seen)
+                 (when (>= (length visited) max-nodes)
+                   (setf truncated t)
+                   (return))
+                 (setf (gethash task-id seen) t)
+                 (push task-id visited)
+                 (when include-children
+                   (if (< depth max-depth)
+                       (let ((children
+                               (%indexed-task-children
+                                database task-id (1+ max-nodes))))
+                         (dolist (child children)
+                           (let ((child-id (getf child :task-id)))
+                             (unless (gethash child-id seen)
+                               (setf queue
+                                     (nconc queue
+                                            (list (cons child-id (1+ depth)))))))))
+                       ;; Reaching the depth boundary is only truncation when a
+                       ;; durable child actually exists beyond it.
+                       (when (%indexed-task-children database task-id 1)
+                         (setf truncated t)))))))
+    (values (nreverse visited) truncated)))
+
+(defun %add-optional-token-count (usage key current seen-p)
+  (let ((value (getf usage key)))
+    (if (numberp value)
+        (values (+ current value) t)
+        (values current seen-p))))
+
+(defun %task-rollup-cost-state (known-count unknown-count currency-count)
+  "Describe completeness of already-derived immutable cost assertions.
+
+This is projection-state validation, not a second pricing/rules engine: all
+per-request cost inference remains owned by the declared SWI-Prolog task_cost
+predicate."
+  (cond
+    ((zerop known-count) "unknown")
+    ((or (plusp unknown-count) (> currency-count 1)) "partial")
+    (t "known")))
+
+(defun query-task-accounting (host payload)
+  "Reconstruct one finite task rollup from durable Tek9 task/usage/cost records."
+  (unless (and (consp payload) (eq (first payload) :obj))
+    (error "payload must be a JSON object"))
+  (let* ((task-id (%required-json-string payload "task_id"))
+         (max-depth (%required-rollup-integer payload "max_depth"
+                                              0 +max-task-rollup-depth+))
+         (max-nodes (%required-rollup-integer payload "max_nodes"
+                                              1 +max-task-rollup-nodes+))
+         (include-children (not (null (jsown:val-safe payload "include_children"))))
+         (database (expert-host-database host)))
+    (multiple-value-bind (task-ids graph-truncated)
+        (%bounded-task-rollup-ids host task-id max-depth max-nodes include-children)
+      (let ((seen-usages (make-hash-table :test #'equal))
+            (seen-requests (make-hash-table :test #'equal))
+            (currencies (make-hash-table :test #'equal))
+            (usage-ids '())
+            (cost-ids '())
+            (known-total 0)
+            (known-count 0)
+            (unknown-count 0)
+            (input-total 0) (input-seen nil)
+            (output-total 0) (output-seen nil)
+            (cached-input-total 0) (cached-input-seen nil)
+            (cached-output-total 0) (cached-output-seen nil)
+            (reasoning-total 0) (reasoning-seen nil)
+            (observation-truncated nil))
+        (dolist (current-task-id task-ids)
+          (let* ((candidates
+                   (select-index-range
+                    database "usage-task-id" current-task-id
+                    :end current-task-id
+                    :limit (1+ +max-task-rollup-usage-candidates+)))
+                 (usages
+                   (remove-if-not
+                    (lambda (projection)
+                      (%usage-record-p projection current-task-id))
+                    candidates)))
+            (when (> (length usages) +max-task-rollup-usage-candidates+)
+              (setf observation-truncated t
+                    usages (subseq usages 0 +max-task-rollup-usage-candidates+)))
+            (dolist (usage usages)
+              (let ((usage-id (getf usage :usage-id)))
+                (unless (gethash usage-id seen-usages)
+                  (setf (gethash usage-id seen-usages) t)
+                  (push usage-id usage-ids)
+                  (let ((request-id (getf usage :request-id)))
+                    (when (%non-empty-string-p request-id)
+                      (setf (gethash request-id seen-requests) t)))
+                  (multiple-value-setq (input-total input-seen)
+                    (%add-optional-token-count usage :input-tokens input-total input-seen))
+                  (multiple-value-setq (output-total output-seen)
+                    (%add-optional-token-count usage :output-tokens output-total output-seen))
+                  (multiple-value-setq (cached-input-total cached-input-seen)
+                    (%add-optional-token-count usage :cached-input-tokens
+                                               cached-input-total cached-input-seen))
+                  (multiple-value-setq (cached-output-total cached-output-seen)
+                    (%add-optional-token-count usage :cached-output-tokens
+                                               cached-output-total cached-output-seen))
+                  (multiple-value-setq (reasoning-total reasoning-seen)
+                    (%add-optional-token-count usage :reasoning-tokens
+                                               reasoning-total reasoning-seen))
+                  (let ((cost (fetch* database (%cost-key usage-id))))
+                    (if (and (listp cost)
+                             (equal "known" (getf cost :state))
+                             (numberp (getf cost :amount))
+                             (%non-empty-string-p (getf cost :currency)))
+                        (progn
+                          (incf known-count)
+                          (incf known-total (getf cost :amount))
+                          (setf (gethash (getf cost :currency) currencies) t)
+                          (when (%non-empty-string-p (getf cost :cost-assertion-id))
+                            (push (getf cost :cost-assertion-id) cost-ids)))
+                        (progn
+                          (incf unknown-count)
+                          (when (and (listp cost)
+                                     (%non-empty-string-p
+                                      (getf cost :cost-assertion-id)))
+                            (push (getf cost :cost-assertion-id) cost-ids)))))))))))
+        (let* ((currency-list
+                 (loop for currency being the hash-keys of currencies collect currency))
+               (currency-count (length currency-list))
+               (cost-state (%task-rollup-cost-state
+                            known-count unknown-count currency-count))
+               (coherent-currency (and (= currency-count 1) (first currency-list)))
+               (known-amount (and coherent-currency
+                                  (float known-total 0.0)))
+               (truncated (or graph-truncated observation-truncated)))
+          (%json-object
+           (cons "task_id" task-id)
+           (cons "task_ids" (sort (copy-list task-ids) #'string<))
+           (cons "request_count" (hash-table-count seen-requests))
+           (cons "input_tokens" (and input-seen input-total))
+           (cons "output_tokens" (and output-seen output-total))
+           (cons "cached_input_tokens" (and cached-input-seen cached-input-total))
+           (cons "cached_output_tokens" (and cached-output-seen cached-output-total))
+           (cons "reasoning_tokens" (and reasoning-seen reasoning-total))
+           (cons "known_cost_amount" known-amount)
+           (cons "known_cost_currency" coherent-currency)
+           (cons "cost_state" cost-state)
+           (cons "usage_observation_ids" (sort usage-ids #'string<))
+           (cons "cost_assertion_ids" (sort cost-ids #'string<))
+           (cons "truncated" truncated)
+           (cons "kb_revision" (current-kb-revision host))))))))
