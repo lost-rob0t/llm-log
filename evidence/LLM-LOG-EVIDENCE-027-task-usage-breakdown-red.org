@@ -1,0 +1,29 @@
+#+title: LLM-LOG-EVIDENCE-027 Task usage breakdown RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: research research/LLM-LOG-RESEARCH-043-task-usage-breakdowns.org
+
+* Accepted RED
+The accepted RED baseline is exact head =9f3e54909fa3d9527bc7fc658c9598e9ac7d193f=, GitHub Actions run =33435473703=.
+
+The Common Lisp/Tek9/SWI-Prolog integration fixture compiled and executed successfully through all pre-existing #10, #12, and #13 contracts. The new restart-durable task usage-breakdown fixture then proved the missing product behavior:
+- =account_task_usage= accepted three durable usage observations;
+- the expert host was stopped and restarted before query;
+- =query_task_accounting= returned =status=ok=;
+- existing aggregate fields remained correct: =request_count=3=, =input_tokens=210=, =output_tokens=90=, =cost_state=partial=;
+- the new =breakdowns= projection was absent (=NIL=), so provider/model/client grouped expectations failed exactly at the designed boundary.
+
+The Python expert-policy/adapter/transport/launch lane and Home Manager expert-wiring lane were GREEN on the same exact head. This establishes that the RED is isolated to the missing Common Lisp bounded grouped projection rather than proxy policy, launch, packaging, Tek9 availability, or SWI-Prolog supervision.
+
+* Rejected setup run
+Run =33435171481= at head =ea1d99ad2d0cbb1ecfc84c8539b7e76bee8b11f7= is explicitly rejected as product evidence. The new fixture contained an unmatched parenthesis and failed while compiling the test file. No production conclusion is drawn from that run.
+
+* Mutation boundary authorized
+Production mutation may now add provider/model/client breakdowns to the existing bounded =query_task_accounting= result. The implementation must:
+- reuse the same bounded task/usage materialization and immutable cost assertions;
+- preserve deterministic grouped provenance;
+- keep unknown pricing unknown and mixed currencies non-additive;
+- never infer absent client metadata;
+- avoid new Tek9 primitives, global corpus scans, Python inference, or a second pricing engine;
+- leave classification/outcome analytics to separate RED-first slices.
+
+No Tek9 or dotfiles mutation is authorized by this RED.
