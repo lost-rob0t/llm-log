@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - rage/10-expert-runtime-red
+      - rage/12-request-classifier-red
   workflow_dispatch:
 
 permissions:
@@ -21,7 +22,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Execute #10 Tek9 + SWI-Prolog contract
+      - name: Execute Tek9 + SWI-Prolog expert contract
         shell: bash
         run: |
           set -euo pipefail
@@ -60,7 +61,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Execute #10 Home Manager expert wiring contract
+      - name: Execute Home Manager expert wiring contract
         shell: bash
         run: |
           set -euo pipefail
