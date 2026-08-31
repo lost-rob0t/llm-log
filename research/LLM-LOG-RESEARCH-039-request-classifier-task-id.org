@@ -1,0 +1,86 @@
+#+title: LLM-LOG-RESEARCH-039 — Request classifier task identity history
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Parent: https://github.com/lost-rob0t/llm-log/issues/8
+Prior query authority: research/LLM-LOG-RESEARCH-037-request-classifier-indexed-query-restart.org
+Prior time authority: research/LLM-LOG-RESEARCH-038-request-classifier-time-range.org
+Baseline: 7150e5cb80b8c47c682b15e3d2f48143657b8ac4
+Branch: rage/12-classifier-task-id-red
+
+This document is the canonical ARADR decision for the final currently-known #12 acceptance gap: bounded history retrieval by explicit task identity. RESEARCH-036 remains classifier semantic authority; RESEARCH-037 remains equality/restart/ambiguity authority; RESEARCH-038 remains timestamp-range authority.
+
+* Analyze
+Current classifier-source projections already persist optional =:task-id= from the exact classifier input. The public =query_classification_history= operation, however, only accepts request/user-message/provider/model equality selectors plus bounded timestamp ranges. The expert host does not register a task-id secondary index, so querying by task would currently require either rejection or a forbidden corpus scan.
+
+Task identity is analytical grouping metadata. It never grants authority, permission, mutation rights, or trust. The source task ID must remain distinct from later task-graph assertions owned by #13.
+
+No Tek9 repository change is justified: the pinned public =register-index= and =select-index-range= primitives already support the required bounded exact lookup. The missing primitive is local expert schema/index registration, not database functionality.
+
+* Research — typed contract
+Add optional =task_id= to =query_classification_history=.
+
+Rules:
+- =task_id= must be a non-empty string when present;
+- =task_id= is a valid selective equality seed;
+- finite =limit= remains mandatory and capped at 64;
+- task filtering composes with request/user-message/provider/model and timestamp predicates;
+- callers cannot supply Tek9 index names, Prolog goals, predicates, or arbitrary query expressions;
+- no query may fall back to Tek9 full scan;
+- missing task identity is not synthesized from session/chat proximity.
+
+Returned records expose the durable classifier source =task_id= alongside existing event, rule, evidence, expert-version, and supersession provenance.
+
+* Tek9 entity/index/graph decision
+Keep the existing classifier-source document shape. Register one process-local handle over the durable Tek9 index definition:
+
+- =classification-source-task-id= -> classifier-source =:task-id=
+
+Use the same bounded equality cursor strategy as request/user-message/provider/model. No new Tek9 entity type, graph edge, migration, or repository change is required for this slice.
+
+The later #13 task graph may establish derived task/subtask relations. This #12 selector only queries the explicit task identity already attached to classifier source evidence; it must not infer task membership or rewrite historical source records.
+
+* Local protocol / Prolog boundary
+=query_classification_history= remains a declared versioned local operation owned by Common Lisp. =task_id= is parsed and validated by Common Lisp and used only to select bounded Tek9 candidates. SWI-Prolog receives no task query term and remains responsible only for declared classification inference. Python remains capture/transport and gains no rule/query engine.
+
+* Provenance
+Raw capture evidence remains immutable. Classifier source remains separate exact inference-input evidence. Derived classifier assertions retain source IDs, rule/version, expert version and publication revision. Returned history records add the persisted source =task_id= without converting it into authority or an inferred task graph.
+
+* Failure semantics
+Malformed empty/non-string =task_id= returns typed =invalid_request=. Unknown task IDs return an empty successful bounded result. Query failure does not affect forwarding. Proxy behavior remains fail-open unless explicit =require_expert_plane= fail-closed mode is configured.
+
+* Nix / non-Nix packaging
+No dependency or packaging change is needed. This stays inside the existing Common Lisp expert package and current Tek9/SWI-Prolog runtime. Existing flake, Home Manager/systemd integration and ordinary non-Nix launch path remain unchanged. Consumer capture storage remains =~/Documents/AI/proxy= in dotfiles.
+
+* Adversarial review
+- Full scan + Lisp task filtering: reject.
+- Treat session ID as task ID: reject.
+- Infer task membership in Common Lisp: reject; #13 owns task-graph inference.
+- Caller-selected Tek9 index: reject.
+- Prolog database query term: reject.
+- Rewrite historical classifier-source documents to add guessed tasks: reject.
+- Treat task classification metadata as authority: reject.
+- Modify Tek9 for an already-supported exact secondary index: reject.
+
+* Decision
+Proceed RED-first on =rage/12-classifier-task-id-red=. Add a focused integration contract that first classifies sources under two explicit task IDs, restarts the expert host, then requires a finite task-only history query to return only assertions from the selected task with preserved provenance. On the untouched baseline this must fail specifically because =task_id= is not a declared bounded selector/index path.
+
+After independently executed RED, implement only:
+1. expert-host registration of =classification-source-task-id=;
+2. typed =task_id= seed/filter support in =classification-history.lisp=;
+3. returned =task_id= provenance field;
+4. separate GREEN evidence Org artifact.
+
+Do not modify Tek9, SWI-Prolog rules, Python transport, dotfiles, or #13 task inference in this slice.
+
+* Exact RED-first acceptance
+1. Start expert host in a temporary data directory.
+2. Classify at least three synthetic requests: two with =task-alpha= and one with =task-beta=.
+3. Restart the host against the same Tek9 directory.
+4. Query =query_classification_history= with only =task_id: task-alpha= and finite =limit=.
+5. Require a non-empty result containing only =task-alpha= rows and no =task-beta= rows.
+6. Require each row to preserve task ID, event/request/user-message IDs, rule/version, evidence IDs and expert version.
+7. Query an unknown task ID and require successful empty bounded result.
+8. Empty/non-string task IDs must fail typed; unbounded empty-selector query must remain rejected.
+9. Existing classifier semantics, ambiguity, equality/restart, time-range, expert substrate, Python policy/transport and Home Manager gates stay unchanged.
