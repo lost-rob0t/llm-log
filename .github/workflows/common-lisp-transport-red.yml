@@ -11,6 +11,7 @@ on:
       - rage/13-task-accounting-red
       - rage/13-task-rollup-red
       - rage/13-retry-attempt-red
+      - rage/13-usage-breakdown-red
   workflow_dispatch:
 
 permissions:

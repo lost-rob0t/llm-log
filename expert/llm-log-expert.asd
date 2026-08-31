@@ -14,6 +14,7 @@
                (:file "classification-history")
                (:file "task-accounting")
                (:file "retry-accounting")
+               (:file "task-breakdowns")
                (:file "service")
                (:file "task-dispatch")
                (:static-file "prolog/worker.pl")))

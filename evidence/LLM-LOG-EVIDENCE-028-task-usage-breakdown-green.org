@@ -1,0 +1,33 @@
+#+title: LLM-LOG-EVIDENCE-028 Task usage breakdown GREEN
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: research research/LLM-LOG-RESEARCH-043-task-usage-breakdowns.org
+#+property: red evidence/LLM-LOG-EVIDENCE-027-task-usage-breakdown-red.org
+
+* GREEN implementation
+Exact implementation head =6e6df3513e8b5d4cd660f3462ce30492a5deca47= passed GitHub Actions run =33435808798= across all three expert-plane lanes:
+- Common Lisp/Tek9/SWI-Prolog integration: GREEN;
+- Python expert-policy/adapter/transport/launch: GREEN;
+- Home Manager expert wiring: GREEN.
+
+The accepted RED had already proven that the same restart fixture failed only because =query_task_accounting= lacked =breakdowns=. Production mutation then added a bounded Common Lisp projection over the existing finite task/usage materialization.
+
+* Verified behavior
+The integration fixture durably stores three usage observations, restarts the expert host, and verifies:
+- aggregate task accounting remains =request_count=3=, =input_tokens=210=, =output_tokens=90=, =cost_state=partial=;
+- provider groups are deterministic and retain exact request/token counts;
+- the two OpenRouter observations form a known USD group with =140= input tokens, =60= output tokens, and =$0.31= known cost from their existing immutable cost assertions;
+- the Anthropic observation remains explicitly =unknown= because no pricing snapshot was provided;
+- model and client groupings retain the corresponding known/unknown pricing state;
+- grouped =usage_observation_ids= and =cost_assertion_ids= preserve audit provenance after restart.
+
+* Architectural result
+- Python remains capture/transport only.
+- Common Lisp owns the bounded grouped query projection.
+- Tek9 remains the canonical durable task/usage/cost store and required no repository change.
+- SWI-Prolog remains the owner of per-request =task_cost= inference; Common Lisp does not re-price historical requests.
+- Retrieval stays rooted at explicit =task_id= and existing =max_depth/max_nodes= bounds using existing Tek9 task/usage indexes and cost point reads.
+- No missing client value is inferred; absent optional metadata is represented as an explicit null group.
+- Classification and outcome analytics remain outside this slice and require their own provenance-aware RED-first joins.
+
+* Merge gate
+This evidence file is documentation-only relative to the GREEN implementation head. The branch must be rerun at its new exact head before merge; this record does not substitute for that exact-head gate.
