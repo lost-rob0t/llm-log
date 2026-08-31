@@ -47,9 +47,14 @@
                   (result (jsown:val-safe reply "result")))
              (rove:ok (equal "ok" (jsown:val-safe reply "status")))
              (rove:ok (equal "rejected" (jsown:val-safe result "outcome")))
-             (rove:ok (stringp (jsown:val-safe result "outcome_assertion_id")))
-             (rove:ok (stringp (jsown:val-safe result "rule_id")))
-             (rove:ok (jsown:val-safe result "rule_version"))
+             (rove:ok
+              (equal "request:req-outcome-rejected:evt-outcome-rejected"
+                     (jsown:val-safe result "outcome_assertion_id")))
+             (rove:ok
+              (equal "outcome.authoritative_user_rejection"
+                     (jsown:val-safe result "rule_id")))
+             (rove:ok (equal "outcome.decision/v1"
+                             (jsown:val-safe result "rule_version")))
              (rove:ok
               (equal '("ev-transport-200" "ev-user-rejected")
                      (sort (copy-list (jsown:val-safe result "evidence_ids"))
@@ -69,13 +74,16 @@
                         "provider_transport" "weak" "http_200")))))
                   (result (jsown:val-safe reply "result")))
              (rove:ok (equal "ok" (jsown:val-safe reply "status")))
-             (rove:ok (equal "unknown" (jsown:val-safe result "outcome"))))
+             (rove:ok (equal "unknown" (jsown:val-safe result "outcome")))
+             (rove:ok (equal "outcome.insufficient_evidence"
+                             (jsown:val-safe result "rule_id"))))
 
            (llm-log-expert:stop-expert-host host)
            (setf host (llm-log-expert:start-expert-host data-dir))
 
-           ;; Restart durability is part of the substrate contract. These key
-           ;; names intentionally define the first durable boundary for #15.
+           ;; Restart durability is part of the substrate contract. Raw
+           ;; evidence and the derived assertion remain distinct durable KB
+           ;; records with exact rule/evidence provenance.
            (rove:ok
             (consp
              (llm-log-expert::fetch*
@@ -85,7 +93,21 @@
             (consp
              (llm-log-expert::fetch*
               (llm-log-expert::expert-host-database host)
-              "outcome-evidence:ev-transport-200"))))
+              "outcome-evidence:ev-transport-200")))
+           (let ((assertion
+                   (llm-log-expert::fetch*
+                    (llm-log-expert::expert-host-database host)
+                    "outcome-assertion:request:req-outcome-rejected:evt-outcome-rejected")))
+             (rove:ok (consp assertion))
+             (rove:ok (equal "rejected" (getf assertion :outcome)))
+             (rove:ok
+              (equal "outcome.authoritative_user_rejection"
+                     (getf assertion :rule-id)))
+             (rove:ok (equal "outcome.decision/v1"
+                             (getf assertion :rule-version)))
+             (rove:ok
+              (equal '("ev-transport-200" "ev-user-rejected")
+                     (sort (copy-list (getf assertion :evidence-ids)) #'string<)))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
         (uiop:delete-directory-tree
