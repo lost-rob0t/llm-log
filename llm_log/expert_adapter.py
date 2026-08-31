@@ -90,7 +90,47 @@ class SubprocessExpertPlane:
     async def health(self) -> dict[str, Any]:
         return await self._request("health", {})
 
-    async def _request(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def observe_request(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "observe_request",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def classify_request(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "query_classification",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def _request(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        *,
+        event_id: str | None = None,
+        session_id: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
         async with self._exchange_lock:
             if not self.running:
                 raise ExpertAdapterError("expert service is not running")
@@ -100,6 +140,12 @@ class SubprocessExpertPlane:
             assert process.stdout is not None
 
             request = {"version": 1, "operation": operation, "payload": payload}
+            if event_id is not None:
+                request["event_id"] = event_id
+            if session_id is not None:
+                request["session_id"] = session_id
+            if task_id is not None:
+                request["task_id"] = task_id
             encoded = (json.dumps(request, separators=(",", ":")) + "\n").encode()
             try:
                 process.stdin.write(encoded)
