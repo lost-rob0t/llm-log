@@ -79,9 +79,11 @@
                       ("operation" "query_classification_history")
                       ("event_id" "evt-history-unbounded")
                       ("payload" (jsown:new-js))))
-                  (reply (llm-log-expert:dispatch-expert-request host unbounded)))
+                  (reply (llm-log-expert:dispatch-expert-request host unbounded))
+                  (error-object (jsown:val-safe reply "error")))
              (rove:ok (equal "error" (jsown:val-safe reply "status")))
-             (rove:ok (member (jsown:val-safe reply "error")
+             (rove:ok (member (and error-object
+                                   (jsown:val-safe error-object "code"))
                               '("invalid_request" "bounded_query_required")
                               :test #'equal))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
