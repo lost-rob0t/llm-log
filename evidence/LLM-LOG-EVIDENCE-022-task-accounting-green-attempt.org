@@ -1,0 +1,42 @@
+#+title: LLM Log Evidence 022 — #13 task-accounting GREEN attempt
+#+date: 2026-08-31
+#+property: ISSUE https://github.com/lost-rob0t/llm-log/issues/13
+#+property: PR https://github.com/lost-rob0t/llm-log/pull/34
+
+* Boundary
+This is implementation evidence, not research/design authority. Canonical design remains
+~research/LLM-LOG-RESEARCH-040-task-graph-usage-cost.org~. The accepted RED remains documented
+in ~evidence/LLM-LOG-EVIDENCE-021-task-accounting-red.org~.
+
+* Production mutation
+The first bounded implementation commit was
+~13ffb2a6fad0f528b1f5ba5f742d408a9cc64aa5~.
+
+It added:
+- Common Lisp typed task, usage-observation, immutable pricing-snapshot, and cost-assertion materialization;
+- finite payload bounds and request-id deduplication;
+- SWI-Prolog ~task_cost~ inference for exact known pricing and explicit unknown pricing;
+- provenance binding from cost assertion to usage observation, pricing snapshot, rule version, and expert version;
+- no Python rule engine and no Tek9 repository mutation.
+
+* First GREEN attempt — rejected
+Workflow run ~33408074850~ executed against exact head
+~13ffb2a6fad0f528b1f5ba5f742d408a9cc64aa5~.
+
+Home Manager and Python expert-policy gates passed. Every pre-existing #10/#12 Common Lisp/Tek9/SWI contract passed. The new task-accounting contract remained RED because the Common Lisp Prolog supervisor correctly rejected ~task_cost~ as an undeclared reasoner operation.
+
+This is an implementation defect, not a reason to weaken the declared-predicate invariant. The result is therefore rejected as GREEN evidence.
+
+* Correction
+Commit ~3cb2e09463352ff27a199b5e6c87e9a6db7dd368~ adds only ~task_cost~ to the Common Lisp supervisor's finite declared-operation allowlist. The SWI-Prolog worker already implements that exact operation; arbitrary callable Prolog terms remain impossible through this surface.
+
+Workflow run ~33408320885~ is the exact-head verification for this correction. At the time this evidence record was written, Home Manager had passed while the Common Lisp/Tek9/SWI and Python gates were still executing. Do not treat this file as GREEN proof until that exact run completes successfully.
+
+* Invariants preserved
+- raw capture evidence is untouched;
+- unknown pricing remains explicit unknown rather than zero-valued cost knowledge;
+- pricing assertions bind to immutable snapshots;
+- cost derivation is owned by SWI-Prolog and supervised/validated by Common Lisp;
+- no whole-corpus Prolog materialization is introduced;
+- no Tek9 repository change is justified by this slice;
+- dotfiles and ~~/Documents/AI/proxy~ are untouched.
