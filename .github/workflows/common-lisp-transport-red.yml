@@ -10,6 +10,7 @@ on:
       - rage/12-classifier-task-id-red
       - rage/13-task-accounting-red
       - rage/13-task-rollup-red
+      - rage/13-retry-attempt-red
   workflow_dispatch:
 
 permissions:
