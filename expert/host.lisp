@@ -12,11 +12,22 @@
   (merge-pathnames #P"tek9/"
                    (uiop:ensure-directory-pathname data-directory)))
 
+(defun %plist-index-value (document field)
+  "Extract FIELD only from plist-backed expert documents.
+
+The expert Tek9 main database is heterogeneous: metadata such as the KB
+revision shares the same document space as projections. Index extractors must
+therefore ignore non-plist values instead of assuming every document has expert
+projection fields."
+  (let ((value (doc-value document)))
+    (and (listp value)
+         (getf value field))))
+
 (defun %register-classification-indexes (database)
   "Register process-local handles for durable bounded classifier indexes."
   (flet ((value-field (field)
            (lambda (document)
-             (getf (doc-value document) field))))
+             (%plist-index-value document field))))
     (register-index database "classification-source-request-id"
                     (value-field :request-id))
     (register-index database "classification-source-user-message-id"
@@ -30,7 +41,9 @@
     (register-index
      database "classification-assertion-source-event"
      (lambda (document)
-       (car (getf (doc-value document) :source-ids)))))
+       (let ((source-ids (%plist-index-value document :source-ids)))
+         (and (listp source-ids)
+              (first source-ids))))))
   database)
 
 (defun start-expert-host (data-directory)
