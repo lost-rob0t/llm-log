@@ -14,6 +14,7 @@ on:
       - rage/13-usage-breakdown-red
       - rage/13-classification-breakdown-red
       - rage/15-outcome-evidence-red
+      - rage/15-outcome-history-red
   workflow_dispatch:
 
 permissions:
