@@ -1,4 +1,4 @@
-#+title: LLM Log Evidence 022 — #13 task-accounting GREEN attempt
+#+title: LLM Log Evidence 022 — #13 task-accounting RED to GREEN
 #+date: 2026-08-31
 #+property: ISSUE https://github.com/lost-rob0t/llm-log/issues/13
 #+property: PR https://github.com/lost-rob0t/llm-log/pull/34
@@ -25,18 +25,30 @@ Workflow run ~33408074850~ executed against exact head
 
 Home Manager and Python expert-policy gates passed. Every pre-existing #10/#12 Common Lisp/Tek9/SWI contract passed. The new task-accounting contract remained RED because the Common Lisp Prolog supervisor correctly rejected ~task_cost~ as an undeclared reasoner operation.
 
-This is an implementation defect, not a reason to weaken the declared-predicate invariant. The result is therefore rejected as GREEN evidence.
+This was an implementation defect, not a reason to weaken the declared-predicate invariant.
 
-* Correction
-Commit ~3cb2e09463352ff27a199b5e6c87e9a6db7dd368~ adds only ~task_cost~ to the Common Lisp supervisor's finite declared-operation allowlist. The SWI-Prolog worker already implements that exact operation; arbitrary callable Prolog terms remain impossible through this surface.
+* Declared predicate correction
+Commit ~3cb2e09463352ff27a199b5e6c87e9a6db7dd368~ added only ~task_cost~ to the Common Lisp supervisor's finite declared-operation allowlist. The SWI-Prolog worker already implemented that exact operation; arbitrary callable Prolog terms remain impossible through this surface.
 
-Workflow run ~33408320885~ is the exact-head verification for this correction. At the time this evidence record was written, Home Manager had passed while the Common Lisp/Tek9/SWI and Python gates were still executing. Do not treat this file as GREEN proof until that exact run completes successfully.
+The next exact-head verification exposed one representation-only defect: durable exact arithmetic produced ~1/5~ while the public JSON contract expected ~0.2~. All task identity, pricing identity, currency, unknown-pricing, request-count, and pre-existing expert assertions passed.
+
+* GREEN
+Commit ~a90261588297b61287a06b63141a4fd735cbe7bc~ preserves exact arithmetic in durable cost assertions and normalizes only the protocol response amount to JSON-style floating-point representation.
+
+Workflow run ~33408659274~ executed against that exact head and completed GREEN across:
+- Common Lisp + Tek9 + SWI-Prolog expert integration;
+- Python proxy expert-policy / adapter / transport lifecycle;
+- Home Manager expert wiring.
+
+This is accepted GREEN evidence for the bounded #13 task-accounting slice.
 
 * Invariants preserved
 - raw capture evidence is untouched;
 - unknown pricing remains explicit unknown rather than zero-valued cost knowledge;
 - pricing assertions bind to immutable snapshots;
 - cost derivation is owned by SWI-Prolog and supervised/validated by Common Lisp;
+- only declared reasoner predicates are callable;
+- exact durable cost arithmetic is retained even though the response is JSON-normalized;
 - no whole-corpus Prolog materialization is introduced;
 - no Tek9 repository change is justified by this slice;
 - dotfiles and ~~/Documents/AI/proxy~ are untouched.
