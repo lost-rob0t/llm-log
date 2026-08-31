@@ -1,0 +1,35 @@
+#+title: LLM-LOG-EVIDENCE-026 — Task retry/attempt accounting GREEN
+#+filetags: :llm-log:evidence:green:task-accounting:
+
+* Links
+Design: [[../research/LLM-LOG-RESEARCH-042-task-retry-attempt-accounting.org][LLM-LOG-RESEARCH-042]]
+Issue: [[https://github.com/lost-rob0t/llm-log/issues/13][#13]]
+PR: [[https://github.com/lost-rob0t/llm-log/pull/41][#41]]
+RED evidence: [[./LLM-LOG-EVIDENCE-025-task-retry-attempt-red.org][LLM-LOG-EVIDENCE-025]]
+
+* Implementation baseline
+Accepted RED head: =fdc351217621efa6efafc4a7131b1753b2bb0828=
+Accepted RED run: =33423647092=
+Production implementation head: =184c5963b921775d783d105bcea6094522751fa1=
+GREEN workflow run: =33429223078=
+
+Production mutation occurred only after the accepted RED. Tek9 and dotfiles were not modified.
+
+* GREEN results
+- Common Lisp/Tek9/SWI-Prolog integration: GREEN.
+- Python expert policy/adapter/transport/launch: GREEN.
+- Home Manager expert wiring: GREEN.
+
+The retry fixture now reconstructs explicit attempt/retry metadata after an expert-host restart while preserving the pre-existing accounting totals: three requests, 240 input tokens, 120 output tokens, and 0.48 USD known cost.
+
+The bounded task query reports two persisted attempt IDs, one retry request ID, and incomplete metadata because the ordinary third request intentionally carries no attempt metadata. Missing attempt metadata remains explicit and does not suppress usage or cost.
+
+* Architecture evidence
+The Common Lisp expert service extends immutable usage projections with optional explicit =attempt_id=, =attempt_ordinal=, =retry_of_request_id=, =client=, and =transport= evidence. Validation rejects non-positive attempt ordinals and self-referential retry predecessors.
+
+=query_task_accounting= derives counts and provenance only from the same bounded task subtree and =usage-task-id= Tek9 candidates already used by task accounting. It does not scan the corpus, infer retries from timing/session adjacency, reprice historical requests, or add a Python/Common Lisp rule engine. SWI-Prolog remains the owner of pricing inference.
+
+No Tek9 repository mutation was required; existing durable document/index primitives remain sufficient.
+
+* Merge gate
+This evidence commit itself must pass the same exact-head hosted contracts before merge. The implementation run above is proof of product behavior; a later evidence-only exact-head run is required to prove the final PR head stayed GREEN.
