@@ -4,6 +4,7 @@
 (defparameter +outcome-assertion-schema-version+ 1)
 (defparameter +outcome-expert-version+ "outcome-expert/1")
 (defparameter +max-outcome-evidence+ 64)
+(defparameter +max-outcome-history-limit+ 64)
 (defparameter +outcome-evidence-types+
   '("provider_transport" "tool_result" "test_result" "user_feedback"
     "task_state" "manual_label"))
@@ -16,6 +17,9 @@
 
 (defun %outcome-assertion-key (assertion-id)
   (format nil "outcome-assertion:~A" assertion-id))
+
+(defun %outcome-scope-key (scope scope-id)
+  (format nil "~A:~A" scope scope-id))
 
 (defun %outcome-required-string (object field)
   (let ((value (jsown:val-safe object field)))
@@ -118,13 +122,39 @@
         :expert-version expert-version
         :supersedes supersedes))
 
+(defun %outcome-successors (database assertion-id &optional (limit 2))
+  (select-index-range database "outcome-assertion-supersedes"
+                      assertion-id :end assertion-id :limit limit))
+
+(defun %validate-outcome-supersession
+    (database assertion-id scope scope-id supersedes)
+  (when supersedes
+    (when (equal supersedes assertion-id)
+      (error "outcome_self_supersession: ~A" assertion-id))
+    (let ((previous (fetch* database (%outcome-assertion-key supersedes))))
+      (unless previous
+        (error "unknown_superseded_outcome_assertion: ~A" supersedes))
+      (unless (and (equal scope (getf previous :scope))
+                   (equal scope-id (getf previous :scope-id)))
+        (error "outcome_cross_scope_supersession: ~A" supersedes)))
+    (let ((other-successors
+            (remove assertion-id
+                    (mapcar (lambda (projection)
+                              (getf projection :assertion-id))
+                            (%outcome-successors database supersedes 2))
+                    :test #'equal)))
+      (when other-successors
+        (error "outcome_supersession_conflict: ~A" supersedes)))))
+
 (defun %persist-outcome-decision
     (host evidence-projections assertion-id assertion-projection supersedes)
   (let ((database (expert-host-database host)))
     (with-write-transaction (database)
-      (when (and supersedes
-                 (null (fetch* database (%outcome-assertion-key supersedes))))
-        (error "unknown_superseded_outcome_assertion: ~A" supersedes))
+      (%validate-outcome-supersession
+       database assertion-id
+       (getf assertion-projection :scope)
+       (getf assertion-projection :scope-id)
+       supersedes)
       (dolist (projection evidence-projections)
         (let* ((id (getf projection :evidence-id))
                (key (%outcome-evidence-key id))
@@ -174,3 +204,86 @@
            (cons "evidence_ids" grounded-ids)
            (cons "supersedes_assertion_id" supersedes)
            (cons "kb_revision" revision)))))))
+
+(defun %validate-outcome-history-payload (payload)
+  (unless (and (consp payload) (eq (first payload) :obj))
+    (error "payload must be a JSON object"))
+  (let ((scope (%outcome-required-string payload "scope"))
+        (scope-id (%outcome-required-string payload "scope_id"))
+        (limit (jsown:val-safe payload "limit"))
+        (outcome (jsown:val-safe payload "outcome")))
+    (unless (member scope '("request" "task") :test #'equal)
+      (error "scope must be request or task"))
+    (unless (and (integerp limit) (plusp limit)
+                 (<= limit +max-outcome-history-limit+))
+      (error "limit must be an integer from 1 through ~D"
+             +max-outcome-history-limit+))
+    (when (and outcome (not (member outcome +outcome-values+ :test #'equal)))
+      (error "unsupported outcome filter: ~A" outcome))
+    (values scope scope-id limit outcome)))
+
+(defun %outcome-history-depth (projection projections &optional seen)
+  (let ((supersedes (getf projection :supersedes))
+        (assertion-id (getf projection :assertion-id)))
+    (if (or (null supersedes) (member assertion-id seen :test #'equal))
+        0
+        (let ((previous
+                (find supersedes projections
+                      :key (lambda (item) (getf item :assertion-id))
+                      :test #'equal)))
+          (if previous
+              (1+ (%outcome-history-depth previous projections
+                                          (cons assertion-id seen)))
+              1)))))
+
+(defun %order-outcome-history (projections)
+  (stable-sort (copy-list projections) #'>
+               :key (lambda (projection)
+                      (%outcome-history-depth projection projections))))
+
+(defun %outcome-replaced-by (database assertion-id)
+  (let ((successors (%outcome-successors database assertion-id 2)))
+    (when (> (length successors) 1)
+      (error "outcome_supersession_conflict: ~A" assertion-id))
+    (and successors (getf (first successors) :assertion-id))))
+
+(defun %outcome-history-json (database projection)
+  (%json-object
+   (cons "assertion_id" (getf projection :assertion-id))
+   (cons "scope" (getf projection :scope))
+   (cons "scope_id" (getf projection :scope-id))
+   (cons "outcome" (getf projection :outcome))
+   (cons "rule_id" (getf projection :rule-id))
+   (cons "rule_version" (getf projection :rule-version))
+   (cons "expert_version" (getf projection :expert-version))
+   (cons "evidence_ids" (copy-list (getf projection :evidence-ids)))
+   (cons "supersedes_assertion_id" (getf projection :supersedes))
+   (cons "replaced_by_assertion_id"
+         (%outcome-replaced-by database (getf projection :assertion-id)))))
+
+(defun query-outcome-history (host payload)
+  "Return one exact-scope bounded immutable outcome assertion history."
+  (multiple-value-bind (scope scope-id limit outcome-filter)
+      (%validate-outcome-history-payload payload)
+    (let* ((database (expert-host-database host))
+           (scope-key (%outcome-scope-key scope scope-id))
+           (candidates
+             (select-index-range database "outcome-assertion-scope-key"
+                                 scope-key :end scope-key
+                                 :limit +max-outcome-history-limit+))
+           (filtered
+             (if outcome-filter
+                 (remove-if-not
+                  (lambda (projection)
+                    (equal outcome-filter (getf projection :outcome)))
+                  candidates)
+                 candidates))
+           (ordered (%order-outcome-history filtered))
+           (bounded (subseq ordered 0 (min limit (length ordered)))))
+      (%json-object
+       (cons "scope" scope)
+       (cons "scope_id" scope-id)
+       (cons "assertions"
+             (mapcar (lambda (projection)
+                       (%outcome-history-json database projection))
+                     bounded))))))

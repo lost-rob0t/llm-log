@@ -103,11 +103,29 @@ valid_outcome_evidence(Item) :-
 
 outcome_evidence_id(Item, Id) :- get_dict(evidence_id, Item, Id).
 
-outcome_decision(Evidence, "rejected", "outcome.authoritative_user_rejection") :-
+outcome_evidence(Evidence, Type, Authority, Value) :-
     member(Item, Evidence),
-    get_dict(evidence_type, Item, "user_feedback"),
-    get_dict(authority, Item, "authoritative"),
-    get_dict(observed_value, Item, "rejected"), !.
+    get_dict(evidence_type, Item, Type),
+    get_dict(authority, Item, Authority),
+    get_dict(observed_value, Item, Value).
+
+outcome_decision(Evidence, "cancelled", "outcome.authoritative_cancelled") :-
+    outcome_evidence(Evidence, Type, "authoritative", "cancelled"),
+    memberchk(Type, ["task_state", "manual_label"]), !.
+outcome_decision(Evidence, "timeout", "outcome.authoritative_timeout") :-
+    outcome_evidence(Evidence, Type, "authoritative", "timeout"),
+    memberchk(Type, ["task_state", "manual_label"]), !.
+outcome_decision(Evidence, "rejected", "outcome.authoritative_user_rejection") :-
+    outcome_evidence(Evidence, "user_feedback", "authoritative", "rejected"), !.
+outcome_decision(Evidence, "failure", "outcome.authoritative_failure") :-
+    outcome_evidence(Evidence, Type, "authoritative", "failure"),
+    memberchk(Type, ["test_result", "tool_result", "manual_label"]), !.
+outcome_decision(Evidence, "partial", "outcome.authoritative_partial") :-
+    outcome_evidence(Evidence, Type, "authoritative", "partial"),
+    memberchk(Type, ["task_state", "manual_label"]), !.
+outcome_decision(Evidence, "success", "outcome.authoritative_success") :-
+    outcome_evidence(Evidence, Type, "authoritative", "success"),
+    memberchk(Type, ["test_result", "tool_result", "manual_label"]), !.
 outcome_decision(_Evidence, "unknown", "outcome.insufficient_evidence").
 
 valid_classifier_data(Data, Message, MessageId, SourceRequestId) :-
