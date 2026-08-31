@@ -225,16 +225,16 @@
 
 (defun %classification-source-records-for-request (host request-id)
   (when (%non-empty-string-p request-id)
-    (let ((database (expert-host-database host)))
-      (remove-if-not
-       (lambda (projection)
-         (and (listp projection)
-              (equal "classification-source" (getf projection :type))
-              (equal request-id (getf projection :request-id))))
-       (select-index-range
-        database "classification-source-request-id" request-id
-        :end request-id
-        :limit +max-task-classification-sources-per-request+)))))
+    (remove-if-not
+     (lambda (projection)
+       (and (listp projection)
+            (%non-empty-string-p (getf projection :event-id))
+            (equal request-id (getf projection :request-id))))
+     (select-index-range
+      (expert-host-database host)
+      "classification-source-request-id" request-id
+      :end request-id
+      :limit +max-task-classification-sources-per-request+))))
 
 (defun %classification-assertions-for-source (host source)
   (let ((event-id (getf source :event-id)))
