@@ -1,0 +1,106 @@
+#+title: LLM-LOG-RESEARCH-046 Outcome supersession and bounded history
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+#+property: depends https://github.com/lost-rob0t/llm-log/issues/10
+
+* Decision
+Implement the next bounded #15 slice as richer finite outcome inference plus explicit assertion supersession and bounded restart-durable history queries. Keep Python capture/transport unchanged. Common Lisp owns typed validation, Tek9 access/indexing, bounded materialization, SWI-Prolog supervision/result validation, and durable derived records. SWI-Prolog alone owns outcome rules.
+
+This slice does not implement dataset export or #13 outcome analytics.
+
+* Analyze
+Current main =00e960a9e75c386054d293eaf72a3678f6fbea5a= has durable outcome evidence/assertions and an optional =supersedes_assertion_id= field, but Prolog only derives authoritative user rejection and otherwise =unknown=. There is no declared bounded history query, no durable replaced-by edge, and no conformance proof for success/failure/partial/cancelled/timeout or historical supersession.
+
+Tek9 already provides immutable keyed records, bounded secondary indexes and point fetches used by the expert plane. No generic Tek9 primitive is proven missing, so Tek9 remains unchanged.
+
+* Typed contract
+Extend =record_outcome_evidence= without changing raw-capture semantics. Preserve the finite outcome set:
+- =success=
+- =failure=
+- =partial=
+- =cancelled=
+- =rejected=
+- =timeout=
+- =unknown=
+
+Evidence remains bounded to 64 typed items and finite evidence/authority enums. Current explicit evidence outranks weaker transport evidence only through declared Prolog rules; evidence authority never grants execution authority.
+
+Add declared operation =query_outcome_history= with payload:
+- =scope=: request or task;
+- =scope_id=: stable ID;
+- =limit=: integer 1..64;
+- optional =outcome= filter from the finite outcome set.
+
+Return newest-first immutable assertions for that exact scope only. Each item exposes assertion ID, outcome, rule/version, expert version, evidence IDs, optional supersedes ID and optional replaced-by ID. Query results are bounded and may not scan the corpus.
+
+* Prolog predicates
+Keep only declared =outcome_decision=. Extend finite rules in precedence order:
+1. authoritative/manual explicit cancelled -> =cancelled=;
+2. authoritative/manual explicit timeout -> =timeout=;
+3. authoritative user/manual rejection -> =rejected=;
+4. authoritative test/tool failure -> =failure=;
+5. authoritative/manual explicit partial -> =partial=;
+6. authoritative/manual explicit success or authoritative passing test/tool completion -> =success=;
+7. weak transport-only HTTP 2xx remains =unknown=.
+
+The exact vocabulary accepted by each rule must be finite and fixture-backed. Do not infer success from provider HTTP 200.
+
+* Tek9 schema
+Preserve immutable keys:
+- =outcome-evidence:<evidence-id>=
+- =outcome-assertion:<assertion-id>=
+
+Add/ensure bounded index by exact scope identity for assertion history. When assertion B explicitly supersedes assertion A:
+- A remains immutable;
+- B stores =supersedes=A=;
+- persist a separate immutable supersession relation/index linking A -> B;
+- querying history projects =replaced_by=B= for A without rewriting A.
+
+Reject supersession when the target assertion does not exist or belongs to a different scope. Reject self-supersession and conflicting duplicate successor relationships.
+
+* Provenance
+Every assertion remains linked to source evidence IDs, rule ID/version and expert version. Historical revisions are append-only. Query projection may derive =replaced_by= from the supersession relation, but must never mutate the historical assertion.
+
+* Failure semantics
+Malformed evidence/query bounds or invalid supersession returns an expert error and persists nothing for that operation. Prolog crash/timeout/malformed result follows existing reasoner failure semantics. Proxy forwarding stays fail-open unless =require_expert_plane= is configured.
+
+* Nix and non-Nix
+No packaging change is needed. Existing flake/Home Manager/systemd and standalone launch paths already package/run SBCL + Tek9 + SWI-Prolog. Preserve consumer capture path =~/Documents/AI/proxy=. No dotfiles change is authorized by this slice.
+
+* Adversarial review
+- HTTP 200 accidentally becoming success: explicitly forbidden and regression-tested.
+- supersession implemented by rewriting/deleting A: forbidden; relation-only projection.
+- cross-scope supersession: reject before mutation.
+- self/cyclic immediate supersession: reject.
+- query becomes corpus scan: forbidden; exact bounded scope index required.
+- arbitrary Prolog calls: forbidden; declared =outcome_decision= only.
+- secret-bearing evidence: upstream redaction remains required; do not add credential capture fields.
+- ambiguous/weak evidence: remains =unknown= instead of forcing binary labels.
+
+* RED-first acceptance
+On untouched main, add one CL/Tek9/SWI integration contract that:
+1. records authoritative test failure and requires =failure=;
+2. records a later authoritative test success for the same scope with =supersedes_assertion_id= pointing at failure and requires =success=;
+3. records explicit partial, cancelled and timeout fixtures on separate scopes and requires exact non-binary outcomes;
+4. proves transport HTTP 200 alone remains =unknown=;
+5. restarts the expert host and queries =query_outcome_history= for the corrected scope with =limit= 8;
+6. requires both historical assertions, exact provenance, failure =replaced_by= success, and success =supersedes= failure;
+7. requires cross-scope supersession to fail without creating an assertion.
+
+Untouched main must fail because richer Prolog rules/history operation/replaced-by projection are missing. Production mutation is authorized only after that exact product RED executes.
+
+* Bounded implementation boundary after RED
+Authorized:
+- finite Prolog outcome rules for success/failure/partial/cancelled/timeout;
+- bounded outcome-history index/query in Common Lisp/Tek9;
+- immutable supersession relation and replaced-by projection;
+- restart durability and validation.
+
+Not authorized:
+- dataset export;
+- #13 outcome/cost analytics;
+- Beagle;
+- Python rule logic;
+- Tek9 repository mutation;
+- dotfiles mutation;
+- provider census implementation.
