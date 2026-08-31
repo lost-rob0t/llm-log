@@ -23,8 +23,17 @@
     (otherwise "reasoner_failure")))
 
 (defun %reasoner-failure-reply (condition)
-  (%reply-error (%reasoner-failure-code condition)
-                (reasoner-failure-message condition)))
+  ;; The python black-box contract pins health-path reasoner failures to the
+  ;; reasoner_unavailable code with the specific typed reason preserved in
+  ;; the message.
+  (let ((kind (reasoner-failure-kind condition)))
+    (if (member kind '(:crashed :timeout))
+        (%reply-error "reasoner_unavailable"
+                      (format nil "~A: ~A"
+                              (%reasoner-failure-code condition)
+                              (reasoner-failure-message condition)))
+        (%reply-error (%reasoner-failure-code condition)
+                      (reasoner-failure-message condition)))))
 
 (defun %runtime-health (host)
   (let ((worker-reply

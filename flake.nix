@@ -29,12 +29,30 @@
             lispLibs = [ tek9Package cl.jsown ];
           };
           sbclWithExpert = pkgs.sbcl.withPackages (_: [ expertLib ]);
+          # Precompiled SBCL core: loading the ASDF system per process costs
+          # ~1.3s, which blows the bounded first-RPC reply deadline. Save the
+          # fully loaded runtime as a core at build time so the packaged
+          # executable boots in a fraction of a second.
+          expertCore = pkgs.runCommand "llm-log-expert-core" {
+            nativeBuildInputs = [ sbclWithExpert ];
+          } ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            mkdir -p "$out/lib"
+            sbcl --noinform --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-system :llm-log-expert)' \
+              --eval "(sb-ext:save-lisp-and-die \"$out/lib/llm-log-expert.core\")"
+          '';
           expertService = pkgs.writeShellApplication {
             name = "llm-log-expert";
             runtimeInputs = [ sbclWithExpert pkgs.swi-prolog ];
             text = ''
-              export LLM_LOG_PROLOG_WORKER="${./expert/prolog/worker.pl}"
-              exec sbcl --noinform --script ${./expert/entrypoint.lisp} "$@"
+              : "''${LLM_LOG_PROLOG_WORKER:=${./expert/prolog/worker.pl}}"
+              export LLM_LOG_PROLOG_WORKER
+              exec sbcl --noinform --core ${expertCore}/lib/llm-log-expert.core --non-interactive \
+                --eval '(uiop:quit (llm-log-expert:main (uiop:command-line-arguments)))' \
+                "$@"
             '';
           };
           # Common Lisp runtime (zero-Python rewrite, research 012). The
