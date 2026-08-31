@@ -165,7 +165,9 @@
          (cons "task_id" task-id)
          (cons "pricing_snapshot_id" known-snapshot-id)
          (cons "known_cost_currency" known-currency)
-         (cons "known_cost_amount" known-total)
+         ;; Preserve exact arithmetic in durable assertions; normalize only the
+         ;; protocol response to JSON-style floating-point representation.
+         (cons "known_cost_amount" (float known-total 0.0))
          (cons "unknown_cost_state" (if unknown-p "unknown" "known"))
          (cons "request_count" (length seen-requests))
          (cons "kb_revision" (current-kb-revision host)))))))
