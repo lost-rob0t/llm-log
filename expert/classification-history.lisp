@@ -109,4 +109,4 @@ back to Tek9 SELECT or whole-corpus materialization."
                     (return))))))
           (when (>= (length results) limit)
             (return))))
-    (nreverse results)))
+    (nreverse results))))
