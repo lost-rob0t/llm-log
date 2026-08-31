@@ -151,7 +151,7 @@
                (rove:ok
                 (consp (jsown:val-safe entry "classification_assertion_ids")))
                (rove:ok (consp (jsown:val-safe entry "rule_ids")))
-               (rove:ok (consp (jsown:val-safe entry "evidence_ids")))))
+               (rove:ok (consp (jsown:val-safe entry "evidence_ids"))))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
         (uiop:delete-directory-tree
