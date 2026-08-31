@@ -93,8 +93,6 @@
         (payload (%request-payload request)))
     (handler-case
         (progn
-          ;; Retain the #10 event identity/provenance substrate and persist the
-          ;; exact classifier source as a separate immutable Tek9 projection.
           (project-request-event host event-id payload)
           (project-classification-source host event-id payload)
           (multiple-value-bind (assertions revision)
@@ -116,6 +114,18 @@
         (%reply-error "invalid_reasoner_result" (princ-to-string condition)))
       (error (condition)
         (%reply-error "classification_error" (princ-to-string condition))))))
+
+(defun %dispatch-classification-history-query (host request)
+  (handler-case
+      (%reply-ok
+       (%json-object
+        (cons "expert" "request.classifier.history")
+        (cons "expert_version" "request-classifier/1")
+        (cons "assertions"
+              (query-classification-history host (%request-payload request)))
+        (cons "kb_revision" (current-kb-revision host))))
+    (error (condition)
+      (%reply-error "invalid_request" (princ-to-string condition)))))
 
 (defun dispatch-expert-request (host request)
   "Dispatch only declared public expert-service operations."
@@ -142,11 +152,11 @@
            (%reply-error "invalid_request" (princ-to-string condition)))))
       ((equal operation "query_classification")
        (let ((payload (%request-payload request)))
-         ;; Preserve the old #10 event_transport fixture only for its explicit
-         ;; fixture payload; all typed request payloads use the #12 classifier.
          (if (equal (jsown:val-safe payload "fixture") "event_transport")
              (%dispatch-fixture-query host request)
              (%dispatch-classification-query host request))))
+      ((equal operation "query_classification_history")
+       (%dispatch-classification-history-query host request))
       (t
        (%reply-error "unknown_operation" "operation is not declared")))))
 

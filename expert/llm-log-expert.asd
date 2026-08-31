@@ -11,5 +11,6 @@
                (:file "host")
                (:file "prolog-supervisor")
                (:file "storage")
+               (:file "classification-history")
                (:file "service")
                (:static-file "prolog/worker.pl")))

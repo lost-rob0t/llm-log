@@ -7,8 +7,11 @@
                 #:open-database
                 #:close-database
                 #:db-is-open-p
+                #:doc-value
                 #:fetch*
                 #:put*
+                #:register-index
+                #:select-index-range
                 #:with-write-transaction)
   (:export
    #:runtime-config
