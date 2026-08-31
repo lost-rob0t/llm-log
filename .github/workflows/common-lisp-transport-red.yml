@@ -6,6 +6,7 @@ on:
       - rage/10-expert-runtime-red
       - rage/12-request-classifier-red
       - rage/12-classifier-query-red
+      - rage/12-classifier-time-range-red
   workflow_dispatch:
 
 permissions:
@@ -66,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-expert-policy-failure-${{ github.run_id }}
-          path: ${{ runner.temp }}/python-expert-policy.log
+          path: ${{ runner.temp/python-expert-policy.log }}
           if-no-files-found: error
           retention-days: 7
 
