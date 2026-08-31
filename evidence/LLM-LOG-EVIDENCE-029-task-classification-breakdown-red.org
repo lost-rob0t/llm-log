@@ -1,0 +1,36 @@
+#+title: LLM-LOG-EVIDENCE-029 Task classification breakdown RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: research research/LLM-LOG-RESEARCH-044-task-classification-breakdowns.org
+
+* Accepted RED
+Exact tested head: =7c6efbb087151e1db57c28fcaaa5abb40be1fefa=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33440318234
+
+The Common Lisp/Tek9/SWI-Prolog integration suite compiled and executed. All pre-existing #10/#12/#13 substrate, classifier, accounting, rollup, retry, and provider/model/client breakdown contracts passed. The new =task-classification-breakdown-red-contract= also proved the classifier events were accepted, task usage was durably accounted, the expert host restarted, and aggregate task totals remained =2 requests / 160 input / 70 output tokens=.
+
+The sole failing assertion was the intended product gap:
+
+#+begin_example
+Expect (PLUSP (LENGTH CLASSIFICATIONS)) to be true.
+CLASSIFICATIONS = NIL
+#+end_example
+
+Thus untouched production has no non-empty =query_task_accounting.result.breakdowns.classification= projection. This is accepted RED evidence.
+
+Home Manager was GREEN. The Python expert-policy/transport lane was executing independently; production authorization depends on the Common Lisp integration failure being the intended product gap, not on manufacturing a Python failure.
+
+* Rejected run
+Workflow run https://github.com/lost-rob0t/llm-log/actions/runs/33440103998 at =8c8c7061e181bbd801c3bc298341b2bc143d3ab9= is explicitly rejected as RED evidence. The new fixture had an unmatched parenthesis and failed during COMPILE-FILE with an end-of-file reader error before product behavior was exercised.
+
+* Production mutation boundary
+Authorized now:
+- Common Lisp bounded joins from the already-admitted task usage request IDs through Tek9's existing =classification-source-request-id= and =classification-assertion-source-event= indexes;
+- deterministic classification grouping by persisted =(dimension,value,state)=;
+- preservation of usage/cost/classification assertion, rule, and evidence provenance.
+
+Not authorized:
+- whole-corpus scans;
+- a new Python or Common Lisp classifier/rule engine;
+- outcome/success inference before #15 semantics;
+- Tek9 repository mutation absent a proven missing generic primitive;
+- dotfiles consumer changes for this query-only result extension.

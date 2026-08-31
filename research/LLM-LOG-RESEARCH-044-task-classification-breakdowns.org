@@ -1,0 +1,87 @@
+#+title: LLM-LOG-RESEARCH-044 Bounded task classification breakdowns
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+#+property: classifier https://github.com/lost-rob0t/llm-log/issues/12
+
+* Decision
+Implement the next bounded #13 slice as a provenance-preserving classification join over the finite task-rooted usage set already admitted by =query_task_accounting=. Do not add outcome analytics here; #15 must define outcome evidence/label semantics first.
+
+Python remains capture/transport only. Common Lisp owns bounded Tek9 retrieval and typed result projection. Tek9 remains the durable source for usage, classifier source records, classifier assertions, and cost assertions. SWI-Prolog remains the owner of classification and pricing inference; this slice does not add a Common Lisp or Python rule engine.
+
+* Analyze
+Current =query_task_accounting= already reconstructs a bounded task subtree and immutable usage observations, then =task-breakdowns.lisp= groups that same finite set by provider/model/client. Each usage record carries a durable =request-id=. #12 already persists classifier source records indexed by =classification-source-request-id= and classifier assertions indexed by =classification-assertion-source-event=. Therefore classification can be joined request-by-request without scanning the corpus and without adding a Tek9 primitive.
+
+Current task breakdown output has no classification dimension, so callers cannot answer #13's cost-by-request-classification requirement without independently re-reading classifier state and risking provenance loss or inconsistent filtering.
+
+* Research: typed contract
+Extend =query_task_accounting.result.breakdowns= with =classification=, a deterministic array. Each entry represents one persisted classifier assertion identity, keyed by the tuple =(dimension, value, state)= rather than collapsing ambiguous labels.
+
+Each classification entry contains:
+- =dimension=, =value=, =state=;
+- =request_count= and =usage_observation_count=;
+- token totals and known/partial/unknown cost projection using the same semantics as provider/model/client groups;
+- sorted =usage_observation_ids= and =cost_assertion_ids=;
+- sorted =classification_assertion_ids=;
+- sorted classifier =rule_ids= and =evidence_ids= for audit.
+
+A request may contribute to multiple classification groups because #12 is explicitly multi-label. Ambiguous assertions remain distinct groups; they are never treated as authority or silently promoted to a single label.
+
+If a usage request has no classifier source/assertion, it is not invented into a synthetic classification. Aggregate task totals remain complete and the classification projection is explicitly only the classified subset.
+
+* Bounded Tek9 join
+For each usage in the already-bounded task materialization:
+1. read its immutable =request-id=;
+2. =select-index-range= on =classification-source-request-id= with start=end=request-id and a finite per-request cap;
+3. for each matching source, query =classification-assertion-source-event= with the source event ID and a finite cap;
+4. retain only =request.classifier= assertions;
+5. group that finite join set by persisted =(dimension,value,state)= while carrying assertion/rule/evidence provenance.
+
+No =select= whole-corpus fallback is allowed. No new global task-classification index is required for this task-rooted slice. Existing Tek9 ordered secondary-index and point-fetch APIs are sufficient; therefore Tek9 repository mutation is not authorized.
+
+* Local protocol
+No new expert operation. =query_task_accounting= remains declared/versioned and bounded by =task_id=, =max_depth=, =max_nodes=, and =include_children=. Only the result schema gains =breakdowns.classification=.
+
+* Prolog boundary
+No new predicate is needed. #12's declared classifier predicates already produced durable assertions and #13's declared =task_cost= already produced immutable cost assertions. Common Lisp joins and groups those durable results; it does not re-run or reinterpret the rules.
+
+* Provenance and failure semantics
+- raw capture remains immutable evidence;
+- usage, classification, and cost assertions remain separate durable projections;
+- classification metadata grants no authority;
+- missing classification stays missing, never guessed from provider/client/message text;
+- superseded historical assertions are not deleted; this slice reports persisted classifier assertions and their IDs, leaving future revision-policy filtering to an explicit contract if needed;
+- unknown pricing stays unknown and mixed currencies remain partial;
+- task traversal/candidate truncation remains bounded; classification join caps are finite and must not trigger a corpus scan;
+- expert-plane unavailability does not alter Python proxy fail-open behavior.
+
+* Nix / non-Nix
+No packaging or consumer configuration change is required. Existing SBCL/Tek9/SWI-Prolog packaging and Home Manager/systemd/standalone launch paths remain authoritative. The dotfiles capture path remains =~/Documents/AI/proxy=.
+
+* Adversarial review
+** Risk: multi-label classification double counts aggregate task cost
+Control: classification groups are analytical projections only. The parent task aggregate remains computed once from deduplicated usage records; no grouped total is fed back into the aggregate.
+
+** Risk: arbitrary classifier records contaminate the join
+Control: require =expert-name=request.classifier= and join through the exact durable request source/event indexes.
+
+** Risk: ambiguity is collapsed
+Control: group by dimension + value + state. Preserve assertion IDs, rules, and evidence.
+
+** Risk: whole-corpus scan
+Control: classification lookup begins only from already-admitted bounded usage request IDs and each index step has a finite cap.
+
+** Risk: outcome semantics leak into #13
+Control: no success/failure grouping in this slice. #15 remains the authority for outcome evidence and label revision semantics.
+
+* RED-first acceptance
+Before production mutation, untouched main must execute a Common Lisp integration fixture that:
+- creates two classifier requests with known request IDs and distinct classifier outputs;
+- accounts matching usage observations under one task with immutable pricing/cost data;
+- restarts the expert host;
+- queries =query_task_accounting= with finite bounds;
+- requires a non-empty =breakdowns.classification= array;
+- requires every entry to retain classification assertion provenance plus usage/cost provenance;
+- proves the classification projection is derived from matching request IDs only;
+- proves existing aggregate/provider/model/client/retry behavior remains green.
+
+The untouched baseline should fail specifically because =breakdowns.classification= is absent. Syntax/setup/environment failures do not count as RED. Production mutation is forbidden until that exact failing contract is executed.

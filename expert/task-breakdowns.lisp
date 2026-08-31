@@ -3,6 +3,9 @@
 (defparameter *base-query-task-accounting-with-retry*
   (symbol-function 'query-task-accounting))
 
+(defconstant +max-task-classification-sources-per-request+ 16)
+(defconstant +max-task-classification-assertions-per-source+ 64)
+
 (defstruct (%breakdown-accumulator
             (:constructor %make-breakdown-accumulator (value)))
   value
@@ -23,6 +26,17 @@
   (cached-output-seen nil)
   (reasoning-total 0)
   (reasoning-seen nil))
+
+(defstruct (%classification-breakdown-accumulator
+            (:constructor %make-classification-breakdown-accumulator
+                (dimension value state)))
+  dimension
+  value
+  state
+  (usage (%make-breakdown-accumulator value))
+  (classification-assertion-ids '())
+  (rule-ids '())
+  (evidence-ids '()))
 
 (defun %bounded-task-usage-records (host payload)
   "Return the finite durable usage set admitted by QUERY_TASK_ACCOUNTING."
@@ -63,6 +77,7 @@
 
 (defun %breakdown-add-token (accumulator usage key total-reader total-writer
                               seen-reader seen-writer)
+  (declare (ignore seen-reader))
   (let ((value (getf usage key)))
     (when (numberp value)
       (funcall total-writer
@@ -79,7 +94,8 @@
       (setf (gethash request-id
                      (%breakdown-accumulator-requests accumulator))
             t))
-    (push usage-id (%breakdown-accumulator-usage-ids accumulator))
+    (pushnew usage-id (%breakdown-accumulator-usage-ids accumulator)
+             :test #'equal)
     (%breakdown-add-token
      accumulator usage :input-tokens
      #'%breakdown-accumulator-input-total
@@ -122,7 +138,8 @@
        (setf (%breakdown-accumulator-reasoning-seen object) value)))
     (let ((cost-id (and (listp cost) (getf cost :cost-assertion-id))))
       (when (%non-empty-string-p cost-id)
-        (push cost-id (%breakdown-accumulator-cost-ids accumulator))))
+        (pushnew cost-id (%breakdown-accumulator-cost-ids accumulator)
+                 :test #'equal)))
     (if (and (listp cost)
              (equal "known" (getf cost :state))
              (numberp (getf cost :amount))
@@ -206,15 +223,154 @@
                         collect accumulator)
                   #'%breakdown-value<))))
 
+(defun %classification-source-records-for-request (host request-id)
+  (when (%non-empty-string-p request-id)
+    (remove-if-not
+     (lambda (projection)
+       (and (listp projection)
+            (%non-empty-string-p (getf projection :event-id))
+            (equal request-id (getf projection :request-id))))
+     (select-index-range
+      (expert-host-database host)
+      "classification-source-request-id" request-id
+      :end request-id
+      :limit +max-task-classification-sources-per-request+))))
+
+(defun %classification-assertions-for-source (host source)
+  (let ((event-id (getf source :event-id)))
+    (when (%non-empty-string-p event-id)
+      (remove-if-not
+       #'%classifier-assertion-p
+       (select-index-range
+        (expert-host-database host)
+        "classification-assertion-source-event" event-id
+        :end event-id
+        :limit +max-task-classification-assertions-per-source+)))))
+
+(defun %classification-group-key (assertion)
+  (let ((value (getf assertion :value)))
+    (list (getf value :dimension)
+          (getf value :value)
+          (getf value :state))))
+
+(defun %classification-group-valid-p (key)
+  (every #'%non-empty-string-p key))
+
+(defun %classification-add-provenance (accumulator assertion)
+  (let ((value (getf assertion :value)))
+    (pushnew (getf assertion :assertion-id)
+             (%classification-breakdown-accumulator-classification-assertion-ids
+              accumulator)
+             :test #'equal)
+    (pushnew (getf value :rule-id)
+             (%classification-breakdown-accumulator-rule-ids accumulator)
+             :test #'equal)
+    (dolist (evidence-id (getf value :evidence-ids))
+      (pushnew evidence-id
+               (%classification-breakdown-accumulator-evidence-ids accumulator)
+               :test #'equal))))
+
+(defun %classification-add-usage-once (host accumulator usage)
+  (let* ((base (%classification-breakdown-accumulator-usage accumulator))
+         (usage-id (getf usage :usage-id)))
+    (unless (member usage-id (%breakdown-accumulator-usage-ids base)
+                    :test #'equal)
+      (%breakdown-add-usage host base usage))))
+
+(defun %classification-breakdown-key< (left right)
+  (labels ((before-p (left-value right-value)
+             (cond
+               ((string< left-value right-value) t)
+               ((string> left-value right-value) nil)
+               (t :equal))))
+    (let ((dimension-order
+            (before-p
+             (%classification-breakdown-accumulator-dimension left)
+             (%classification-breakdown-accumulator-dimension right))))
+      (if (eq dimension-order :equal)
+          (let ((value-order
+                  (before-p
+                   (%classification-breakdown-accumulator-value left)
+                   (%classification-breakdown-accumulator-value right))))
+            (if (eq value-order :equal)
+                (string<
+                 (%classification-breakdown-accumulator-state left)
+                 (%classification-breakdown-accumulator-state right))
+                value-order))
+          dimension-order))))
+
+(defun %json-merge-objects (&rest objects)
+  (cons :obj
+        (loop for object in objects
+              append (copy-list (cdr object)))))
+
+(defun %classification-breakdown-entry-json (accumulator)
+  (let* ((base (%classification-breakdown-accumulator-usage accumulator))
+         (entry (%breakdown-entry-json base)))
+    (%json-merge-objects
+     (%json-object
+      (cons "dimension"
+            (%classification-breakdown-accumulator-dimension accumulator))
+      (cons "state"
+            (%classification-breakdown-accumulator-state accumulator)))
+     entry
+     (%json-object
+      (cons "classification_assertion_ids"
+            (sort
+             (remove-if-not
+              #'%non-empty-string-p
+              (copy-list
+               (%classification-breakdown-accumulator-classification-assertion-ids
+                accumulator)))
+             #'string<))
+      (cons "rule_ids"
+            (sort
+             (remove-if-not
+              #'%non-empty-string-p
+              (copy-list
+               (%classification-breakdown-accumulator-rule-ids accumulator)))
+             #'string<))
+      (cons "evidence_ids"
+            (sort
+             (remove-if-not
+              #'%non-empty-string-p
+              (copy-list
+               (%classification-breakdown-accumulator-evidence-ids accumulator)))
+             #'string<))))))
+
+(defun %classification-breakdown (host usages)
+  (let ((groups (make-hash-table :test #'equal)))
+    (dolist (usage usages)
+      (let ((request-id (getf usage :request-id)))
+        (dolist (source (%classification-source-records-for-request host request-id))
+          (dolist (assertion (%classification-assertions-for-source host source))
+            (let ((key (%classification-group-key assertion)))
+              (when (%classification-group-valid-p key)
+                (destructuring-bind (dimension value state) key
+                  (let ((accumulator
+                          (or (gethash key groups)
+                              (setf (gethash key groups)
+                                    (%make-classification-breakdown-accumulator
+                                     dimension value state)))))
+                    (%classification-add-provenance accumulator assertion)
+                    (%classification-add-usage-once host accumulator usage)))))))))
+    (mapcar
+     #'%classification-breakdown-entry-json
+     (sort
+      (loop for accumulator being the hash-values of groups
+            collect accumulator)
+      #'%classification-breakdown-key<))))
+
 (defun %task-usage-breakdowns (host payload)
   (let ((usages (%bounded-task-usage-records host payload)))
     (%json-object
      (cons "provider" (%dimension-breakdown host usages :provider))
      (cons "model" (%dimension-breakdown host usages :model))
-     (cons "client" (%dimension-breakdown host usages :client)))))
+     (cons "client" (%dimension-breakdown host usages :client))
+     (cons "classification" (%classification-breakdown host usages)))))
 
 (defun query-task-accounting (host payload)
-  "Add bounded provider/model/client projections to the durable task rollup."
+  "Add bounded provider/model/client/classification projections to the durable task rollup."
   (let ((result
           (funcall *base-query-task-accounting-with-retry* host payload)))
     (append result

@@ -12,6 +12,7 @@ on:
       - rage/13-task-rollup-red
       - rage/13-retry-attempt-red
       - rage/13-usage-breakdown-red
+      - rage/13-classification-breakdown-red
   workflow_dispatch:
 
 permissions:
@@ -33,6 +34,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The RED contract must fail on product behavior, never fixture syntax.
           nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract \
             2>&1 | tee "$RUNNER_TEMP/common-lisp-expert.log"
 
