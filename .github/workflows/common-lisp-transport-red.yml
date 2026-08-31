@@ -5,6 +5,7 @@ on:
     branches:
       - rage/10-expert-runtime-red
       - rage/12-request-classifier-red
+      - rage/12-classifier-query-red
   workflow_dispatch:
 
 permissions:
