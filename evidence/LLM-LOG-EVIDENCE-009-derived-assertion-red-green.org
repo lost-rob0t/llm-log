@@ -1,0 +1,81 @@
+#+title: LLM-LOG-EVIDENCE-009 — #10 derived assertion provenance RED/GREEN
+#+startup: overview
+
+* Scope
+Research/design authority: =research/LLM-LOG-RESEARCH-025-derived-assertion-provenance-supersession.org=
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+This file records implementation evidence only. It is distinct from raw capture evidence and from the canonical research/design document.
+
+* Broken fixture — not RED
+Commit: =3bd9bd1179a04a490af48b75b1c213988f911ef8=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33308422242
+
+The first test-only attempt failed while compiling =expert/tests/expert-roundtrip-red.lisp= with an unmatched close parenthesis. It did not reach the product boundary and is not counted as RED.
+
+* Valid RED
+Commit: =e4c61b7252fedf8b3dcf2827ccede73007aa7b2e=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33308526544
+Job: =common-lisp-expert-integration-contract=
+
+The corrected test-only head compiled and executed through the real Nix/SBCL/Tek9/SWI-Prolog integration environment.
+
+Existing #10 behavior remained GREEN before the new assertion test:
+- expert host opened Tek9 + live SWI worker;
+- event projection advanced durable KB revision;
+- bounded primary-key event fetch succeeded;
+- declared =event_transport= inference succeeded;
+- rule-version and KB-revision binding succeeded;
+- persistent Prolog-worker reuse succeeded;
+- undeclared operation rejection succeeded.
+
+The new assertion contract then failed specifically with:
+
+=UNDEFINED-FUNCTION: LLM-LOG-EXPERT::PERSIST-DERIVED-ASSERTION=
+
+This is the valid preimplementation RED.
+
+* Production implementation
+Commit: =b7a9bc74ae7e02b3c9af6e77471e2e85a36e3ad6=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33308577798
+Conclusion: GREEN.
+
+The implementation uses only existing Tek9 public APIs and adds stable =assertion:<id>= documents. The unchanged RED contract proves:
+- bounded source-event validation;
+- durable source ID provenance;
+- expert name/version provenance;
+- rule-version provenance;
+- derivation type and value persistence;
+- publication KB revision binding;
+- identical replay returns =:existing= without revision bump;
+- contradictory same-ID replay signals =assertion-conflict= without overwrite/revision bump;
+- supersession creates a new assertion with explicit backward link;
+- prior assertion remains unchanged;
+- raw source-event projection remains unchanged;
+- missing superseded assertion rejects without revision bump.
+
+* Exact exported head GREEN
+Commit: =983dca3f8741edf9f32913ae93fa22e715f70ed0=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33308588756
+Conclusion: GREEN.
+
+This successor only exports the assertion substrate/condition from the =llm-log-expert= package. The same integration contract remains GREEN on that exact head.
+
+* Boundary conclusions
+- No Tek9 repository change was required; =fetch*=, =put*= and =with-write-transaction= were sufficient.
+- No Python rule engine was added.
+- No transport ownership changed: Python remains capture/transport under current program authority.
+- SWI-Prolog remains the inference authority; assertion persistence records validated derivations rather than evaluating policy in Common Lisp.
+- Historical assertion revision is append/supersede, not delete/overwrite.
+- No dotfiles change was required; the existing consumer capture path remains outside this expert substrate slice.
+
+* Not claimed
+This slice does not claim:
+- automatic persistence from every expert operation;
+- classification/task/cost/outcome/Beagle experts;
+- an implicit latest-assertion index;
+- full assertion graph traversal;
+- reasoner crash/restart recovery beyond the previously proven worker substrate;
+- provider census progress;
+- SSE/WebSocket transport conformance.

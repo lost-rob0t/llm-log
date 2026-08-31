@@ -1,0 +1,62 @@
+#+title: LLM-LOG-EVIDENCE-019 — Request classifier timestamp/range RED → GREEN
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Research: research/LLM-LOG-RESEARCH-038-request-classifier-time-range.org
+Branch: rage/12-classifier-time-range-red
+Baseline main: 7fda17e25195b21bc7cbac9e3bd850923874e42b
+
+This file is implementation/test evidence only. RESEARCH-038 is design authority. Raw capture evidence and durable expert assertions remain separate from this document.
+
+* RED
+Exact RED head: =b3a1fcab67e17bf5de46f68c6e99d3bcbe8e8077=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33391599303
+
+Observed:
+- existing #10 Common Lisp/Tek9/SWI-Prolog substrate contracts passed;
+- existing #12 compound classification, equality-index history/restart, ambiguity and non-authority contracts passed;
+- Python expert policy/adapter/transport/launch contracts passed;
+- Home Manager expert wiring passed;
+- new =request-classifier-time-range-red-contract= failed only at the missing timestamp-range behavior;
+- the service returned =status=error=, =code=invalid_request= and =bounded_query_required: request_id, user_message_id, provider, or model is required= for the bounded time-only query;
+- no classifier assertions were returned for that rejected query;
+- failure artifact =common-lisp-expert-failure-33391599303= was preserved by CI.
+
+This independently demonstrates the baseline failure before production mutation.
+
+* Design reconciliation during implementation
+Initial ARADR considered copying =started_at= into classifier-source projections. Source inspection rejected that mutation: request-event projections already own immutable =started_at= evidence and the existing Tek9 =classification-source-started-at= ordered index keys those event documents. Duplicating the field would create unnecessary classifier-source schema/replay risk.
+
+RESEARCH-038 was updated before final implementation to require a bounded event-index -> classifier-source point join instead.
+
+* GREEN implementation
+Implementation head: =ed476bb3d8bb01a854cad4fd871269fd5aa72fa7=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33391987794
+Result: =success=
+
+Behavior now verified:
+- =query_classification_history= accepts canonical whole-second UTC =started_at_gte= / =started_at_lt=;
+- time-only retrieval requires a complete finite half-open range;
+- equality-seeded retrieval may add one-sided or two-sided time filtering;
+- inverted ranges and malformed timestamps are typed request failures;
+- the existing Tek9 ordered time index performs bounded candidate retrieval;
+- time-range candidates are request-event projections, then classifier sources are fetched by stable event ID;
+- equality candidates are classifier sources, then request-event projections are fetched by stable event ID;
+- the explicit Common Lisp predicate enforces =[gte,lt)= even if Tek9 returns the range endpoint;
+- results carry event =started_at= plus assertion/rule/evidence/expert/KB/supersession provenance;
+- no full Tek9 scan and no whole-corpus Prolog materialization were introduced;
+- no caller-controlled index or Prolog term was introduced;
+- no Python rule engine was introduced;
+- Tek9 repository, SWI-Prolog classifier rules, Python capture/transport and dotfiles were unchanged.
+
+* GREEN gates
+Run =33391987794= completed =success= on exact =ed476bb3d8bb01a854cad4fd871269fd5aa72fa7=.
+
+Required jobs:
+- =common-lisp-expert-integration-contract=: success, including the new timestamp/range test;
+- =python-expert-policy-contract=: success;
+- =home-manager-expert-contract=: success.
+
+* Merge gate
+This evidence commit changes the exact branch head, so the preceding GREEN run is not sufficient for merge eligibility by itself. The post-evidence exact head must independently execute GREEN and remain mergeable. Reviews/comments/rules are inspected fresh before merge.

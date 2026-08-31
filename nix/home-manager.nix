@@ -11,6 +11,12 @@ let
     upstreamNames;
   extraArgs = concatMapStringsSep " " escapeShellArg cfg.extraArgs;
   classifierArg = optionalString (!cfg.enablePrologClassifier) "--no-prolog-classifier";
+  expertServiceArg = optionalString cfg.expert.enable
+    "--expert-service-bin ${escapeShellArg "${cfg.expert.package}/bin/llm-log-expert"}";
+  expertDataDirArg = optionalString cfg.expert.enable
+    "--expert-data-dir ${escapeShellArg cfg.expert.dataDir}";
+  requireExpertArg = optionalString (cfg.expert.enable && cfg.expert.require)
+    "--require-expert-plane";
   command = concatMapStringsSep " " (value: value) (builtins.filter (value: value != "") [
     "${cfg.package}/bin/llm-log"
     "serve"
@@ -19,6 +25,9 @@ let
     "--log-dir ${escapeShellArg cfg.dataDir}"
     upstreamArgs
     classifierArg
+    expertServiceArg
+    expertDataDirArg
+    requireExpertArg
     extraArgs
   ]);
 in
@@ -67,6 +76,30 @@ in
         chatgpt = "https://chatgpt.com";
       };
       description = "Provider-prefix to upstream base URL mapping.";
+    };
+
+    expert = {
+      enable = mkEnableOption "Common Lisp llm-log expert plane";
+
+      package = mkOption {
+        type = types.package;
+        default = self.packages.${system}.llm-log-expert;
+        defaultText = lib.literalExpression "inputs.llm-log.packages.${pkgs.stdenv.hostPlatform.system}.llm-log-expert";
+        description = "Packaged Common Lisp expert service launched as a child of llm-log.";
+      };
+
+      dataDir = mkOption {
+        type = types.str;
+        default = "${config.home.homeDirectory}/.llm-proxy/expert";
+        defaultText = lib.literalExpression ''"${config.home.homeDirectory}/.llm-proxy/expert"'';
+        description = "Mutable Tek9/expert-plane state directory, separate from append-only capture evidence.";
+      };
+
+      require = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Fail closed before upstream contact when the configured expert plane is unavailable.";
+      };
     };
 
     extraArgs = mkOption {

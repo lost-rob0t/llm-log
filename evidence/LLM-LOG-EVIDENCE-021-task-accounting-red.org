@@ -1,0 +1,29 @@
+#+title: LLM-LOG-EVIDENCE-021 Task accounting accepted RED
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: research ../research/LLM-LOG-RESEARCH-040-task-graph-usage-cost.org
+
+* Baseline
+The bounded #13 slice started from =llm-log/main= at =a33f28ca51d347fd35961fdd9e927834777389db=.
+
+* Accepted RED
+The accepted exact RED head is =870df9c013c88d9a0590b0fb2e64955fa77206c4= on =rage/13-task-accounting-red=.
+Hosted workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33402676106
+
+Results:
+- =home-manager-expert-contract=: GREEN.
+- =python-expert-policy-contract=: GREEN.
+- =common-lisp-expert-integration-contract=: RED.
+- All existing #10 and #12 integration contracts passed before the new #13 fixture.
+- The only failing test is =task-accounting-red-contract=.
+- =account_task_usage= returned status =error= with no result on the untouched production expert service, so the expected task ID, pricing snapshot ID, exact known cost, explicit unknown-cost state, and request count were absent.
+
+This is the required behavioral RED: the test compiles and executes against the existing Common Lisp/Tek9/SWI-Prolog stack, while unrelated Python and Home Manager gates remain green.
+
+* Rejected runs
+Two earlier branch runs are not accepted as RED evidence. One exposed malformed Common Lisp test structure; another also included an accidental workflow mutation that replaced the existing Home Manager test invocation. Both defects were corrected. The accepted run above restores the =main= Home Manager invocation and fails only at the intended new #13 behavior.
+
+* Mutation boundary
+No production task-accounting code was added before this accepted RED. No Tek9 repository change was made. No dotfiles consumer change was made. Raw capture configuration, including =~/Documents/AI/proxy=, remains untouched.
+
+* Next production slice
+The next mutation may implement only the bounded first #13 substrate defined by research 040: typed task/child/request attachments, immutable usage observations, immutable pricing snapshots, derived cost assertions with rule/expert/evidence provenance, exact known-price accounting, explicit unknown pricing, and idempotent request accounting. SWI-Prolog remains the rule/inference owner; Common Lisp remains runtime/Tek9/validation owner; Python remains capture/transport only.

@@ -1,0 +1,39 @@
+#+title: LLM-LOG-EVIDENCE-017 — Request classifier RED/GREEN
+#+startup: overview
+
+* Scope
+Implementation evidence for issue #12 under canonical design:
+- research/LLM-LOG-RESEARCH-036-request-classification-expert.org
+- parent expert plane #8
+- merged substrate #10
+
+This file is implementation evidence, not raw capture evidence and not architectural authority.
+
+* RED — independently executed
+Branch head: f5e15c2f1fbd8800d767ab8eb701f353ab151668
+Hosted workflow: https://github.com/lost-rob0t/llm-log/actions/runs/33371681379
+
+The Common Lisp/Tek9/SWI-Prolog integration job failed only after the existing #10 roundtrip, provenance/supersession, and reasoner-recovery contracts passed. The new request-classifier contract failed because =query_classification= still returned the fixture-only error path: status was error, assertions were NIL, and the required compound multi-label assertions were absent. Python expert-policy and Home Manager expert contracts remained GREEN.
+
+This establishes the missing production behavior before mutation; it is not inferred from source inspection alone.
+
+* GREEN — first bounded classifier surface
+Code head: 1d3df6883a3576a9f4d44e565f14538006a46da2
+Hosted workflow: https://github.com/lost-rob0t/llm-log/actions/runs/33376690937
+
+The same Common Lisp/Tek9/SWI-Prolog job passed after implementation. Home Manager passed and Python expert-policy passed on the same exact head.
+
+Implemented boundary:
+- Python remains capture/transport; no Python classifier/rule engine was added.
+- Common Lisp validates typed classifier input/results, owns Tek9 persistence, bounds result count, and supervises the reasoner.
+- SWI-Prolog owns the declared =request_classification= rules.
+- The Prolog supervisor whitelist was extended only with the declared classifier operation; arbitrary callable terms remain rejected.
+- Exact user-message source evidence is stored separately from derived assertions in Tek9.
+- Derived classifier assertions retain rule/version, expert version, state/confidence, and grounded evidence IDs.
+- Classifier assertion publication uses stable IDs and existing immutable assertion conflict/supersession semantics.
+- Result materialization is bounded to 32 assertions and uses only the single source record selected by stable event identity; no corpus load occurs.
+- No Tek9 repository mutation was required. Existing public point lookup/write/transaction APIs were sufficient for this slice.
+- No dotfiles consumer mutation is required by this classifier slice.
+
+* Remaining #12 acceptance
+This bounded slice proves the compound multi-label contract and durable source/assertion path. Do not close #12 solely from this evidence. The canonical design still calls for explicit ambiguity coverage plus bounded indexed query acceptance by request/user-message/provider/model/time and restart/query conformance. Those should remain follow-up #12 work unless subsequently evidenced by a newer artifact.

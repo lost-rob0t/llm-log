@@ -1,0 +1,104 @@
+#+title: LLM-LOG-RESEARCH-030 — Expert launch and configuration contract
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+Bounded Auto-ARADR decision for making the already-proven Common Lisp expert service reachable from ordinary Python capture-proxy launches without moving expert semantics into Python. This document supersedes conflicting zero-Python prose in #8/#10/#20 for this boundary: Python remains transparent HTTP/SSE/WebSocket capture/transport; Common Lisp owns expert runtime, typed expert objects, Tek9 access, bounded fact materialization, SWI-Prolog supervision and result validation.
+
+* Analyze
+The active branch already packages =llm-log-expert= with SBCL, Tek9 and SWI-Prolog. =SubprocessExpertPlane= owns a long-lived child and the aiohttp lifecycle starts/closes it. However the pre-slice =llm_log/cli.py= never constructed that adapter and the Home Manager module has no expert-plane options. Therefore ordinary =llm-log serve= and the generated systemd user service could not yet enable the expert plane even though the substrate itself was executable.
+
+The consumer dotfiles currently pins an older stable llm-log revision and keeps raw capture at =~/Documents/AI/proxy=. That consumer remains untouched until the upstream launch/configuration contract is proven.
+
+* Research
+The smallest authority-preserving integration is configuration of the existing subprocess boundary, not a second Python expert implementation and not a second independent systemd daemon.
+
+Python may know only how to launch the declared Common Lisp service command and where its mutable expert state lives. The child continues to speak the versioned JSON-lines protocol and Common Lisp remains the only Tek9/SWI-Prolog authority.
+
+Mutable expert state must remain separate from immutable raw capture evidence. The reusable default expert state is =~/.llm-proxy/expert=. Home Manager may override it explicitly. The raw capture default/path is not changed by this slice.
+
+Credentials are neither expert configuration nor expert state. The launch contract must not accept or serialize provider credentials, and no credential value may enter Nix derivation text.
+
+* Design
+** Python CLI contract
+Add explicit =llm-log serve= options:
+- =--expert-service-bin PATH= — enables the concrete expert adapter using this executable;
+- =--expert-data-dir PATH= — mutable Tek9/expert state, default =~/.llm-proxy/expert=;
+- =--require-expert-plane= — explicit fail-closed policy; without it the existing fail-open policy remains authoritative.
+
+When no expert service binary is configured, behavior is unchanged and no expert child is launched. When configured, Python constructs exactly one =SubprocessExpertPlane= argv vector:
+
+#+begin_example
+<expert-bin> serve --stdio --data-dir <expert-data-dir>
+#+end_example
+
+No shell interpolation and no arbitrary Prolog goal surface are introduced.
+
+** Home Manager/systemd contract
+The next bounded sub-slice should extend =services.llm-log= with an =expert= submodule:
+- =expert.enable=, default false;
+- =expert.package=, default =self.packages.${system}.llm-log-expert=;
+- =expert.dataDir=, default =~/.llm-proxy/expert= using the configured home directory;
+- =expert.require=, default false.
+
+When enabled, the existing =llm-log.service= systemd user unit should pass the packaged expert executable and expert data directory to the Python transport process. The expert remains a supervised child of the proxy, matching the already-tested adapter lifecycle. No duplicate standalone daemon is created.
+
+** Non-Nix path
+The Python CLI flags are the ordinary non-Nix integration surface. A source-installed Common Lisp service may be supplied through =--expert-service-bin= once its ASDF dependencies (Tek9, JSOWN) and =swipl= are available. Nix remains the reproducible packaging path; non-Nix is not allowed to rely on hidden machine-specific paths.
+
+** Failure semantics
+- expert disabled: transport behavior unchanged;
+- expert configured but unavailable: existing default fail-open behavior;
+- expert configured + =--require-expert-plane=: existing fail-closed behavior before upstream contact;
+- expert startup/health failure never exposes child stderr or credentials in proxy responses;
+- no implicit replay of ambiguous expert exchanges.
+
+* Tek9 schema and database boundary
+No Tek9 mutation is required. This work changes only launch/configuration of the already-proven Common Lisp host. Existing public Tek9 package/API and bounded primary-key retrieval remain sufficient.
+
+Expert state remains durable Tek9 state beneath the configured expert directory. Raw capture evidence remains separately owned by the Python recorder and is never rewritten into Tek9 by launch configuration.
+
+* Adversarial review
+- Do not create a Python rule engine, classifier replacement, pricing table or outcome policy.
+- Do not expose a generic command string that is shell-evaluated; use an executable path plus fixed declared argv.
+- Do not start a second systemd expert daemon while the proxy also owns a child; one lifecycle authority avoids duplicate writers and ambiguous recovery.
+- Do not derive expert mutable-state paths from the raw capture path implicitly. The user's =~/Documents/AI/proxy= raw corpus must remain unchanged unless the consumer explicitly opts into a separate expert path later.
+- Do not put provider credentials, authorization headers or secret environment values in Nix options/derivations.
+- Do not claim Home Manager GREEN from the CLI contract.
+
+* RED — CLI launch sub-slice
+Test-only contract commit: =9a4d952b747f9a268074a4a5fa2b51fdbe855d6b=
+Workflow wiring head: =baf99df62535f970bda6aaf2bb1be5aa9597aba0=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33330277955
+
+The run reached the intended missing production surface. All 13 pre-existing Python expert-policy/adapter/HTTP-WebSocket lifecycle tests were GREEN, and the independent Common Lisp/Tek9/SWI-Prolog job was GREEN. Only the three new launch assertions failed:
+- argparse rejected =--expert-service-bin=, =--expert-data-dir= and =--require-expert-plane=;
+- =llm_log.cli= had no =SubprocessExpertPlane= construction surface;
+- the default CLI did not pass explicit =expert_plane=None= / =require_expert_plane=False= into =build_app=.
+
+This is valid RED. It is not a syntax, import, fixture, Nix-closure or unrelated regression failure.
+
+* GREEN — CLI launch sub-slice
+Production commit: =76e225298bcac9883936a81ca2400b43b3c2a6d2=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33330385523
+
+The unchanged 16-test Python contract is GREEN, and the independent Common Lisp/Tek9/SWI-Prolog job is GREEN on the same exact implementation head.
+
+The production mutation is bounded to =llm_log/cli.py=:
+- imports the existing =SubprocessExpertPlane=;
+- exposes the three declared expert launch/policy flags;
+- defaults expert mutable state to =~/.llm-proxy/expert=;
+- constructs exactly one adapter from an executable path plus fixed service arguments;
+- leaves the expert disabled when no executable is configured;
+- maps =--require-expert-plane= to the already-proven fail-closed policy.
+
+No Tek9 code, Prolog rules, expert semantics, proxy forwarding semantics, provider routing or dotfiles consumer configuration changed.
+
+* Decision
+Accept the Python CLI launch sub-slice as executed RED -> GREEN. This proves the normal non-Nix-facing proxy launch surface for an already-available Common Lisp expert executable.
+
+Home Manager/systemd wiring is deliberately not claimed by this evidence. It remains the next bounded #10 sub-slice and requires its own executable RED before =nix/home-manager.nix= is mutated.
+
+Do not mutate dotfiles or Tek9 from this decision. PR #5 remains a separate configuration transaction and is not imported into #24.

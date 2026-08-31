@@ -1,0 +1,140 @@
+#+title: LLM-LOG-RESEARCH-025 — #10 derived assertion provenance and supersession
+#+startup: overview
+
+* Scope
+Parent: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+
+This is one bounded Auto-ARADR decision for the expert plane only.
+
+Authority for this slice:
+- Python remains capture/transport and owns immutable raw traffic evidence.
+- Common Lisp owns the expert runtime and typed durable assertion projection.
+- Tek9 remains the canonical durable expert KB.
+- SWI-Prolog remains facts/rules/inference authority.
+- No Python rule engine and no Common Lisp policy duplication are introduced.
+
+The zero-Python wording still present in #8/#10/#20 conflicts with the current explicit program direction and PR #24. This document follows the current explicit direction and does not mutate transport ownership.
+
+* Analyze
+Current =expert/storage.lisp= already provides bounded primary-key event projection with stable IDs, transactional KB revision mutation, identical replay idempotency, contradictory replay rejection, and bounded event lookup. Current =expert/tests/expert-roundtrip-red.lisp= proves event -> Tek9 -> declared Prolog -> typed result, but the derived result is returned transiently. There is no durable derived-assertion record and therefore no executable proof of:
+
+- source-event linkage;
+- expert identity/version linkage;
+- rule-version linkage;
+- derivation type;
+- historical revision preservation;
+- explicit supersession without deletion/overwrite.
+
+This is the smallest missing substrate needed before #12/#13/#15/#17 can safely persist expert outputs.
+
+* Research
+** Tek9 boundary
+Use existing Tek9 public transactional primary-key APIs already consumed by llm-log: =with-write-transaction=, =fetch*=, and =put*=. No Tek9 repository mutation is justified for this slice.
+
+Bounded access rule: assertion writes and reads use stable primary keys. Supersession receives the prior assertion ID explicitly; it never scans the corpus to discover history.
+
+** Typed assertion schema
+Stable document key:
+
+=assertion:<assertion-id>=
+
+Required fields:
+- schema version;
+- assertion ID;
+- source IDs (initial slice: exactly one source event ID, represented as a list for forward compatibility);
+- expert name;
+- expert version;
+- rule version;
+- derivation type;
+- typed value;
+- KB revision at publication;
+- optional =supersedes= assertion ID.
+
+Raw event documents are never mutated by assertion persistence.
+
+** Supersession semantics
+A later assertion may name one prior assertion ID. Publication must verify that the prior assertion exists. The new assertion is a new durable document and points backward through =supersedes=. The prior assertion document remains byte-for-byte/logically unchanged; no delete and no in-place label rewrite occurs.
+
+This initial substrate does not invent an implicit "latest assertion" index. Callers can maintain or query an explicit bounded chain in later slices. Avoiding a new index keeps the first proof generic and prevents hidden full-corpus scans.
+
+** Idempotency/conflict
+Stable assertion IDs use the same semantics as event IDs:
+- identical replay -> =:existing= and no KB revision bump;
+- contradictory replay under the same assertion ID -> explicit =assertion-conflict= and no overwrite;
+- new assertion -> =:created= and one KB revision bump.
+
+** Provenance
+Persisted assertions must carry all of:
+- source event ID(s);
+- expert name + expert version;
+- rule version;
+- derivation type;
+- publication KB revision.
+
+The publication revision is the revision produced by the same Tek9 transaction that creates the assertion.
+
+* Design
+Public Common Lisp substrate operations for the bounded slice:
+
+- =persist-derived-assertion HOST ASSERTION-ID SOURCE-EVENT-ID EXPERT-NAME EXPERT-VERSION RULE-VERSION DERIVATION-TYPE VALUE &key SUPERSEDES=
+- =fetch-derived-assertion HOST ASSERTION-ID=
+
+A dedicated =assertion-conflict= condition mirrors event conflict semantics.
+
+Publication transaction:
+1. bounded fetch source event by =event:<id>=; reject unknown source;
+2. if =supersedes= is supplied, bounded fetch =assertion:<id>=; reject unknown prior assertion;
+3. construct typed projection;
+4. fetch stable assertion key;
+5. if absent, increment =meta:kb-revision=, write assertion with that publication revision, write revision;
+6. if projection is identical to existing, return =:existing= with unchanged revision;
+7. otherwise signal =assertion-conflict=.
+
+No Prolog call occurs in persistence; SWI-Prolog remains inference authority and Common Lisp only validates/persists the already-derived typed result.
+
+* Failure semantics
+- unknown source event: explicit failure, no write, no revision change;
+- unknown =supersedes=: explicit failure, no write, no revision change;
+- contradictory stable assertion ID: =assertion-conflict=, no overwrite, no revision change;
+- Tek9 transaction failure: no partially published assertion;
+- raw source event remains unchanged in every case.
+
+* Adversarial review
+Threats considered:
+- silently overwriting a historical label: rejected by stable-key conflict semantics;
+- deleting prior assertions during revision: forbidden; new record only;
+- corpus scan to find source/history: forbidden; explicit bounded IDs only;
+- fabricated provenance: caller must supply typed provenance, and source/superseded assertion existence is verified before write;
+- rule/expert version omitted: contract rejects empty strings;
+- assertion publication mutates raw evidence: acceptance snapshots the source event before/after supersession and requires equality;
+- revision drift on replay/conflict: acceptance requires no KB revision bump for both;
+- second Common Lisp rule engine: no rule evaluation is added here.
+
+* Decision
+Proceed with one RED-first implementation slice for durable derived assertions and supersession using existing Tek9 APIs. Do not modify Tek9, dotfiles, transport, provider census, or downstream experts.
+
+* Exact RED-first acceptance
+Before production mutation, extend the existing #10 Common Lisp integration contract on the untouched implementation so it requires:
+
+1. create one source request event;
+2. persist assertion =fixture-assertion-1= with source, expert version, rule version, derivation type and value;
+3. fetch it by primary key and verify all provenance plus publication KB revision;
+4. replay the identical assertion and require =:existing= with no revision bump;
+5. attempt contradictory replay under =fixture-assertion-1= and require =assertion-conflict= with the original assertion unchanged and no revision bump;
+6. persist =fixture-assertion-2= with =supersedes= =fixture-assertion-1=;
+7. verify assertion 1 still exists unchanged and assertion 2 links backward to it;
+8. verify raw source-event projection is unchanged by both assertion publications;
+9. attempt supersession of an unknown assertion and require failure with no revision bump.
+
+Expected untouched-baseline RED: the Common Lisp system lacks =PERSIST-DERIVED-ASSERTION= / =FETCH-DERIVED-ASSERTION= and =ASSERTION-CONFLICT=. The test must execute in the existing Nix/SBCL/Tek9/SWI integration gate before any production implementation is added.
+
+* Packaging
+No new dependency is required. The existing flake-provided SBCL + Tek9 + SWI-Prolog integration closure remains authoritative. Non-Nix behavior remains ordinary ASDF/Common Lisp because the new functions use the existing =llm-log-expert= system only.
+
+* Isolation
+- no dotfiles mutation; =~/Documents/AI/proxy= remains the consumer capture path;
+- no Tek9 mutation unless this RED proves an actually missing generic primitive;
+- no provider-census mutation;
+- no #12/#13/#15/#17 production work;
+- PR #5 remains a separate configuration transaction.

@@ -1,0 +1,89 @@
+#+title: LLM-LOG-RESEARCH-034 — PR #24 review-gate resolution
+#+startup: overview
+
+* Scope
+Parent issues: https://github.com/lost-rob0t/llm-log/issues/8 and https://github.com/lost-rob0t/llm-log/issues/10
+Active PR: https://github.com/lost-rob0t/llm-log/pull/24
+Consumer PR: https://github.com/lost-rob0t/dotfiles/pull/172
+Canonical architecture: research/LLM-LOG-RESEARCH-004-symbolic-expert-plane.org
+Authority reconciliation: research/LLM-LOG-RESEARCH-033-expert-authority-regression-reconciliation.org
+
+This bounded Auto-ARADR cycle resolves what can and cannot be inferred from the current GitHub governance state before any further #10 or dotfiles production mutation.
+
+* Analyze
+Fresh remote state on 2026-08-31:
+
+- llm-log default branch is =main=;
+- active #10 branch is =rage/10-expert-runtime-red=;
+- PR #24 exact head before this document is =448be1744b06d13ec59f5287fa41e3185ffb519a=;
+- push workflow run =33353087562= executed that exact head and concluded success;
+- PR #24 is open, mergeable, draft, and unmerged;
+- PR #24 has zero submitted reviews, zero PR conversation comments, and no requested reviewers;
+- dotfiles default branch is =master=;
+- dotfiles PR #172 remains test-only RED at =0a23f6a80c9219f8ac5082f93cf90762053614ac=;
+- Tek9 default branch is =master= and the repository reports zero open issues;
+- no Tek9 mutation is justified by the current expert boundary.
+
+The requested architecture remains unchanged: Python owns transparent capture/transport; Common Lisp owns the expert runtime and Tek9/SWI-Prolog boundary; Tek9 is the durable KB; SWI-Prolog owns rules/inference.
+
+* Research
+GitHub governance evidence is narrower than earlier prose implied:
+
+- the repository rulesets endpoint returns an empty set;
+- the classic =main= branch-protection endpoint is not readable by the installed integration and returns =403 Resource not accessible by integration=;
+- therefore an empty repository-ruleset set is not proof that no classic review requirement exists;
+- the connector's ready-for-review mutation still fails because its GraphQL response selection requests nonexistent =Repository.fullDatabaseId=;
+- the execution environment does not provide an authenticated =gh= executable, so the broken connector mutation cannot be bypassed through the requested CLI path in this run.
+
+The exact-head CI evidence remains valid and independent of that governance/tooling limitation.
+
+* Design
+Treat upstream eligibility as a conjunction, not an inference from missing metadata:
+
+#+begin_example
+eligible(#24) :=
+    exact_head_green
+  + mergeable
+  + not_draft
+  + required_review_and_discussion_satisfied
+#+end_example
+
+Known state:
+
+- =exact_head_green=: proven for =448be174...= by run =33353087562=;
+- =mergeable=: proven by current PR metadata;
+- =not_draft=: false;
+- =required_review_and_discussion_satisfied=: not proven.
+
+Do not collapse =not proven= into =not required=. In particular, empty rulesets do not override inaccessible classic branch-protection state.
+
+* Adversarial review
+Unsafe shortcuts considered and rejected:
+
+- merging because the repo rulesets endpoint is empty: rejected because classic protection is unreadable;
+- counting a same-author comment/review as independent review: rejected;
+- advancing dotfiles #172 to an unmerged expert head merely because the code is GREEN: rejected by the consumer gate;
+- closing/replacing PR #24 only to escape the draft transition bug: rejected because it would break stable review history and canonical links without changing code quality;
+- modifying Tek9 to create forward progress: rejected because no missing generic primitive is proven.
+
+The connector failure is a tooling defect, not evidence that the repository itself requires or waives review.
+
+* Decision
+1. Keep PR #24 unmerged and do not mutate production code this cycle.
+2. Preserve exact-head GREEN evidence from run =33353087562= as implementation evidence for the pre-document head only; this new documentation head requires its own execution before any GREEN claim.
+3. Keep dotfiles PR #172 RED-only and preserve =~/Documents/AI/proxy= exactly.
+4. Keep PR #5 isolated.
+5. Keep provider census #6 in backlog and #12/#13/#15/#17 behind #10.
+6. Make no Tek9 repository mutation.
+7. Retry the ready-for-review transition only through a functioning authenticated GitHub mutation path; do not manufacture review evidence.
+
+* RED-first acceptance for the next production mutation
+No new production mutation is authorized until #24 is non-draft and the required review/discussion state is positively established. Once that happens, the already-executed dotfiles consumer RED remains the next production slice:
+
+- pin an eligible upstream llm-log revision;
+- enable =services.llm-log.expert=;
+- keep initial =require = false=;
+- preserve =~/Documents/AI/proxy=;
+- keep expert mutable state separate from raw capture evidence;
+- preserve existing provider/client routing;
+- execute the unchanged consumer contract to GREEN.

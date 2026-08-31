@@ -1,16 +1,21 @@
-name: Common Lisp transport contract
+name: Expert plane contracts
 
 on:
   push:
     branches:
       - rage/10-expert-runtime-red
+      - rage/12-request-classifier-red
+      - rage/12-classifier-query-red
+      - rage/12-classifier-time-range-red
+      - rage/12-classifier-task-id-red
+      - rage/13-task-accounting-red
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  common-lisp-transport-contract:
+  common-lisp-expert-integration-contract:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact head
@@ -21,16 +26,76 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify existing Common Lisp transport contracts stay green
+      - name: Execute Tek9 + SWI-Prolog expert contract
         shell: bash
         run: |
           set -euo pipefail
-          nix build -L .#checks.x86_64-linux.common-lisp-transport-contract
-          echo "COMMON_LISP_HTTP_GREEN: existing transport/capture contracts passed"
+          nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract \
+            2>&1 | tee "$RUNNER_TEMP/common-lisp-expert.log"
 
-      - name: Verify Sento recorder dependency closure
+      - name: Preserve Common Lisp contract log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: common-lisp-expert-failure-${{ github.run_id }}
+          path: ${{ runner.temp }}/common-lisp-expert.log
+          if-no-files-found: error
+          retention-days: 7
+
+  python-expert-policy-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute Python proxy expert-policy, adapter, transport lifecycle, and launch contracts
         shell: bash
         run: |
           set -euo pipefail
-          nix build -L .#checks.x86_64-linux.common-lisp-recorder-deps
-          echo "SENTO_RECORDER_DEPS_GREEN: reproducible actor dependency closure is available"
+          nix develop --command python -m unittest \
+            tests.test_expert_proxy_policy \
+            tests.test_expert_adapter \
+            tests.test_expert_transport_lifecycle \
+            tests.test_expert_launch_config \
+            -v 2>&1 | tee "$RUNNER_TEMP/python-expert-policy.log"
+
+      - name: Preserve Python contract log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-expert-policy-failure-${{ github.run_id }}
+          path: ${{ runner.temp }}/python-expert-policy.log
+          if-no-files-found: error
+          retention-days: 7
+
+  home-manager-expert-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute Home Manager expert wiring contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L --impure --expr '
+            let
+              flake = builtins.getFlake (toString ./.);
+              pkgs = import flake.inputs.nixpkgs { system = "x86_64-linux"; };
+            in
+              import ./nix/tests/home-manager-expert.nix {
+                self = flake;
+                inherit pkgs;
+                lib = pkgs.lib;
+              }
+          '

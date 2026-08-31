@@ -1,0 +1,87 @@
+#+title: LLM-LOG-EVIDENCE-015 — Home Manager expert-plane RED/GREEN
+#+startup: overview
+
+* Scope
+Issue: https://github.com/lost-rob0t/llm-log/issues/10
+PR: https://github.com/lost-rob0t/llm-log/pull/24
+Design authority: =research/LLM-LOG-RESEARCH-031-home-manager-expert-wiring.org=
+
+This file is implementation/test evidence only. Raw capture evidence, derived expert assertions, and research/design remain separate concerns.
+
+* Broken fixture — not RED
+Workflow head: =e7f95cd411e7937555f07aa406256c12674783ce=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33332901945
+
+The first Home Manager fixture used =lib.hasInfix= with a string carrying Nix store-path context. Nix rejected the regex/string operation before the module could reach the intended missing expert option. This is a test-fixture defect and is explicitly not counted as RED.
+
+Fixture-only correction: =7230b5cc839e1d3421bf95c232d822670a5c7bd7=.
+
+* Valid RED
+Exact head: =7230b5cc839e1d3421bf95c232d822670a5c7bd7=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33332939428
+
+The corrected Home Manager contract reached the intended untouched production boundary and failed with:
+
+#+begin_example
+error: The option `services.llm-log.expert' does not exist.
+#+end_example
+
+The same exact RED head kept both independent regression gates GREEN:
+- =common-lisp-expert-integration-contract=: GREEN;
+- =python-expert-policy-contract=: GREEN.
+
+Therefore the failure was isolated to the missing declarative Home Manager expert wiring, not the Common Lisp/Tek9/SWI substrate, Python adapter/policy/HTTP-WebSocket lifecycle, CLI launch, Nix installation, or test harness.
+
+* Production mutation
+Commit: =b6111a5fbe682bfa70f6922bd2727c380fe46278=
+
+Only =nix/home-manager.nix= changed.
+
+Added typed =services.llm-log.expert= options:
+- =enable=, default false;
+- =package=, default the flake's reproducible =llm-log-expert= package;
+- =dataDir=, default =${config.home.homeDirectory}/.llm-proxy/expert=;
+- =require=, default false.
+
+When enabled, the existing =llm-log.service= command receives the already-proven CLI surface:
+
+#+begin_example
+--expert-service-bin <package>/bin/llm-log-expert
+--expert-data-dir <expert-data-dir>
+[--require-expert-plane]
+#+end_example
+
+No second expert systemd service is created. Python remains transport/lifecycle owner for the subprocess boundary; Common Lisp remains expert-runtime/Tek9/Prolog authority.
+
+* GREEN
+Exact implementation head: =b6111a5fbe682bfa70f6922bd2727c380fe46278=
+Hosted run: https://github.com/lost-rob0t/llm-log/actions/runs/33333004609
+
+All three exact-head jobs completed GREEN:
+- =home-manager-expert-contract=: GREEN;
+- =python-expert-policy-contract=: GREEN;
+- =common-lisp-expert-integration-contract=: GREEN.
+
+The unchanged Home Manager contract proves:
+- expert-enabled ExecStart carries expert service selection;
+- expert mutable state remains independently configurable from raw capture storage;
+- explicit require mode projects to =--require-expert-plane=;
+- the raw capture directory remains independently settable to =/home/test/Documents/AI/proxy= in the fixture;
+- no separate =llm-log-expert= systemd user unit is emitted.
+
+The independent gates continue to prove the bounded Tek9/SWI substrate and the Python fail-open/fail-closed adapter/HTTP-WebSocket/CLI behavior.
+
+* Isolation / invariants
+- No Tek9 repository mutation was required.
+- No Prolog predicate or rule changed.
+- No Python transport/expert behavior changed.
+- No provider routing changed.
+- No dotfiles mutation occurred; the consumer remains on its stable pin and its raw capture path remains =~/Documents/AI/proxy=.
+- PR #5 remains a separate configuration transaction.
+- Expert mutable state is separate from immutable raw capture evidence.
+- No credentials were added to Nix options, generated command arguments, documentation, or Tek9.
+
+* Result
+GREEN for the bounded #10 Home Manager/systemd expert launch wiring slice.
+
+This does not itself authorize merging PR #24: exact-head checks and repository review/discussion policy still apply to the final PR head. The dotfiles consumer pin/enablement is a later separately gated transaction.

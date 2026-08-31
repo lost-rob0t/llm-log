@@ -12,6 +12,42 @@
   (merge-pathnames #P"tek9/"
                    (uiop:ensure-directory-pathname data-directory)))
 
+(defun %plist-index-value (document field)
+  "Extract FIELD only from plist-backed expert documents.
+
+The expert Tek9 main database is heterogeneous: metadata such as the KB
+revision shares the same document space as projections. Index extractors must
+therefore ignore non-plist values instead of assuming every document has expert
+projection fields."
+  (let ((value (doc-value document)))
+    (and (listp value)
+         (getf value field))))
+
+(defun %register-classification-indexes (database)
+  "Register process-local handles for durable bounded classifier indexes."
+  (flet ((value-field (field)
+           (lambda (document)
+             (%plist-index-value document field))))
+    (register-index database "classification-source-request-id"
+                    (value-field :request-id))
+    (register-index database "classification-source-user-message-id"
+                    (value-field :user-message-id))
+    (register-index database "classification-source-task-id"
+                    (value-field :task-id))
+    (register-index database "classification-source-provider"
+                    (value-field :provider))
+    (register-index database "classification-source-model"
+                    (value-field :model))
+    (register-index database "classification-source-started-at"
+                    (value-field :started-at))
+    (register-index
+     database "classification-assertion-source-event"
+     (lambda (document)
+       (let ((source-ids (%plist-index-value document :source-ids)))
+         (and (listp source-ids)
+              (first source-ids))))))
+  database)
+
 (defun start-expert-host (data-directory)
   "Open Tek9 and one persistent supervised SWI-Prolog worker for HOST."
   (let* ((root (uiop:ensure-directory-pathname data-directory))
@@ -26,6 +62,7 @@
                 :database database)))
     (handler-case
         (progn
+          (%register-classification-indexes database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)

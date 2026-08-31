@@ -1,0 +1,101 @@
+#+title: LLM-LOG-RESEARCH-024 — Expert CI authority boundary
+#+startup: overview
+
+* Status
+- Lifecycle: DECISION
+- Parent architecture: https://github.com/lost-rob0t/llm-log/issues/8
+- Active substrate: https://github.com/lost-rob0t/llm-log/issues/10
+- Working branch: =rage/10-expert-runtime-red=
+- Prior authority reconciliation: =research/LLM-LOG-RESEARCH-023-expert-plane-authority-reconciliation.org=
+
+* Analyze
+The current explicit program boundary is authoritative for this cycle:
+
+#+begin_example
+Python llm-log
+  - transparent HTTP/SSE/WebSocket forwarding
+  - provider/client compatibility
+  - immutable raw capture and capture-time redaction
+          |
+          | typed/versioned local expert boundary
+          v
+Common Lisp expert service
+  - lifecycle and typed objects
+  - Tek9 access and bounded indexed materialization
+  - SWI-Prolog supervision
+  - result validation
+  - derived assertion persistence
+          |                         \
+          v                          v
+Tek9                              SWI-Prolog
+canonical durable KB             declared facts/rules/inference
+#+end_example
+
+The remote issue text for #8/#10 still contains a later zero-Python/Common-Lisp-transport rewrite. That conflicts with the explicit current direction and with RESEARCH-023. It is therefore stale architecture text, not authority for this cycle.
+
+PR #24 exact head =47130371de0a34c7e82c6305a54527a3120ee5d3= has a completed hosted workflow run =33304010749=.
+
+The independent =common-lisp-expert-integration-contract= job is GREEN and proves the bounded #10 Tek9 -> declared SWI-Prolog substrate.
+
+The overall workflow is RED only because the separate =common-lisp-transport-contract= job still executes historical Common-Lisp proxy/recorder gates. That job is not an acceptance criterion for the current Python-transport/Common-Lisp-expert architecture.
+
+* Research
+** Current executable expert evidence
+Run =33304010749=:
+- =common-lisp-expert-integration-contract=: GREEN.
+- =common-lisp-transport-contract=: RED.
+
+The red transport job does not invalidate the expert result because the jobs are independent and the transport implementation is outside the accepted expert-service ownership boundary.
+
+** Authority and evidence separation
+- Raw capture evidence remains Python transport output and is immutable.
+- Derived expert assertions remain separate Tek9-backed records.
+- Research/design authority lives in =research/= Org documents.
+- Hosted execution evidence lives in =evidence/= Org documents.
+- Historical Common-Lisp transport experiments may remain in Git history/research, but must not gate the accepted #10 expert substrate.
+
+** Tek9 boundary
+The existing public Tek9 API remains sufficient for the bounded primary-key retrieval and durable KB revision proof already executed by #24. No generic Tek9 primitive is missing in this slice, so Tek9 must not be modified.
+
+* Design
+For the active #10 expert branch:
+
+1. Keep the existing =common-lisp-expert-integration-contract= exactly as the executable Common Lisp/Tek9/SWI-Prolog gate.
+2. Remove historical Common-Lisp transport and Sento-recorder jobs from the expert branch workflow.
+3. Do not delete historical transport/recorder source or evidence in this bounded slice; removal/reconciliation of abandoned experiments is a separate cleanup decision.
+4. Do not modify Python forwarding/capture behavior.
+5. Do not modify dotfiles.
+6. Do not modify Tek9.
+7. A branch is merge-eligible only after its exact current head executes the expert integration gate GREEN and ordinary repository merge/review requirements are satisfied.
+
+* Adversarial review
+** Risk: hiding a real regression by deleting a red job
+Rejected. The failing job tests a runtime ownership model explicitly rejected by the current architecture. Keeping it as a required gate would enforce the wrong product.
+
+** Risk: losing recorder research
+Rejected. Historical Org/evidence and commits remain intact. This decision only removes that work from the active expert acceptance path.
+
+** Risk: accidentally weakening raw-capture guarantees
+Rejected. No Python transport/capture code changes in this slice.
+
+** Risk: treating expert classification as authority
+Unaffected. The expert integration gate only proves declared typed inference; metadata never grants authority.
+
+** Risk: widening Prolog execution
+Unaffected. The existing contract still rejects undeclared operations before Prolog invocation.
+
+* Decision
+Accepted bounded slice: reconcile CI to the current authority boundary by making the active #10 workflow test only the Common Lisp expert integration contract.
+
+This is a CI/acceptance reconciliation, not a production behavior mutation. The already-executed failing workflow is the evidence that the stale transport gate blocks an otherwise GREEN expert substrate; no fake product RED is claimed.
+
+After the workflow mutation, execute the exact new branch head. If the expert integration gate is GREEN, persist that hosted result in =evidence/= before considering merge.
+
+* Next authorized #10 work after this slice
+Advance expert-runtime invariants, not #12/#13/#15/#17:
+- idempotent stable-event replay plus contradictory replay rejection;
+- derived assertion persistence with source/rule/expert provenance and supersession;
+- crash/timeout/malformed-result typed failure plus bounded later-request recovery;
+- explicit fail-open versus =require_expert_plane= fail-closed integration at the Python-to-expert boundary.
+
+Each production behavior mutation still requires an independently executed RED first.

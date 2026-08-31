@@ -1,8 +1,26 @@
 (in-package #:llm-log-expert)
 
 (defparameter +prolog-worker-protocol-version+ 1)
-(defparameter +prolog-worker-operations+ '("health" "event_transport"))
+(defparameter +prolog-worker-operations+ '("health" "event_transport" "request_classification" "task_cost"))
 (defparameter +default-prolog-timeout-seconds+ 5.0)
+
+(define-condition reasoner-failure (error)
+  ((kind
+    :initarg :kind
+    :reader reasoner-failure-kind)
+   (message
+    :initarg :message
+    :reader reasoner-failure-message))
+  (:report
+   (lambda (condition stream)
+     (format stream "~(~A~): ~A"
+             (reasoner-failure-kind condition)
+             (reasoner-failure-message condition)))))
+
+(defun %reasoner-fail (kind control &rest arguments)
+  (error 'reasoner-failure
+         :kind kind
+         :message (apply #'format nil control arguments)))
 
 (defun %json-object (&rest pairs)
   (cons :obj pairs))
@@ -22,7 +40,7 @@ process id alongside the clock."
     (if (and configured (plusp (length configured)))
         (pathname configured)
         (asdf:system-relative-pathname
-         #:llm-log-expert
+         "llm-log-expert"
          #P"prolog/worker.pl"))))
 
 (defun %prolog-timeout-seconds ()
@@ -75,9 +93,16 @@ fall back to the bounded substrate default rather than disabling the deadline."
 (defun %ensure-prolog-worker (host)
   "Ensure HOST owns one live worker, restarting only after a prior failure/crash."
   (unless (%prolog-process-alive-p host)
-    (start-prolog-worker host))
+    (handler-case
+        (start-prolog-worker host)
+      (reasoner-failure (condition)
+        (error condition))
+      (error (condition)
+        (%reasoner-fail :unavailable
+                        "unable to start reasoner worker: ~A"
+                        condition))))
   (unless (%prolog-process-alive-p host)
-    (error "reasoner_unavailable"))
+    (%reasoner-fail :unavailable "reasoner worker is unavailable"))
   host)
 
 (defun %next-prolog-request-id (host)
@@ -87,14 +112,14 @@ fall back to the bounded substrate default rather than disabling the deadline."
 
 (defun %validate-prolog-reply (reply request-id operation)
   (unless (and (consp reply) (eq (first reply) :obj))
-    (error "invalid_reasoner_reply: expected JSON object"))
+    (%reasoner-fail :malformed-reply "expected JSON object reply"))
   (unless (equal (jsown:val-safe reply "request_id") request-id)
-    (error "invalid_reasoner_reply: correlation mismatch"))
+    (%reasoner-fail :malformed-reply "reasoner reply correlation mismatch"))
   (unless (equal (jsown:val-safe reply "operation") operation)
-    (error "invalid_reasoner_reply: operation mismatch"))
+    (%reasoner-fail :malformed-reply "reasoner reply operation mismatch"))
   (let ((status (jsown:val-safe reply "status")))
     (unless (member status '("ok" "error") :test #'equal)
-      (error "invalid_reasoner_reply: invalid status")))
+      (%reasoner-fail :malformed-reply "reasoner reply has invalid status")))
   reply)
 
 (defun %read-prolog-reply-line (output)
@@ -108,10 +133,19 @@ inference."
   #+sbcl
   (let ((fd (sb-sys:fd-stream-fd output)))
     (unless (sb-sys:wait-until-fd-usable fd :input (%prolog-timeout-seconds))
-      (error "reasoner_timeout"))
+      (%reasoner-fail :timeout "reasoner request exceeded its bounded deadline"))
     (read-line output nil nil))
   #-sbcl
-  (error "reasoner_timeout_requires_supported_runtime"))
+  (%reasoner-fail :unavailable
+                  "bounded reasoner timeout requires the packaged SBCL runtime"))
+
+(defun %parse-prolog-reply (line)
+  (handler-case
+      (jsown:parse line)
+    (reasoner-failure (condition)
+      (error condition))
+    (error ()
+      (%reasoner-fail :malformed-reply "reasoner returned invalid JSON"))))
 
 (defun prolog-worker-request (host operation data)
   "Send one declared typed request through HOST's persistent worker.
@@ -137,8 +171,11 @@ bounded and avoiding duplicate inference side effects."
           (force-output input)
           (let ((line (%read-prolog-reply-line output)))
             (unless line
-              (error "reasoner_crashed"))
-            (%validate-prolog-reply (jsown:parse line) request-id operation)))
+              (%reasoner-fail :crashed "reasoner worker closed its reply stream"))
+            (%validate-prolog-reply
+             (%parse-prolog-reply line)
+             request-id
+             operation)))
       (error (condition)
         (stop-prolog-worker host)
         (error condition)))))

@@ -1,0 +1,61 @@
+#+title: LLM-LOG-RESEARCH-035 — #10 draft PR recovery gate
+#+startup: overview
+
+* Scope
+Parent issues: https://github.com/lost-rob0t/llm-log/issues/8 and https://github.com/lost-rob0t/llm-log/issues/10
+Current PR: https://github.com/lost-rob0t/llm-log/pull/24
+Consumer PR: https://github.com/lost-rob0t/dotfiles/pull/172
+Canonical architecture: research/LLM-LOG-RESEARCH-004-symbolic-expert-plane.org
+
+This bounded Auto-ARADR cycle resolves the remaining PR-state blocker without changing expert behavior, Tek9 schema, Prolog predicates, provider transport, or dotfiles production configuration.
+
+* Analyze
+Fresh remote state on 2026-08-31:
+
+- llm-log default branch is =main=;
+- GitHub's branches collection reports =main= with =protected: false=;
+- the repository rulesets collection is empty;
+- PR #24 head before this document is =8f0a0e89631ce0887affceb48db63f5568cf5f78= and exact-head workflow run =33356338741= is GREEN;
+- PR #24 is open, mergeable, draft, with zero submitted reviews, zero conversation comments, and no requested reviewers;
+- the connected =mark ready for review= mutation still fails because its GraphQL response asks for nonexistent =Repository.fullDatabaseId=;
+- dotfiles PR #172 remains test-only RED and production =nix/home-manager/mods/llm.nix= on =master= still pins =94b79dccd9010b429eff0472c74391fa50b4db0a= while preserving =~/Documents/AI/proxy=;
+- Tek9 reports zero open issues and no missing generic primitive is proven.
+
+* Research
+The earlier conservative conclusion that classic branch-protection state was unknown is superseded by the current branches API response: =main= is explicitly unprotected. Combined with an empty repository-ruleset collection, there is no repository-enforced review requirement observable for this merge.
+
+The user's merge contract therefore reduces here to: exact current head GREEN, mergeable, non-draft, and no unresolved required review/discussion gate. Zero reviews is acceptable because zero reviews are required; it must not be misrepresented as an approval.
+
+The remaining failure is purely the connector's draft-transition mutation. It is not a test failure, architecture defect, or review requirement.
+
+* Design
+Prefer the least destructive recovery:
+
+1. retry the ready-for-review mutation once on the current PR;
+2. if the connector still fails and #24 still has zero reviews/comments, allow a PR-state recovery transaction: close #24 as tooling-superseded and immediately open a non-draft replacement from the same =rage/10-expert-runtime-red= head to =main=;
+3. retain #24 in the replacement body and canonical Org history so provenance is not lost;
+4. never recreate or replace the implementation branch;
+5. require the replacement PR head SHA to equal the exact branch head and require GREEN CI for that exact SHA before merge;
+6. merge with expected-head protection only when mergeable;
+7. only after upstream merge may dotfiles #172 consume the merged revision and run its unchanged RED contract toward GREEN.
+
+Because closing/reopening #24 would preserve its draft bit, a replacement PR is the only connector-accessible recovery if the ready mutation remains broken.
+
+* Adversarial review
+Rejected shortcuts:
+
+- self-reviewing #24 to manufacture approval: no review is required and fake approval adds false evidence;
+- merging a draft PR through an API even if accepted: violates the explicit non-draft eligibility contract;
+- advancing dotfiles to an unmerged branch SHA: violates the consumer gate;
+- changing Tek9 merely to show progress: no database primitive is missing;
+- mixing PR #5 configuration work into #10: forbidden transaction coupling.
+
+Risk of PR replacement is loss of review history. Here that risk is bounded because live #24 has zero reviews and zero conversation comments. The old PR remains permanently linked as superseded provenance.
+
+* Decision
+A non-draft replacement PR is authorized only if the ready-for-review mutation fails again and #24 remains discussion/review-empty. The replacement must point to the exact current =rage/10-expert-runtime-red= head, carry #8/#10 and canonical Org links, and remain unmerged until exact-head GREEN is independently observed.
+
+No expert production behavior changes are authorized in this recovery slice. No Tek9 mutation is authorized. Dotfiles #172 remains RED-only until the upstream substrate is actually merged.
+
+* Next RED-first production slice
+After an eligible upstream merge, consume that immutable merged llm-log revision in dotfiles #172, enable =services.llm-log.expert= with initial =require = false=, preserve =~/Documents/AI/proxy= and existing provider/client routing, keep expert state separate, and execute the already-established unchanged consumer contract from RED to GREEN before merge.

@@ -1,0 +1,54 @@
+#+title: LLM-LOG-EVIDENCE-020 — Request classifier task-id RED/GREEN
+#+startup: overview
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/12
+Design: research/LLM-LOG-RESEARCH-039-request-classifier-task-id.org
+Branch: rage/12-classifier-task-id-red
+Baseline main: 7150e5cb80b8c47c682b15e3d2f48143657b8ac4
+
+This file records implementation evidence only. The canonical design remains RESEARCH-039; raw capture evidence and durable classifier assertions remain separate runtime data.
+
+* RED
+Exact RED head: =b5d2a0c83f1bdf6b159d15cd3a447b0697b8e78c=
+Hosted workflow: =33397126254=
+
+Observed:
+- =common-lisp-expert-integration-contract=: FAILURE as intended.
+- The new task-only =query_classification_history= returned =invalid_request= with =bounded_query_required: request_id, user_message_id, provider, model, or a complete started_at range is required=.
+- The task history result was empty because =task_id= was not a declared bounded selector.
+- Existing request classification setup reached the focused contract before failure.
+- =python-expert-policy-contract=: SUCCESS.
+- =home-manager-expert-contract=: SUCCESS.
+
+The failure artifact =common-lisp-expert-failure-33397126254= preserved the executed Common Lisp log. This establishes that the untouched production baseline persisted task identity but could not retrieve history by task without a forbidden scan.
+
+* GREEN implementation
+Implementation head: =46d7a25e2df25f3f9aa2c4e9de1b89e5d4cb28a1=
+Hosted workflow: =33397307360=
+
+Production mutation was limited to:
+- =expert/host.lisp=: register =classification-source-task-id= using the existing Tek9 public index API.
+- =expert/classification-history.lisp=: validate =task_id= as a non-empty typed equality selector; use it as a bounded seed/filter; return the persisted task ID with history provenance.
+
+No Tek9 repository, Prolog rules, Python transport, Nix packaging, Home Manager consumer, or dotfiles behavior changed.
+
+Observed GREEN on the exact implementation head:
+- =common-lisp-expert-integration-contract=: SUCCESS.
+- =python-expert-policy-contract=: SUCCESS.
+- =home-manager-expert-contract=: SUCCESS.
+
+The focused contract verifies restart-durable bounded task-only history for =task-alpha=, exclusion of =task-beta=, provenance fields, and successful empty results for an unknown task ID.
+
+* Invariants checked
+- no corpus scan fallback;
+- no caller-controlled index or Prolog term;
+- task metadata grants no authority;
+- source task identity is not inferred from session proximity;
+- raw evidence remains immutable;
+- derived assertions remain provenance-linked and separate;
+- Tek9 public APIs were sufficient;
+- proxy forwarding policy and consumer capture path were untouched.
+
+* Decision evidence
+The #12 task-query acceptance gap has a legitimate executed RED and GREEN. Merge eligibility still requires the exact final documentation head to execute GREEN and normal repository merge/review/discussion rules to be satisfied. Do not attribute the GREEN of =46d7a25e...= to a later documentation commit without another exact-head run.

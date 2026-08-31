@@ -162,6 +162,21 @@
             touch "$out"
           '';
 
+          # RESEARCH-023: authoritative #10 Common Lisp/Tek9/SWI-Prolog
+          # substrate gate. Keep this isolated from transport/recorder tests.
+          common-lisp-expert-integration-contract = pkgs.runCommand "llm-log-common-lisp-expert-integration-contract" {
+            nativeBuildInputs = [ transportTestSbcl pkgs.swi-prolog ];
+          } ''
+            export HOME="$TMPDIR/home"
+            unset LLM_LOG_PROLOG_WORKER || true
+            mkdir -p "$HOME"
+            sbcl --noinform --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-asd #P"${self}/expert/llm-log-expert-integration-test.asd")' \
+              --eval '(asdf:test-system "llm-log-expert-integration-test")'
+            touch "$out"
+          '';
+
           llm-log-config-contract = pkgs.runCommand "llm-log-config-contract" {
             nativeBuildInputs = [ self.packages.${system}.llm-log-cl-sbcl ];
           } ''

@@ -1,0 +1,47 @@
+#+title: LLM-LOG-EVIDENCE-016 Dotfiles expert consumer RED
+#+filetags: :llm-log:evidence:expert:dotfiles:red:
+
+* Boundary
+Canonical design: =research/LLM-LOG-RESEARCH-032-dotfiles-expert-consumer-gate.org=
+
+Consumer repository: =lost-rob0t/dotfiles=
+Consumer branch: =rage/llm-log-expert-consumer-red=
+Draft PR: https://github.com/lost-rob0t/dotfiles/pull/172
+
+* Test-only head
+=0a23f6a80c9219f8ac5082f93cf90762053614ac=
+
+The test-only branch contains:
+- =tests/llm-log-expert-consumer.sh=
+- CI wiring in =.github/workflows/nix.yml=
+
+No production =nix/home-manager/mods/llm.nix= mutation is part of this head.
+
+* Hosted RED
+Workflow run: https://github.com/lost-rob0t/dotfiles/actions/runs/33335870270
+Job: =workflows= / =99322540957=
+
+Observed execution ordering:
+- checkout: GREEN
+- actionlint: GREEN
+- shell/Qtile test tooling install: GREEN
+- shell syntax + shellcheck including the new contract: GREEN
+- =Run llm-log expert consumer contract=: RED
+- later workflow steps were skipped after the intentional contract failure
+
+The consumer source on this exact branch is unchanged from master and still pins =llmLogRevision = "94b79dccd9010b429eff0472c74391fa50b4db0a";=. The contract preserves the existing raw capture path/upstream assertions first and then rejects that pre-expert pin before accepting expert consumer configuration.
+
+* Interpretation
+This is valid RED evidence for the missing dotfiles expert consumer integration. It is not evidence that production should pin an arbitrary draft upstream head.
+
+The upstream expert implementation remains llm-log PR #24 on =rage/10-expert-runtime-red=. At the time of this RED it is open/draft/mergeable with zero submitted reviews and zero PR conversation comments. Under the requested merge rules, its current head is not an eligible production consumer pin.
+
+Therefore no production dotfiles mutation follows in this bounded cycle.
+
+* Preserved invariants
+- =~/Documents/AI/proxy= remains untouched.
+- existing provider/client proxy routing remains untouched.
+- PR #5 remains a separate llm-log transaction.
+- no Tek9 mutation.
+- no Python rule engine.
+- no credential material in Nix/tests/prose.
