@@ -1,0 +1,30 @@
+#+title: LLM-LOG-EVIDENCE-034 Outcome supersession/history GREEN
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/15
+#+property: pr https://github.com/lost-rob0t/llm-log/pull/46
+#+property: design research/LLM-LOG-RESEARCH-046-outcome-supersession-history.org
+#+property: red evidence/LLM-LOG-EVIDENCE-033-outcome-supersession-history-red.org
+
+* Verified head
+Exact tested head: =8279abf970a9190295b0c3be69dd75c190538a9d=
+Workflow run: =33449956099=
+
+* Gate result
+- Common Lisp/Tek9/SWI-Prolog integration: GREEN.
+- Python expert policy/transport: GREEN.
+- Home Manager expert wiring: GREEN.
+
+The preceding implementation-only head =97cf16c3dbbf5e2d727ccbdfe12e1180d1d9a93f= also passed all three gates in run =33449927987=.
+
+* Verified behavior
+- SWI-Prolog derives finite authoritative =success=, =failure=, =partial=, =cancelled=, =rejected= and =timeout= outcomes; weak/insufficient evidence remains =unknown=.
+- Provider transport HTTP 200 alone still derives =unknown=.
+- Common Lisp rejects cross-scope supersession before persistence.
+- Historical outcome assertions remain immutable; the successor carries =supersedes_assertion_id= and bounded history projects =replaced_by_assertion_id= through the Tek9 supersedes index.
+- =query_outcome_history= requires exact request/task scope identity, a finite 1..64 limit, uses Tek9 secondary indexes, and survives expert-host restart.
+- Rule/version, expert-version and evidence-ID provenance survive restart.
+
+* Repository boundary
+No Tek9 repository change was required: existing public durable document, secondary-index and point-fetch APIs were sufficient. No Python capture/transport logic or dotfiles consumer configuration changed.
+
+* Remaining #15 boundary
+Dataset export and broader outcome corpus construction remain outside this slice. #13 outcome/cost analytics should consume these explicit outcome assertions in a later bounded slice rather than infer task success from transport state.
