@@ -20,8 +20,14 @@
         (error "~A must be a positive integer when present" field)))
     value))
 
+(defun %append-present-plist-field (projection key value)
+  "Append KEY/VALUE only when VALUE is present, preserving legacy projections."
+  (if value
+      (append projection (list key value))
+      projection))
+
 (defun %usage-projection (usage)
-  "Extend the immutable usage projection with explicit retry/attempt evidence."
+  "Extend immutable usage projection with explicit retry/attempt evidence when present."
   (let* ((projection (funcall *base-usage-projection* usage))
          (request-id (getf projection :request-id))
          (attempt-id (%optional-json-string usage "attempt_id"))
@@ -32,12 +38,13 @@
     (when (and retry-of-request-id
                (equal retry-of-request-id request-id))
       (error "retry_of_request_id must not equal request_id"))
-    (append projection
-            (list :attempt-id attempt-id
-                  :attempt-ordinal attempt-ordinal
-                  :retry-of-request-id retry-of-request-id
-                  :client client
-                  :transport transport))))
+    ;; Do not append absent optional keys. Existing immutable usage records created
+    ;; before retry metadata existed must compare byte-for-byte equal on replay.
+    (setf projection (%append-present-plist-field projection :attempt-id attempt-id))
+    (setf projection (%append-present-plist-field projection :attempt-ordinal attempt-ordinal))
+    (setf projection (%append-present-plist-field projection :retry-of-request-id retry-of-request-id))
+    (setf projection (%append-present-plist-field projection :client client))
+    (%append-present-plist-field projection :transport transport)))
 
 (defun %retry-accounting-fields (host payload)
   "Derive bounded retry metadata from the same finite task/usage materialization."
