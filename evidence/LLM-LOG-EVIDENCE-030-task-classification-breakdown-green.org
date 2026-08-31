@@ -1,0 +1,49 @@
+#+title: LLM-LOG-EVIDENCE-030 Task classification breakdown GREEN
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: research research/LLM-LOG-RESEARCH-044-task-classification-breakdowns.org
+#+property: red evidence/LLM-LOG-EVIDENCE-029-task-classification-breakdown-red.org
+
+* Result
+The bounded #13 classification-breakdown slice is GREEN at exact implementation head =2ba60f34b4a6198ac7e693ee70c9180d3f03caa5= in workflow run https://github.com/lost-rob0t/llm-log/actions/runs/33441362285.
+
+All three exact-head gates passed:
+- Common Lisp / Tek9 / SWI-Prolog integration: GREEN;
+- Python expert policy / adapter / transport lifecycle / launch contracts: GREEN;
+- Home Manager expert wiring: GREEN.
+
+* Verified behavior
+After classifier assertions and task usage/cost projections are persisted, the expert host is restarted and =query_task_accounting= returns a deterministic =breakdowns.classification= projection derived only from the bounded task usage set.
+
+The fixture proves:
+- aggregate accounting remains =2 requests / 160 input / 70 output tokens=;
+- classifier joins survive expert-host restart;
+- groups retain persisted =dimension=, =value= and ambiguity =state=;
+- groups retain usage observation IDs and immutable cost assertion IDs;
+- groups retain classification assertion IDs, classifier rule IDs and classifier evidence IDs;
+- durable known-cost records exist independently of the analytical grouping;
+- provider/model/client breakdown regressions remain GREEN;
+- no outcome/success inference is introduced.
+
+* Failure trail and corrections
+** Rejected fixture run
+Run https://github.com/lost-rob0t/llm-log/actions/runs/33440103998 at =8c8c7061e181bbd801c3bc298341b2bc143d3ab9= failed during COMPILE-FILE because of an unmatched parenthesis. It is not RED evidence.
+
+** Accepted RED
+Run https://github.com/lost-rob0t/llm-log/actions/runs/33440318234 at =7c6efbb087151e1db57c28fcaaa5abb40be1fefa= compiled and ran all existing contracts. The new contract failed only because =breakdowns.classification= was absent. See =LLM-LOG-EVIDENCE-029=.
+
+** Implementation correction 1
+Run https://github.com/lost-rob0t/llm-log/actions/runs/33440582679 at =94a0fa559c0b1e5e8fb0a7ebcf0a21d47937b217= exposed an over-strict source filter. Durable classifier-source projections are identified by their stable key/index boundary and do not carry a redundant =:type= field. The filter was removed; no Tek9 schema change was needed.
+
+** Implementation correction 2
+Run https://github.com/lost-rob0t/llm-log/actions/runs/33440813112 at =0e1e15b3bcf86439973b96cf1403941ba3fee1d9= proved classification labels and classifier provenance worked but emitted empty cost provenance. Diagnostic run https://github.com/lost-rob0t/llm-log/actions/runs/33441175092 at =cfd7fc83b8f1eaa66005fb5194611fb66ee132a0= independently proved the account response had known cost and both immutable cost records survived restart. The remaining defect was result construction: the classification entry concatenated multiple JSOWN =:obj= forms. Emitting one canonical JSON object fixed the projection without altering durable data or pricing semantics.
+
+* Architecture decision retained
+- Python remains capture/transport only.
+- Common Lisp owns bounded Tek9 joins and typed analytical projection.
+- Tek9 remains the durable source for usage, classification and cost projections.
+- SWI-Prolog remains the rule/inference owner; this slice adds no competing rule engine and no new arbitrary predicate execution.
+- Retrieval starts from already-bounded task usage IDs and uses finite =classification-source-request-id= and =classification-assertion-source-event= index reads; there is no whole-corpus scan.
+- Classification remains analytical metadata and grants no authority.
+- Unknown pricing semantics remain unchanged.
+- Outcome-dependent analytics remain blocked on #15's explicit outcome evidence/label contract.
+- No Tek9 repository or dotfiles consumer mutation was required.
