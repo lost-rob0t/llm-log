@@ -1,0 +1,24 @@
+#+title: LLM-LOG-EVIDENCE-040 — Task outcome retry economics RED
+#+filetags: :llm-log:evidence:expert:task:outcome:retry:cost:red:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/13
+Outcome authority: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-049-outcome-retry-economics.org
+
+* Exact RED head
+Commit: =da000c95c0f466158fce22e615d00278c9a9604b=
+Workflow: https://github.com/lost-rob0t/llm-log/actions/runs/33461795855
+
+* Result
+Accepted product RED.
+
+- Python expert policy / adapter / transport / launch contracts: GREEN.
+- Home Manager expert wiring contract: GREEN.
+- Existing Common Lisp/Tek9/SWI-Prolog contracts: GREEN through task outcome breakdown.
+- New =task-outcome-retry-economics-red-contract=: RED only because =query_task_accounting.result.analysis= is absent on untouched product behavior.
+
+The new fixture compiled and executed. Existing restart-durable controls remained intact: =request_count=4=, =input_tokens=260=, =output_tokens=130=, =retry_request_count=2=, and the existing outcome breakdown was present. The sole new behavioral failure was =ANALYSIS = NIL=.
+
+* Decision
+The RED isolates the missing #13 outcome-aware retry economics surface rather than fixture syntax, environment failure, Tek9 failure, Python policy regression, or Home Manager regression. Production mutation is authorized under LLM-LOG-RESEARCH-049.
