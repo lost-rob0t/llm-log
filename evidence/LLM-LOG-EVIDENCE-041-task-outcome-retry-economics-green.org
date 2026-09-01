@@ -1,0 +1,42 @@
+#+title: LLM-LOG-EVIDENCE-041 — Task outcome retry economics GREEN
+#+filetags: :llm-log:evidence:expert:task:outcome:retry:cost:green:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/13
+Outcome authority: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-049-outcome-retry-economics.org
+RED evidence: ./LLM-LOG-EVIDENCE-040-task-outcome-retry-economics-red.org
+
+* Production GREEN heads
+Initial implementation head: =bda52a64fc326bf7ff66a40e524ecf6a17c02e1b=
+Workflow: https://github.com/lost-rob0t/llm-log/actions/runs/33461966486
+
+Tightened conformance head: =f2cb7ca9f182767c0ced05c6daddfd13e71bf4ea=
+Workflow: https://github.com/lost-rob0t/llm-log/actions/runs/33462054052
+
+* Verified behavior
+All three authoritative lanes are GREEN on the tightened head: Common Lisp/Tek9/SWI-Prolog integration, Python expert policy/transport, and Home Manager expert wiring.
+
+The restart-durable task fixture proves:
+
+- unsuccessful IDs are exactly =req-1= and =req-2= from current #15 failure assertions;
+- retry IDs are exactly =req-2= and =req-3= from explicit =retry_of_request_id= edges;
+- burn-before-success IDs are exactly strict predecessors =req-1= and =req-2= for successful terminal =req-3=;
+- the successful terminal itself is excluded from burn;
+- the unrelated unlabeled request is excluded from unsuccessful outcome totals;
+- retry ancestry is reconstructed after expert-host restart and reports complete;
+- immutable cost assertion IDs survive in every economics projection;
+- unsuccessful outcome assertion/rule/evidence provenance survives restart;
+- successful-terminal outcome assertion/rule/evidence provenance survives restart;
+- existing aggregate totals, retry counts, and outcome breakdown behavior remain unchanged.
+
+* Architecture evidence
+The implementation lives only in the Common Lisp expert layer. It reuses the already-bounded task usage materialization and current #15 outcome resolver. SWI-Prolog remains the owner of outcome inference. Python remains capture/transport. Tek9 remains canonical durable storage and required no new repository primitive or schema mutation.
+
+“Before success” is defined by explicit retry ancestry only. No timestamp order, HTTP status, session adjacency, or inferred chronology contributes authority.
+
+* Cost semantics
+Economics reuse immutable cost assertions already bound to pricing snapshots. The slice does not reprice historical requests and therefore preserves existing known/partial/unknown cost semantics.
+
+* Decision
+GREEN for the bounded #13 outcome-aware retry economics slice. Merge is permitted only after the final documentation-only head is independently rerun and remains exact-head GREEN and mergeable with no unmet review/discussion requirement.

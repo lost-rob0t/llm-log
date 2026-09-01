@@ -18,6 +18,7 @@
                (:file "outcome")
                (:file "outcome-dataset")
                (:file "outcome-breakdowns")
+               (:file "retry-economics")
                (:file "service")
                (:file "task-dispatch")
                (:file "outcome-dispatch")

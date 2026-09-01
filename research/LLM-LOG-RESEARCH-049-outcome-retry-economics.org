@@ -1,0 +1,92 @@
+#+title: LLM-LOG-RESEARCH-049 — bounded outcome-aware retry economics
+#+filetags: :llm-log:aradr:expert:task:outcome:retry:cost:
+
+* Status
+Decision-ready bounded #13 slice. Parent: [[https://github.com/lost-rob0t/llm-log/issues/13][llm-log#13]]. Consumes the already-merged #15 current-outcome substrate; does not change outcome inference.
+
+* Analyze
+Current =query_task_accounting= already reconstructs a finite task subtree from Tek9, deduplicates immutable usage observations, preserves immutable pricing/cost assertion provenance, exposes explicit retry/attempt identity, and joins current #15 outcome assertions into =breakdowns.outcome=.
+
+The remaining #13 acceptance includes expensive failures/retries and token burn before successful completion. Those phrases are dangerous if implemented from request timestamps, HTTP status, session adjacency, or guessed retry order. The durable evidence already provides the safer boundary: explicit =retry_of_request_id= edges plus current #15 outcome assertions.
+
+* Research
+** Authority and ownership
+- Python remains capture/transport and does not compute retry economics.
+- Common Lisp owns bounded Tek9 retrieval, graph validation, aggregation, and result validation.
+- Tek9 remains the canonical durable KB; use existing =usage-task-id=, outcome scope/supersession indexes, and point retrieval.
+- SWI-Prolog remains the sole owner of outcome inference. This slice consumes stored current outcome assertions; it does not infer success/failure in Lisp.
+
+** Bounded typed contract
+Extend =query_task_accounting= with an =analysis= object containing:
+
+- =unsuccessful= — usage/cost attached to requests whose current #15 outcome is one of =failure=, =rejected=, =timeout=, or =cancelled=;
+- =retry= — usage/cost attached to requests that explicitly carry =retry_of_request_id=;
+- =burn_before_success= — usage/cost attached to the unique strict retry-predecessor closure of current-success requests.
+
+Each projection carries request IDs, usage observation IDs, cost assertion IDs, and outcome assertion/rule/evidence IDs when the category depends on outcome labels.
+
+Cost uses the existing immutable cost assertions. Unknown/partial pricing remains unknown/partial under the same aggregation rules; this query never prices historical usage again.
+
+** Exact meaning of “before success”
+“Before” is graph-theoretic, not temporal. For each request with a current =success= assertion, walk =retry_of_request_id= backward through usage observations already materialized inside the bounded task query. Sum strict ancestors only. Deduplicate ancestors reached from more than one success node.
+
+No timestamps, event order, wall clock, HTTP 200, or session adjacency may establish predecessorhood.
+
+** Integrity / failure semantics
+- retry self-edge: already invalid at ingestion;
+- retry predecessor outside the bounded task materialization: mark =retry_graph_complete=false= and do not invent missing burn;
+- retry cycle discovered during analysis: return a task-accounting query error rather than silently truncating a false chain;
+- multiple current #15 assertions for one request: retain the existing integrity-error behavior from outcome breakdown resolution;
+- unlabeled/explicit =unknown=/=partial= requests are not silently classified as unsuccessful;
+- no successful request => burn-before-success is a valid empty projection with =successful_terminal_count=0=.
+
+** Tek9 schema / database boundary
+No new durable entity or index is required for the first slice. All traversal is over the already-bounded task usage materialization and current outcome lookup. Tek9 repository mutation is forbidden unless execution proves a generic primitive is actually missing.
+
+** Provenance
+The analysis projection must retain immutable source IDs rather than emitting only totals. Outcome-dependent categories include current outcome assertion IDs, rule IDs, and evidence IDs. Cost totals include cost assertion IDs. Raw capture remains separate immutable evidence.
+
+** Nix and non-Nix
+No packaging boundary changes are needed. The existing Common Lisp expert package, Tek9 dependency, SWI-Prolog dependency, Home Manager module, systemd user service, and standalone launch path remain authoritative.
+
+* Design
+Implement the smallest coherent surface inside the Common Lisp expert layer.
+
+1. Reuse the finite task/usage set already obtained for =query_task_accounting=; do not issue a corpus-wide scan.
+2. Build a request -> usage record map and explicit request -> predecessor map from =retry_of_request_id=.
+3. Reuse the current-outcome resolver introduced for =breakdowns.outcome=.
+4. Aggregate three provenance-preserving views: unsuccessful, retry, burn-before-success.
+5. Preserve known/partial/unknown cost semantics exactly as existing task accounting does.
+6. Return explicit completeness metadata for retry ancestry.
+
+* Adversarial review
+The RED fixture must make several tempting wrong implementations fail:
+
+- HTTP 200 must not count as success;
+- chronological order alone must not create a retry chain;
+- an explicit failed first request and failed retry must both count as unsuccessful, but only the second is itself a retry request;
+- burn-before-success for =req-3 -> req-2 -> req-1= must count =req-1= and =req-2= once each and exclude the successful terminal =req-3=;
+- exact immutable cost provenance must survive expert-host restart;
+- unlabeled requests must not enter unsuccessful totals;
+- unknown pricing must not be coerced to zero.
+
+* RED-first acceptance
+On untouched =main=, add a restart-durable fixture with one explicit retry chain:
+
+- =req-1=: attempt 1, current outcome =failure=;
+- =req-2=: attempt 2, =retry_of_request_id=req-1=, current outcome =failure=;
+- =req-3=: attempt 3, =retry_of_request_id=req-2=, current outcome =success=;
+- =req-unlabeled=: unrelated usage with no outcome assertion.
+
+All requests belong to one task and have immutable pricing snapshots. Existing task totals and =breakdowns.outcome= must remain GREEN. The new =analysis= contract must be RED because production does not yet expose outcome-aware retry economics.
+
+Expected future GREEN semantics:
+- unsuccessful request IDs exactly =req-1, req-2=;
+- retry request IDs exactly =req-2, req-3=;
+- burn-before-success request IDs exactly =req-1, req-2=;
+- successful terminal IDs exactly =req-3=;
+- unlabeled request absent from all outcome-derived failure/burn categories;
+- source/cost/outcome provenance retained after restart.
+
+* Decision
+Proceed with the RED contract on branch =rage/13-outcome-retry-economics-red=. Production mutation is authorized only after an independently executed RED isolates absence of the new =analysis= projection while all existing expert/Python/Home Manager gates stay green.
