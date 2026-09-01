@@ -72,9 +72,8 @@
              (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
 
            ;; A second current success proves the bounded query reports
-           ;; truncation. Use evidence that the current Prolog contract actually
-           ;; recognizes as authoritative success; positive user feedback alone
-           ;; intentionally remains unknown.
+           ;; truncation. Positive user feedback alone intentionally remains
+           ;; unknown, so use evidence recognized as authoritative success.
            (let ((reply
                    (%dataset-record
                     host "evt-dataset-success-2" "req-dataset-success-2"
@@ -83,12 +82,16 @@
                            "authoritative" "success" "capture:test-success-2")))))
              (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
 
-           ;; Dataset construction must survive expert-host restart from Tek9.
+           ;; Adversarial upgrade model: assertions predate the new dataset
+           ;; index. Erase only that secondary index while retaining canonical
+           ;; Tek9 documents, then restart. The production host must perform a
+           ;; versioned one-time backfill rather than silently exporting an
+           ;; incomplete historical corpus.
+           (tek9:clear-index (llm-log-expert::expert-host-database host)
+                             "outcome-assertion-outcome")
            (llm-log-expert:stop-expert-host host)
            (setf host (llm-log-expert:start-expert-host data-dir))
 
-           ;; RED on the untouched baseline: query_outcome_dataset is not yet
-           ;; a declared operation and there is no bounded outcome corpus index.
            (let* ((reply
                     (llm-log-expert:dispatch-expert-request
                      host (%dataset-query-request "success" 1)))
