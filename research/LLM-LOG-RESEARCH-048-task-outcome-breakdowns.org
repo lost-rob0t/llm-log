@@ -1,0 +1,97 @@
+#+title: LLM-LOG-RESEARCH-048 — Bounded task outcome breakdowns
+#+filetags: :llm-log:research:expert:task:outcome:aradr:
+#+property: issue https://github.com/lost-rob0t/llm-log/issues/13
+#+property: outcome-expert https://github.com/lost-rob0t/llm-log/issues/15
+#+property: parent https://github.com/lost-rob0t/llm-log/issues/8
+
+* Analyze
+Remote =main= at =2f5e4acb5569a2f54a028e2dec30a857b6eb736b= already has:
+- bounded restart-durable task/usage/cost accounting;
+- provider/model/client/classification task breakdowns;
+- explicit retry/attempt identity;
+- immutable #15 outcome evidence and assertions with supersession history;
+- bounded =query_outcome_dataset= over stored assertions.
+
+The remaining #13 contract includes cost by outcome plus later expensive-failure/retry and token-burn-before-success analysis. Outcome semantics are now available from #15, so the smallest safe next slice is an outcome dimension on the existing finite task-rooted usage set. This slice does not implement cross-task/global analytics.
+
+Python remains capture/transport. Common Lisp owns bounded joins/projection. Tek9 remains durable authority. SWI-Prolog remains the sole owner of outcome inference; task accounting must consume stored assertions and never re-derive labels.
+
+* Research
+** Existing bounded inputs
+=query_task_accounting= already materializes a finite task subtree through =task-parent-id= and =usage-task-id= indexes, deduplicates immutable usage IDs, and binds cost to immutable pricing/cost assertions.
+
+#15 stores outcome assertions separately from evidence. Request outcomes are addressable through Tek9 =outcome-assertion-scope-key= using exact key =request:<request-id>=. Supersession is separately indexed by =outcome-assertion-supersedes=. Existing history limits are bounded at 64 assertions.
+
+No Tek9 generic primitive is missing. Exact index range selection, point fetch and supersession lookup already satisfy this slice. Do not modify =lost-rob0t/tek9=.
+
+** Typed contract
+For every usage observation admitted by the existing bounded task query:
+1. read its immutable =request_id=;
+2. query at most 64 request-scoped outcome assertions via =outcome-assertion-scope-key=;
+3. exclude assertions that have a stored successor;
+4. require at most one current assertion for that request;
+5. group usage under that assertion's finite outcome value;
+6. if no current assertion exists, group it as =unlabeled= rather than dropping it or pretending it is =unknown=.
+
+=unknown= means the #15 expert explicitly derived an unknown outcome from insufficient evidence. =unlabeled= means no current outcome assertion exists. These states must not be conflated.
+
+** Tek9 entity/index/graph schema
+No new durable entity or index is required.
+
+Consumed records/indexes:
+- =usage:<usage-id>= immutable usage projection;
+- =cost:<usage-id>= immutable pricing-bound cost assertion;
+- =outcome-assertion:<assertion-id>= immutable outcome assertion;
+- =outcome-assertion-scope-key= exact request-scope index;
+- =outcome-assertion-supersedes= historical replacement edge/index.
+
+The join remains request-local and task-rooted. Never scan the outcome corpus.
+
+** Local protocol
+No new operation. Version-1 =query_task_accounting= gains =result.breakdowns.outcome=.
+
+Each entry contains:
+- =value=: one of #15 finite outcomes or =unlabeled=;
+- =request_count= and =usage_observation_count=;
+- normalized token totals;
+- known cost amount/currency plus truthful =cost_state=;
+- =usage_observation_ids= and =cost_assertion_ids=;
+- =outcome_assertion_ids=;
+- =rule_ids= and =evidence_ids= for labeled groups.
+
+No caller-provided Prolog term or predicate is added.
+
+** Provenance
+A labeled outcome breakdown must retain the immutable #15 assertion IDs, rule IDs and evidence IDs that caused each request to enter that group. Cost provenance remains the existing immutable cost assertion IDs. Unlabeled usage has empty outcome provenance arrays.
+
+** Failure semantics
+- missing request ID: preserve existing accounting semantics; it may only be =unlabeled=;
+- no outcome assertion: =unlabeled=;
+- one current assertion: use it;
+- multiple non-superseded current assertions for one request: fail the task query with an explicit integrity error rather than double-counting the request;
+- missing/corrupt outcome provenance on an assertion: fail explicitly;
+- expert service availability semantics remain unchanged: Python proxy forwarding is fail-open unless =require_expert_plane= is enabled.
+
+Classification/outcome metadata is analytical only and never grants authority.
+
+** Nix / non-Nix packaging
+No packaging surface changes. The Common Lisp expert service remains in the existing flake with SBCL/Tek9/SWI-Prolog and the same standalone launch/config path. Dotfiles remains a consumer and keeps =~/Documents/AI/proxy= as the configured capture corpus. No dotfiles mutation is needed for this query-only expert-plane slice.
+
+* Design
+Implement outcome grouping as another projection over =%bounded-task-usage-records=. Reuse =%breakdown-accumulator= so token/cost arithmetic cannot diverge from provider/model/client/classification breakdowns.
+
+Add a bounded request-outcome resolver in Common Lisp that consumes stored #15 assertions only. Do not call =outcome_decision= during task queries. Do not recreate outcome rules in Common Lisp or Python.
+
+* Adversarial review
+- HTTP-200 trap: task accounting must never inspect transport status to infer success.
+- historical double-count trap: superseded failure plus current success for one request must contribute only to the current outcome group.
+- unlabeled/unknown trap: absence of an assertion is not the same as an explicit =unknown= assertion.
+- ambiguity trap: two current labels for one request must not charge the same usage to multiple outcome buckets.
+- corpus-scan trap: only exact request-scope index reads are allowed.
+- pricing drift trap: outcome grouping reuses stored cost assertions; it does not reprice history.
+- authority trap: outcome/classification values are analytics, never authorization.
+
+* Decision
+Proceed RED-first on branch =rage/13-outcome-breakdown-red=. The untouched baseline must preserve all existing task totals after restart but fail because =breakdowns.outcome= is absent. The fixture must include explicit success, explicit failure and an unlabeled request, proving that raw task usage remains complete while outcome provenance is separate.
+
+Only after an independently executed product RED may production Common Lisp code add the bounded outcome join. No Tek9 or dotfiles production mutation is authorized by this design.

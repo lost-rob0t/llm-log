@@ -1,0 +1,40 @@
+#+title: LLM-LOG-EVIDENCE-038 — Task outcome breakdown accepted RED
+#+filetags: :llm-log:evidence:expert:task:outcome:red:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/13
+Outcome authority: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-048-task-outcome-breakdowns.org
+PR: https://github.com/lost-rob0t/llm-log/pull/50
+
+* Exact untouched product head
+Commit: =54dd2d97263a6b59c340c8bd47ce9160ae4ad255=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33456066504
+Failed integration job: =99696151527=
+
+* Accepted RED
+The corrected fixture loaded and exercised all preceding Common Lisp/Tek9/SWI-Prolog expert contracts before reaching the new =task-outcome-breakdown-red-contract=.
+
+After writing explicit #15 outcome evidence/assertions, stopping the expert host, and restarting from the same durable Tek9 state, =query_task_accounting= remained healthy and reconstructed the pre-existing accounting totals:
+
+- request_count: =3=
+- input_tokens: =200=
+- output_tokens: =80=
+
+The new outcome projection was absent: =breakdowns.outcome= decoded as NIL, so the contract failed at the first requirement that outcome groups exist. The intended success/failure/unlabeled entries therefore could not be selected. This isolates the missing product behavior rather than fixture syntax, transport policy, Tek9 startup, or Prolog startup.
+
+* Independent lanes
+- Common Lisp / Tek9 / SWI-Prolog integration: RED only at the new task outcome breakdown contract.
+- Python expert policy / adapter / transport lifecycle / launch: GREEN.
+- Home Manager expert wiring: GREEN.
+
+* Mutation boundary
+Production mutation is authorized only for a bounded Common Lisp projection over the already-bounded task usage set:
+- resolve request-scoped current #15 assertions through existing Tek9 indexes;
+- exclude superseded assertions;
+- distinguish explicit =unknown= from no assertion (=unlabeled=);
+- retain immutable usage/cost provenance plus outcome assertion/rule/evidence provenance;
+- fail on multiple current assertions for one request instead of guessing;
+- never infer outcomes from HTTP/transport status.
+
+SWI-Prolog remains the sole owner of outcome inference. Python remains capture/transport. No Tek9 repository or dotfiles mutation is authorized by this RED.

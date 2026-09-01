@@ -17,6 +17,7 @@
                (:file "task-breakdowns")
                (:file "outcome")
                (:file "outcome-dataset")
+               (:file "outcome-breakdowns")
                (:file "service")
                (:file "task-dispatch")
                (:file "outcome-dispatch")
