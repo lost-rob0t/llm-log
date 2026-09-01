@@ -19,9 +19,19 @@
         (append usage (list (cons "retry_of_request_id" retry-of)))
         usage)))
 
+(defun %economics-entry (analysis name)
+  (and analysis (jsown:val-safe analysis name)))
+
 (defun %economics-entry-ids (analysis name)
-  (let ((entry (and analysis (jsown:val-safe analysis name))))
+  (let ((entry (%economics-entry analysis name)))
     (and entry (jsown:val-safe entry "request_ids"))))
+
+(defun %economics-non-empty-string-list-p (value)
+  (and (listp value)
+       value
+       (every (lambda (item)
+                (and (stringp item) (plusp (length item))))
+              value)))
 
 (rove:deftest task-outcome-retry-economics-red-contract
   (let* ((data-dir
@@ -114,32 +124,62 @@
              ;; RED on untouched main: outcome-aware retry economics do not exist.
              (rove:ok (consp analysis))
 
-             ;; These assertions become active once production exposes the bounded surface.
+             ;; Production must preserve graph semantics plus immutable provenance.
              (when analysis
-               (rove:ok
-                (equal '("req-1" "req-2")
-                       (sort (copy-list (%economics-entry-ids analysis "unsuccessful"))
-                             #'string<)))
-               (rove:ok
-                (equal '("req-2" "req-3")
-                       (sort (copy-list (%economics-entry-ids analysis "retry"))
-                             #'string<)))
-               (rove:ok
-                (equal '("req-1" "req-2")
-                       (sort (copy-list (%economics-entry-ids analysis "burn_before_success"))
-                             #'string<)))
-               (rove:ok
-                (equal '("req-3")
-                       (sort
-                        (copy-list
-                         (jsown:val-safe
-                          (jsown:val-safe analysis "burn_before_success")
-                          "successful_terminal_ids"))
-                        #'string<)))
-               (rove:ok
-                (not (member "req-unlabeled"
-                             (%economics-entry-ids analysis "unsuccessful")
-                             :test #'equal))))))
+               (let ((unsuccessful (%economics-entry analysis "unsuccessful"))
+                     (retry (%economics-entry analysis "retry"))
+                     (burn (%economics-entry analysis "burn_before_success")))
+                 (rove:ok
+                  (equal '("req-1" "req-2")
+                         (sort (copy-list (%economics-entry-ids analysis "unsuccessful"))
+                               #'string<)))
+                 (rove:ok
+                  (equal '("req-2" "req-3")
+                         (sort (copy-list (%economics-entry-ids analysis "retry"))
+                               #'string<)))
+                 (rove:ok
+                  (equal '("req-1" "req-2")
+                         (sort (copy-list (%economics-entry-ids analysis "burn_before_success"))
+                               #'string<)))
+                 (rove:ok
+                  (equal '("req-3")
+                         (sort (copy-list (jsown:val-safe burn "successful_terminal_ids"))
+                               #'string<)))
+                 (rove:ok (= 1 (jsown:val-safe burn "successful_terminal_count")))
+                 (rove:ok (eq t (jsown:val-safe burn "retry_graph_complete")))
+                 (rove:ok
+                  (not (member "req-unlabeled"
+                               (%economics-entry-ids analysis "unsuccessful")
+                               :test #'equal)))
+
+                 ;; Cost assertions are immutable pricing-snapshot projections.
+                 (dolist (entry (list unsuccessful retry burn))
+                   (rove:ok (equal "known" (jsown:val-safe entry "cost_state")))
+                   (rove:ok
+                    (%economics-non-empty-string-list-p
+                     (jsown:val-safe entry "cost_assertion_ids"))))
+
+                 ;; Outcome-derived unsuccessful totals retain the two failure labels.
+                 (rove:ok
+                  (= 2 (length (jsown:val-safe unsuccessful "outcome_assertion_ids"))))
+                 (rove:ok
+                  (%economics-non-empty-string-list-p
+                   (jsown:val-safe unsuccessful "rule_ids")))
+                 (rove:ok
+                  (%economics-non-empty-string-list-p
+                   (jsown:val-safe unsuccessful "evidence_ids")))
+
+                 ;; Burn provenance is bound to the explicit successful terminal.
+                 (rove:ok
+                  (= 1 (length
+                        (jsown:val-safe
+                         burn "successful_terminal_outcome_assertion_ids"))))
+                 (rove:ok
+                  (%economics-non-empty-string-list-p
+                   (jsown:val-safe burn "successful_terminal_rule_ids")))
+                 (rove:ok
+                  (%economics-non-empty-string-list-p
+                   (jsown:val-safe burn "successful_terminal_evidence_ids")))))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
         (uiop:delete-directory-tree
