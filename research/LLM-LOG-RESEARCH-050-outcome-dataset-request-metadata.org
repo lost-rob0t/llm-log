@@ -1,0 +1,106 @@
+#+title: LLM-LOG-RESEARCH-050 — Outcome dataset request metadata filters
+#+filetags: :llm-log:research:expert:outcome:dataset:aradr:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Parent expert plane: https://github.com/lost-rob0t/llm-log/issues/8
+Predecessor dataset design: ./LLM-LOG-RESEARCH-047-outcome-dataset-export.org
+Task accounting source: closed #13 and research/LLM-LOG-RESEARCH-043-task-usage-breakdowns.org
+
+* Analyze
+Remote =main= at =d46bfee8a9cc66095cb102a5ceeb75e1f46f6bcd= already provides:
+- immutable outcome evidence and stored derived outcome assertions;
+- bounded =query_outcome_dataset= selected through Tek9 =outcome-assertion-outcome=;
+- default exclusion of superseded assertions and explicit historical opt-in;
+- request usage observations carrying durable =request_id=, =provider=, =model=, =client= and immutable cost provenance;
+- task/classification/outcome accounting projections proven restart-durable;
+- one-time versioned index migration machinery for durable pre-upgrade corpora.
+
+The next #15 acceptance gap is dataset selection by provider/model without rebuilding outcome semantics or scanning the corpus. The base dataset operation currently filters only outcome, scope and rule version.
+
+Current Tek9 task indexes include =usage-task-id= but not request identity. Therefore a request-scoped outcome assertion cannot currently point-fetch its associated usage observation through a declared index. This is a llm-log projection/index gap, not a missing Tek9 primitive.
+
+Dotfiles is only a consumer and remains out of the implementation transaction. Tek9 public =register-index=, =select-index-range= and =rebuild-index= are sufficient; no Tek9 repository mutation is justified.
+
+* Research
+** Bounded typed contract
+Extend declared version-1 =query_outcome_dataset= payload with optional exact string filters:
+- =provider=
+- =model=
+
+Both are metadata selectors only. They do not affect outcome authority, confidence or Prolog inference.
+
+For request-scoped assertions, resolve at most the associated usage observations through a new llm-log Tek9 secondary index =usage-request-id=. A request with zero usage observations does not match a provider/model filter. More than one non-identical usage observation for one request is an integrity error for this dataset projection; do not guess.
+
+Task-scoped assertions are not eligible when =provider= or =model= is supplied because provider/model are request usage attributes, not task authority. The query returns no task-scoped match rather than fabricating task metadata.
+
+** Tek9 schema/index contract
+Existing durable usage projection remains canonical and unchanged:
+- =usage_id=
+- =request_id=
+- =task_id=
+- provider/model/client/transport
+- token counts
+- pricing/cost provenance
+
+Add only the derived secondary index:
+- =usage-request-id=: key =request_id=, value canonical usage projection.
+
+Existing corpora require one versioned migration marker, analogous to the outcome dataset index migration. Startup may rebuild this one secondary index exactly once. Ordinary queries and restarts must never scan the corpus.
+
+** Result/provenance contract
+Each matching dataset example gains a request metadata object when request usage exists:
+- =usage_id=
+- =provider=
+- =model=
+- =client=
+- =transport=
+
+The existing immutable outcome assertion/rule/expert/evidence provenance remains untouched. Cost calculation and pricing snapshots are not recomputed in this slice.
+
+** Local protocol
+No new arbitrary operation is needed. Extend only declared =query_outcome_dataset= version 1. Unknown fields remain subject to existing typed validation behavior. No =call_prolog= or model-controlled callable term is introduced.
+
+** Prolog boundary
+SWI-Prolog is not invoked by dataset export and remains the sole owner of outcome inference at assertion creation time. Provider/model metadata never grants authority and cannot change a stored label.
+
+** Failure semantics
+- invalid/empty provider or model filter => typed request error;
+- missing request usage under an active provider/model filter => non-match;
+- multiple conflicting request usage projections => explicit integrity error;
+- candidate ceiling remains fail-closed rather than silently incomplete;
+- missing outcome evidence remains fatal as in the current dataset contract;
+- expert-plane unavailability does not alter proxy fail-open policy.
+
+** Nix / non-Nix
+No launch/configuration shape changes. Existing SBCL/Tek9/SWI-Prolog packaging and Home Manager/systemd wiring remain the gate. Standalone launch remains unchanged. Consumer storage remains =~/Documents/AI/proxy= in dotfiles.
+
+* Design
+1. Register =usage-request-id= in the Common Lisp host using Tek9 public index APIs.
+2. Add a durable one-time migration marker and =tek9:rebuild-index= for pre-existing usage observations.
+3. Extend dataset payload validation with optional non-empty =provider= and =model=.
+4. Resolve request metadata only for bounded outcome candidates already selected by =outcome-assertion-outcome=.
+5. Filter exact provider/model values and include metadata provenance in examples.
+6. Never call Prolog from export and never add a Python rules layer.
+
+* Adversarial review
+- A global scan to find request usage would violate the expert-plane bounded retrieval invariant. Rejected.
+- Adding provider/model directly to outcome assertions would duplicate mutable request metadata into label authority records. Rejected.
+- Treating task-scoped outcome labels as if they have one provider/model would conflate multi-request tasks. Rejected.
+- Selecting the first of conflicting usage observations would hide corpus corruption. Reject with an integrity error.
+- Rebuilding =usage-request-id= on every startup would make restart cost corpus-sized. Use a durable versioned migration marker.
+- Filtering after a small candidate limit can truthfully fail at the existing hard candidate ceiling, but must never claim complete results when the ceiling is exceeded.
+
+* Decision
+Proceed RED-first on branch =rage/15-outcome-dataset-metadata-red=.
+
+Exact RED acceptance on the untouched production baseline:
+1. persist two current authoritative =success= request assertions;
+2. persist usage for both requests with distinct provider/model values through existing =account_task_usage=;
+3. restart the expert host to force durable Tek9 reconstruction;
+4. query =query_outcome_dataset= with =outcome=success=, =provider=openrouter=, =model=fixture/model-a=;
+5. require exactly the matching request and its usage metadata;
+6. require the other success to be excluded;
+7. require all existing expert contracts, Python expert policy/transport and Home Manager gates to remain GREEN.
+
+The expected untouched-baseline RED is that =query_outcome_dataset= does not honor or project the new request metadata filters. Production mutation is authorized only after that failure is independently executed and isolated.
