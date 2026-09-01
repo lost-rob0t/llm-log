@@ -1,0 +1,37 @@
+#+title: LLM-LOG-EVIDENCE-035 — Outcome dataset export accepted RED
+#+filetags: :llm-log:evidence:expert:outcome:dataset:red:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-047-outcome-dataset-export.org
+Draft PR: https://github.com/lost-rob0t/llm-log/pull/48
+
+* Exact head
+Commit: =98b6c8d0965ca046708ca1b754c41398891cff9d=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33453859682
+
+* Accepted RED
+The exact head compiled the new Common Lisp integration fixture and executed the existing expert suite successfully through the prior #10/#12/#13/#15 contracts.
+
+The new =outcome-dataset-red-contract= alone failed on the intended missing product behavior. After the expert host restarted from durable Tek9 state, =query_outcome_dataset= returned:
+
+- status: =error=
+- code: =unknown_operation=
+- message: =operation is not declared=
+
+The failure is therefore not fixture syntax, dependency setup, Tek9 startup, SWI-Prolog startup, or an existing-regression failure. It proves that the bounded dataset query surface is absent on the untouched production baseline.
+
+* Independent lanes
+- Common Lisp / Tek9 / SWI-Prolog: RED only at the new dataset contract; all preceding contracts reached GREEN assertions before the new failure.
+- Python expert policy / adapter / transport lifecycle / launch: GREEN.
+- Home Manager expert wiring: GREEN.
+
+* Mutation boundary
+Production mutation is authorized only for the bounded #15 dataset substrate defined in =LLM-LOG-RESEARCH-047=:
+- finite declared =query_outcome_dataset= operation;
+- bounded indexed Tek9 retrieval;
+- immutable stored outcome assertions only, with no re-inference during export;
+- complete evidence/rule/expert provenance;
+- default exclusion of superseded assertions with explicit historical opt-in.
+
+No Tek9 repository or dotfiles mutation is authorized by this RED. Existing Tek9 public index/point-fetch APIs must be attempted first.
