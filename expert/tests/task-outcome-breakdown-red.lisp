@@ -24,31 +24,14 @@
     ("input_per_token" input-rate)
     ("output_per_token" output-rate)))
 
-(defun %task-outcome-evidence (id value source-id)
-  (jsown:new-js
-    ("evidence_id" id)
-    ("observed_at" "2026-09-01T00:40:00Z")
-    ("evidence_type" "test_result")
-    ("authority" "authoritative")
-    ("observed_value" value)
-    ("source_id" source-id)))
-
 (defun %task-outcome-record (host event-id request-id value)
-  (llm-log-expert:dispatch-expert-request
-   host
-   (jsown:new-js
-     ("version" 1)
-     ("operation" "record_outcome_evidence")
-     ("event_id" event-id)
-     ("payload"
-      (jsown:new-js
-        ("scope" "request")
-        ("scope_id" request-id)
-        ("evidence"
-         (list (%task-outcome-evidence
-                (format nil "ev-~A" event-id)
-                value
-                (format nil "capture:~A" event-id)))))))))
+  ;; Reuse the already-green #15 fixture constructor rather than creating a
+  ;; second outcome-ingest setup path for this #13 query-only contract.
+  (%record-outcome-for-contract
+   host event-id request-id
+   (list (%outcome-history-evidence
+          (format nil "ev-~A" event-id)
+          "test_result" "authoritative" value))))
 
 (defun %task-outcome-entry (entries value)
   (find value entries
