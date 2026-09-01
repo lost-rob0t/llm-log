@@ -1,5 +1,8 @@
 (in-package #:llm-log-expert)
 
+(defparameter +outcome-dataset-index-migration-key+
+  "meta:index-migration:outcome-assertion-outcome:v1")
+
 (defstruct (expert-host
             (:constructor %make-expert-host))
   (data-directory nil :type (or null pathname))
@@ -97,6 +100,24 @@ execution must use them rather than enumerating the expert corpus."
        (and assertion-id scope scope-id outcome outcome))))
   database)
 
+(defun %ensure-outcome-dataset-index-v1 (database)
+  "Backfill the v1 outcome corpus index exactly once for an existing Tek9 KB.
+
+Registering a new Tek9 index does not retroactively index documents written by
+older llm-log versions.  The durable migration marker therefore gates one
+startup rebuild.  A crash after REBUILD-INDEX but before the marker write is
+safe: the next startup repeats the idempotent rebuild.  Normal requests never
+scan the corpus."
+  (unless (fetch* database +outcome-dataset-index-migration-key+)
+    (rebuild-index database "outcome-assertion-outcome")
+    (with-write-transaction (database)
+      (unless (fetch* database +outcome-dataset-index-migration-key+)
+        (put* database
+              (list :schema-version 1
+                    :index-name "outcome-assertion-outcome")
+              :id +outcome-dataset-index-migration-key+))))
+  database)
+
 (defun start-expert-host (data-directory)
   "Open Tek9 and one persistent supervised SWI-Prolog worker for HOST."
   (let* ((root (uiop:ensure-directory-pathname data-directory))
@@ -114,6 +135,7 @@ execution must use them rather than enumerating the expert corpus."
           (%register-classification-indexes database)
           (%register-task-accounting-indexes database)
           (%register-outcome-indexes database)
+          (%ensure-outcome-dataset-index-v1 database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)
