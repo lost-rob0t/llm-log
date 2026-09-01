@@ -69,7 +69,7 @@ execution must use them rather than enumerating the expert corpus."
   database)
 
 (defun %register-outcome-indexes (database)
-  "Register exact-scope and supersession indexes for bounded outcome history."
+  "Register bounded outcome history and dataset-selection indexes."
   (register-index
    database "outcome-assertion-scope-key"
    (lambda (document)
@@ -84,6 +84,17 @@ execution must use them rather than enumerating the expert corpus."
      (let ((assertion-id (%plist-index-value document :assertion-id))
            (supersedes (%plist-index-value document :supersedes)))
        (and assertion-id supersedes))))
+  (register-index
+   database "outcome-assertion-outcome"
+   (lambda (document)
+     (let ((assertion-id (%plist-index-value document :assertion-id))
+           (scope (%plist-index-value document :scope))
+           (scope-id (%plist-index-value document :scope-id))
+           (outcome (%plist-index-value document :outcome)))
+       ;; Require the complete outcome assertion identity so unrelated expert
+       ;; projections can never enter the dataset index merely by carrying an
+       ;; :OUTCOME field.
+       (and assertion-id scope scope-id outcome outcome))))
   database)
 
 (defun start-expert-host (data-directory)
