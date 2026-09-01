@@ -1,0 +1,131 @@
+#+title: LLM-LOG-RESEARCH-047 — Bounded outcome dataset export
+#+filetags: :llm-log:expert:outcome:dataset:aradr:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Parent: https://github.com/lost-rob0t/llm-log/issues/8
+Predecessors:
+- research/LLM-LOG-RESEARCH-045-outcome-evidence-substrate.org
+- research/LLM-LOG-RESEARCH-046-outcome-supersession-history.org
+
+This document defines one bounded Auto-ARADR / Auto-RAGE slice after durable outcome evidence, finite Prolog-owned outcome labels, immutable supersession and exact-scope history are already GREEN on =main=.
+
+* Analyze
+Current =query_outcome_history= is intentionally exact-scope. It can audit one request/task history but cannot construct a bounded corpus selection. Issue #15 additionally requires an auditable dataset/query contract without turning transport success into task success or losing raw evidence links.
+
+The first dataset slice MUST NOT attempt every future cross-expert join at once. Classification, provider/model, task-cost and Beagle-rewrite filters depend on independently versioned projections and are follow-up joins. This slice establishes the durable export substrate that later joins consume.
+
+* Research
+** Existing source boundary
+- Python remains capture/transport and does not label or select training examples.
+- Common Lisp owns typed dataset query validation, bounded Tek9 retrieval and JSON projection.
+- Tek9 remains the canonical durable KB.
+- SWI-Prolog continues to own outcome inference; dataset export reads already-derived immutable assertions and MUST NOT re-run or reproduce outcome rules.
+- Raw evidence records and derived outcome assertions remain separate.
+
+** Typed operation
+Add declared expert operation =query_outcome_dataset= version 1.
+
+Payload:
+- =outcome=: required finite outcome value for this first slice;
+- =limit=: required integer 1..64;
+- =scope=: optional =request= or =task=;
+- =rule_version=: optional exact rule-version filter;
+- =include_superseded=: optional boolean, default false.
+
+No arbitrary predicate/filter expression is accepted.
+
+Result:
+- =outcome=
+- =examples=: bounded list;
+- =truncated=: boolean indicating that more matching records existed than returned.
+
+Each example contains at minimum:
+- =assertion_id=
+- =scope= and =scope_id=
+- =outcome=
+- =rule_id=, =rule_version=, =expert_version=
+- =evidence_ids=
+- =evidence=: immutable evidence projections with =evidence_id=, =source_id=, =observed_at=, =evidence_type=, =authority=, =observed_value=
+- =supersedes_assertion_id=
+- =replaced_by_assertion_id=
+
+This is an auditable derived dataset view, not a copy or rewrite of raw capture.
+
+** Tek9 schema/index decision
+Current exact-scope history uses =outcome-assertion-scope-key=. Corpus export MUST NOT enumerate the entire Tek9 database.
+
+Add generic bounded indexes over existing immutable outcome assertions:
+- =outcome-assertion-outcome= -> =outcome=
+- optionally compose post-retrieval exact filters for =scope= and =rule_version= over the already-bounded outcome candidate set.
+
+Retrieval rule:
+1. query =outcome-assertion-outcome= for one exact outcome;
+2. request at most =limit + 1= after applying a hard internal candidate ceiling;
+3. apply declared exact filters only;
+4. resolve evidence via point fetches from =outcome-evidence:<id>=;
+5. resolve replacement using the existing supersession index;
+6. never scan all assertions/documents.
+
+If Tek9's existing public index registration/range APIs support this, no Tek9 repository mutation is allowed.
+
+** Provenance and raw evidence
+The export MUST preserve evidence =source_id= verbatim when present. A source ID is a reference to immutable capture/derived evidence; export must not inline arbitrary raw prompt/response bodies by default. This keeps credentials/private payload handling at the capture/redaction boundary.
+
+Derived examples remain reproducible because assertion rule/version/expert version and evidence IDs are immutable.
+
+** Supersession semantics
+Default export returns only current assertions: an assertion with a durable =replaced_by_assertion_id= is excluded.
+
+=include_superseded=true= returns historical assertions too. Nothing is deleted or rewritten.
+
+** Failure semantics
+Reject before database work:
+- unknown outcome;
+- invalid scope;
+- limit outside 1..64;
+- non-string/empty rule version;
+- non-boolean =include_superseded=.
+
+If a referenced evidence record is missing, return an error rather than emitting an apparently auditable example with broken provenance.
+
+Expert unavailability does not alter proxy forwarding policy. Python capture stays fail-open unless =require_expert_plane= is explicitly enabled.
+
+** Nix / non-Nix
+No packaging change is required for this slice. The operation lives in the already-packaged Common Lisp expert service and uses its existing Tek9/SWI-Prolog runtime. Home Manager/systemd and standalone launch paths remain unchanged.
+
+* Design
+Implement the smallest reusable substrate:
+1. register =outcome-assertion-outcome= against immutable assertion projections;
+2. add =query-outcome-dataset= in Common Lisp;
+3. declare only that finite operation in the dispatcher;
+4. project immutable evidence by ID;
+5. default-exclude superseded assertions;
+6. expose explicit truncation;
+7. add restart-durable integration contract.
+
+Do NOT add classification/provider/model/cost/Beagle joins in this slice. Those become later bounded extensions after this base selection surface is GREEN.
+
+* Adversarial review
+- A full-database walk would violate the bounded-materialization invariant: reject.
+- Re-running Prolog during export could silently relabel historical data after rule changes: reject; read stored assertions only.
+- Treating HTTP 200 as success would violate #15 semantics: export only explicit stored outcome assertions.
+- Dropping =source_id= would make examples unauditable: reject.
+- Exporting only latest state without an opt-in history mode would destroy research utility: preserve =include_superseded=.
+- Exporting superseded assertions by default would mix obsolete labels into ordinary datasets: default false.
+- Missing evidence must not be silently omitted.
+- Classification metadata never grants authority and is not part of this slice.
+
+* Decision
+Proceed RED-first on branch =rage/15-outcome-dataset-red=.
+
+Exact RED acceptance:
+1. create success and failure assertions plus a corrected success that supersedes failure;
+2. restart the expert host;
+3. call =query_outcome_dataset= for =success= with =limit= 1;
+4. require exactly one current success example, explicit =truncated= when another current success exists, and complete rule/evidence/source provenance;
+5. query failure with default supersession behavior and prove the replaced failure is absent;
+6. query failure with =include_superseded=true= and prove it is present with =replaced_by_assertion_id=;
+7. existing expert, Python policy/transport and Home Manager gates must stay green.
+
+The untouched baseline is expected to fail because =query_outcome_dataset= is not a declared operation and the outcome corpus index/export projection do not yet exist.
