@@ -111,7 +111,7 @@
                (rove:ok
                 (equal "openrouter" (jsown:val-safe metadata "provider")))
                (rove:ok
-                (equal "fixture/model-a" (jsown:val-safe metadata "model")))))
+                (equal "fixture/model-a" (jsown:val-safe metadata "model"))))))
       (ignore-errors (llm-log-expert:stop-expert-host host))
       (ignore-errors
         (uiop:delete-directory-tree
