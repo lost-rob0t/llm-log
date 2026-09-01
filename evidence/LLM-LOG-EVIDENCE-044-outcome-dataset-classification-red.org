@@ -1,0 +1,34 @@
+#+TITLE: LLM-LOG-EVIDENCE-044 — Outcome dataset classification RED
+#+DATE: 2026-09-01
+
+* Scope
+Issue: [[https://github.com/lost-rob0t/llm-log/issues/15][#15]]
+Design: =research/LLM-LOG-RESEARCH-051-outcome-dataset-classification.org=
+Branch: =rage/15-outcome-dataset-classification-red=
+
+* Rejected setup failure
+Workflow run =33469254343= is NOT product RED evidence. The newly-added fixture had an EOF/parenthesis error and failed before the intended behavior could be isolated. Python expert policy/transport and Home Manager were green. The fixture syntax was corrected without production mutation.
+
+* Accepted RED
+Exact head: =241b7d10f9d6fbfa72713a423ce98eb2393684dd=
+Workflow run: =33469398054=
+
+Lanes:
+- Python expert-policy/adapter/transport/launch: GREEN
+- Home Manager expert wiring: GREEN
+- Common Lisp + Tek9 + SWI-Prolog integration: RED
+
+The existing expert contracts completed before the new dataset classification contract. The new contract persisted two request usage projections, two #12 classification results, and two authoritative #15 success assertions, restarted the expert host, then queried =query_outcome_dataset= with exact =activity/coding/asserted= selectors.
+
+Untouched production behavior returned both success examples instead of exactly the coding request and did not expose =request_classifications=. The observed failure is therefore the missing #15 classification-aware dataset selection/provenance surface, not fixture syntax, service startup, Python proxy policy, Home Manager wiring, or a Tek9 primitive failure.
+
+* Mutation boundary
+Production mutation is now authorized only for the bounded Common Lisp outcome-dataset query/projection layer:
+- exact classification dimension/value/state filters;
+- bounded request-local joins using existing =classification-source-request-id= and =classification-assertion-source-event= indexes;
+- stored classifier assertion/rule/evidence provenance in =request_classifications=;
+- task-scoped outcome examples remain non-matches under classification filters;
+- no SWI-Prolog re-inference during export;
+- no Python rule engine;
+- no Tek9 repository change;
+- no dotfiles change.

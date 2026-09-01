@@ -19,6 +19,7 @@ on:
       - rage/15-outcome-history-red
       - rage/15-outcome-dataset-red
       - rage/15-outcome-dataset-metadata-red
+      - rage/15-outcome-dataset-classification-red
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,44 @@
+#+TITLE: LLM-LOG-EVIDENCE-045 — Outcome dataset classification GREEN
+#+DATE: 2026-09-01
+
+* Scope
+Issue: [[https://github.com/lost-rob0t/llm-log/issues/15][#15]]
+Design: =research/LLM-LOG-RESEARCH-051-outcome-dataset-classification.org=
+RED evidence: =evidence/LLM-LOG-EVIDENCE-044-outcome-dataset-classification-red.org=
+
+* Implementation GREEN
+Exact implementation head: =e1f71731da231f700ce46272667454624db69b4d=
+Workflow run: =33469561648=
+
+All required lanes passed:
+- Common Lisp + Tek9 + SWI-Prolog integration: GREEN
+- Python expert-policy/adapter/transport/launch: GREEN
+- Home Manager expert wiring: GREEN
+
+* Verified behavior
+The restart-durable #15 integration contract now proves that =query_outcome_dataset= can select stored outcome examples by exact request-classification metadata while preserving authority boundaries.
+
+Fixture behavior:
+1. two durable request usage observations are persisted;
+2. #12 persists a coding classification for =req-dataset-openrouter= and a different classification result for =req-dataset-anthropic=;
+3. #15 persists authoritative =success= assertions for both requests;
+4. the expert host is stopped and restarted;
+5. =query_outcome_dataset= selects =success= plus =activity/coding/asserted=;
+6. exactly =req-dataset-openrouter= survives;
+7. its durable provider/model metadata still resolves through the already-green =usage-request-id= join;
+8. =request_classifications= carries classifier assertion ID, rule ID/version, and evidence IDs.
+
+* Architecture evidence
+- Python remains capture/transport and gained no rule engine.
+- Common Lisp owns typed validation, bounded Tek9 joins, projection and result validation.
+- Tek9 remains the canonical durable KB; no Tek9 repository mutation or new primitive was required.
+- SWI-Prolog remains the sole owner of request classification and outcome inference. Dataset export does not re-run Prolog.
+- Retrieval starts from the bounded outcome candidate set and joins request-local classifier source/assertion indexes only; no corpus scan is introduced.
+- Classification metadata remains non-authoritative with respect to outcome labels.
+- Task-scoped outcome assertions are never fabricated into request-classification matches.
+- Raw capture and outcome/classification derived assertions remain distinct provenance products.
+- Nix/non-Nix packaging dependencies are unchanged.
+- Dotfiles was not changed; its capture path remains a separate consumer concern.
+
+* Merge gate
+This evidence commit is documentation-only. Its resulting exact head must independently pass the same three required lanes before merge. Merge is permitted only if that exact head is current, green, mergeable, and has no unresolved required review/discussion state.

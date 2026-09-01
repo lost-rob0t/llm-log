@@ -23,6 +23,7 @@
                              (:file "outcome-history-red")
                              (:file "outcome-dataset-red")
                              (:file "outcome-dataset-metadata-red")
+                             (:file "outcome-dataset-classification-red")
                              (:file "task-outcome-breakdown-red")
                              (:file "task-outcome-retry-economics-red"))))
   :perform (asdf:test-op (op c)

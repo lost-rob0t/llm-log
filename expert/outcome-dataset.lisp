@@ -25,6 +25,12 @@
         (rule-version (jsown:val-safe payload "rule_version"))
         (provider (%outcome-dataset-optional-string payload "provider"))
         (model (%outcome-dataset-optional-string payload "model"))
+        (classification-dimension
+          (%outcome-dataset-optional-string payload "classification_dimension"))
+        (classification-value
+          (%outcome-dataset-optional-string payload "classification_value"))
+        (classification-state
+          (%outcome-dataset-optional-string payload "classification_state"))
         (include-superseded (jsown:val-safe payload "include_superseded")))
     (unless (member outcome +outcome-values+ :test #'equal)
       (error "unsupported outcome filter: ~A" outcome))
@@ -40,7 +46,8 @@
       (unless (or (eq include-superseded t) (null include-superseded))
         (error "include_superseded must be boolean")))
     (values outcome limit scope rule-version (eq include-superseded t)
-            provider model)))
+            provider model
+            classification-dimension classification-value classification-state)))
 
 (defun %outcome-dataset-evidence-json (database evidence-id)
   "Point-fetch one immutable evidence projection; missing provenance is fatal."
@@ -90,8 +97,48 @@ multiple usage projections are an integrity error rather than a guess."
         (cons "client" (getf usage :client))
         (cons "transport" (getf usage :transport)))))
 
-(defun %outcome-dataset-example-json (database projection request-usage)
-  "Project one stored assertion without re-running outcome inference."
+(defun %outcome-dataset-classification-json (assertion)
+  (let ((value (getf assertion :value)))
+    (%json-object
+     (cons "assertion_id" (getf assertion :assertion-id))
+     (cons "dimension" (getf value :dimension))
+     (cons "value" (getf value :value))
+     (cons "state" (getf value :state))
+     (cons "rule_id" (getf value :rule-id))
+     (cons "rule_version" (getf assertion :rule-version))
+     (cons "evidence_ids" (copy-list (getf value :evidence-ids))))))
+
+(defun %outcome-dataset-request-classifications (host projection)
+  "Materialize a bounded stored-classification slice for one request outcome."
+  (when (equal "request" (getf projection :scope))
+    (let ((assertions '()))
+      (dolist (source
+               (%classification-source-records-for-request
+                host (getf projection :scope-id)))
+        (dolist (assertion (%classification-assertions-for-source host source))
+          (push assertion assertions)))
+      (stable-sort
+       (remove-duplicates assertions
+                          :key (lambda (assertion)
+                                 (getf assertion :assertion-id))
+                          :test #'equal)
+       #'string<
+       :key (lambda (assertion)
+              (getf assertion :assertion-id))))))
+
+(defun %outcome-dataset-classification-matches-p
+    (assertion dimension filter-value state)
+  (let ((value (getf assertion :value)))
+    (and (or (null dimension)
+             (equal dimension (getf value :dimension)))
+         (or (null filter-value)
+             (equal filter-value (getf value :value)))
+         (or (null state)
+             (equal state (getf value :state))))))
+
+(defun %outcome-dataset-example-json
+    (database projection request-usage request-classifications)
+  "Project one stored assertion without re-running expert inference."
   (let ((evidence-ids (copy-list (getf projection :evidence-ids))))
     (%json-object
      (cons "assertion_id" (getf projection :assertion-id))
@@ -110,7 +157,10 @@ multiple usage projections are an integrity error rather than a guess."
      (cons "replaced_by_assertion_id"
            (%outcome-replaced-by database (getf projection :assertion-id)))
      (cons "request_metadata"
-           (%outcome-dataset-request-metadata-json request-usage)))))
+           (%outcome-dataset-request-metadata-json request-usage))
+     (cons "request_classifications"
+           (mapcar #'%outcome-dataset-classification-json
+                   request-classifications)))))
 
 (defun %outcome-dataset-candidate-p
     (database projection scope rule-version include-superseded)
@@ -126,13 +176,18 @@ multiple usage projections are an integrity error rather than a guess."
 
 This operation deliberately does not invoke SWI-Prolog. Historical labels are
 immutable products of the rule/expert versions recorded on each assertion.
-Provider/model are metadata selectors over bounded request usage, never outcome
-authority."
+Provider/model and stored classifications are metadata selectors over bounded
+request-local projections, never outcome authority."
   (multiple-value-bind
-        (outcome limit scope rule-version include-superseded provider model)
+        (outcome limit scope rule-version include-superseded provider model
+         classification-dimension classification-value classification-state)
       (%validate-outcome-dataset-payload payload)
     (let* ((database (expert-host-database host))
            (metadata-filter-p (or provider model))
+           (classification-filter-p
+             (or classification-dimension
+                 classification-value
+                 classification-state))
            (candidates
              (select-index-range
               database "outcome-assertion-outcome" outcome
@@ -144,19 +199,35 @@ authority."
         (dolist (projection candidates)
           (when (%outcome-dataset-candidate-p
                  database projection scope rule-version include-superseded)
-            (let ((request-usage
-                    (%outcome-dataset-request-usage
-                     database projection provider model)))
-              (when (or (not metadata-filter-p) request-usage)
-                ;; Active metadata filters never admit task-scoped assertions.
-                (when (or (not metadata-filter-p)
+            (let* ((request-usage
+                     (%outcome-dataset-request-usage
+                      database projection provider model))
+                   (request-classifications
+                     (%outcome-dataset-request-classifications host projection))
+                   (classification-match-p
+                     (and (equal "request" (getf projection :scope))
+                          (some
+                           (lambda (assertion)
+                             (%outcome-dataset-classification-matches-p
+                              assertion
+                              classification-dimension
+                              classification-value
+                              classification-state))
+                           request-classifications))))
+              (when (and (or (not metadata-filter-p) request-usage)
+                         (or (not classification-filter-p)
+                             classification-match-p))
+                ;; Active request-local filters never admit task assertions.
+                (when (or (and (not metadata-filter-p)
+                               (not classification-filter-p))
                           (equal "request" (getf projection :scope)))
-                  (push (cons projection request-usage) joined))))))
+                  (push (list projection request-usage request-classifications)
+                        joined))))))
         (let* ((ordered
                  (stable-sort
                   (nreverse joined) #'string<
                   :key (lambda (entry)
-                         (getf (car entry) :assertion-id))))
+                         (getf (first entry) :assertion-id))))
                (truncated (> (length ordered) limit))
                (bounded (subseq ordered 0 (min limit (length ordered)))))
           (%json-object
@@ -165,6 +236,6 @@ authority."
                  (mapcar
                   (lambda (entry)
                     (%outcome-dataset-example-json
-                     database (car entry) (cdr entry)))
+                     database (first entry) (second entry) (third entry)))
                   bounded))
            (cons "truncated" truncated)))))))

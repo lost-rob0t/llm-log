@@ -1,0 +1,99 @@
+#+TITLE: LLM-LOG-RESEARCH-051 — Outcome dataset classification filters
+#+DATE: 2026-09-01
+#+PROPERTY: header-args :eval never-export
+
+* Scope
+Issue: [[https://github.com/lost-rob0t/llm-log/issues/15][#15]]
+Parent architecture: [[https://github.com/lost-rob0t/llm-log/issues/8][#8]]
+Depends on the merged #10 expert substrate, #12 classifier, #13 task/cost accounting, and the existing #15 outcome dataset surface.
+
+This bounded slice adds provenance-preserving request-classification selection to =query_outcome_dataset=. It does not add new inference, mutate raw capture, add a Python rule engine, change provider transport, change dotfiles, or modify Tek9.
+
+* Analyze
+Current =query_outcome_dataset= selects durable outcome assertions through the Tek9 =outcome-assertion-outcome= index and can join request-scoped assertions to one durable usage observation through =usage-request-id= for exact provider/model metadata filtering. The #12 classifier already persists source records indexed by =classification-source-request-id= and derived assertions indexed by =classification-assertion-source-event=. #13 already proved the same bounded request-local join shape for task classification breakdowns.
+
+The missing #15 dataset contract is classification-aware selection while retaining exact classifier assertion/rule/evidence provenance. The export path must consume stored classifier assertions only; it must not invoke SWI-Prolog again during export.
+
+* Research
+** Typed contract
+Version-1 =query_outcome_dataset= gains optional string filters:
+- =classification_dimension=
+- =classification_value=
+- =classification_state=
+
+A classification filter is active when any of the three fields is present. Each present field is exact-match only and must be a non-empty string. Request-scoped outcome assertions may match; task-scoped outcome assertions never acquire synthetic request classification metadata.
+
+The response gains =request_classifications= on request examples. Each entry contains:
+- =assertion_id=
+- =dimension=
+- =value=
+- =state=
+- =rule_id=
+- =rule_version=
+- =evidence_ids=
+
+No classifier field grants authority to the outcome assertion.
+
+** Bounded Tek9 materialization
+For each outcome candidate already admitted by =outcome-assertion-outcome=:
+1. if the assertion scope is =request=, exact-range query =classification-source-request-id= by =scope_id= with a hard per-request cap;
+2. for each matching source event, exact-range query =classification-assertion-source-event= with a hard per-source cap;
+3. retain only structurally valid persisted classifier assertions;
+4. project deterministic classifier metadata and provenance;
+5. when a classification filter is active, admit the outcome example only if at least one stored classifier assertion matches every supplied classification field.
+
+The operation remains bounded by the existing outcome candidate ceiling plus finite per-request/per-source classifier caps. It never scans the whole corpus and never loads the corpus into Prolog.
+
+** Tek9 schema decision
+No new durable entity, index, graph edge, or Tek9 primitive is required. Existing llm-log-owned indexes are sufficient:
+- =outcome-assertion-outcome=
+- =classification-source-request-id=
+- =classification-assertion-source-event=
+
+Tek9 remains the canonical durable document/graph KB. This slice changes only llm-log Common Lisp projection/query behavior.
+
+** Prolog boundary
+SWI-Prolog remains the sole owner of classification inference and outcome inference. Dataset export reads stored assertions. It does not call arbitrary Prolog goals, reclassify requests, re-derive outcomes, or allow model-controlled callable terms.
+
+** Provenance
+Raw capture remains immutable evidence. Outcome assertion provenance and classification assertion provenance stay distinct. Export links them in one example without merging their authority semantics. Historical outcome supersession behavior remains unchanged.
+
+** Failure semantics
+- malformed classification filters: typed request error before Tek9 access;
+- active classification filter on task-scoped outcome assertion: non-match;
+- missing classifier records: non-match when filtering, empty classification list when not filtering;
+- candidate ceiling overflow: existing explicit dataset error;
+- malformed unrelated stored classifier projections: ignored only when they fail the existing classifier assertion shape; no inference is invented;
+- expert service availability remains governed by the existing proxy fail-open policy unless =require_expert_plane= is explicitly enabled.
+
+** Nix / non-Nix
+No packaging dependency changes are required. The Common Lisp service continues to be built with SBCL + Tek9 + SWI-Prolog by the existing flake/Home Manager surface, and the same expert executable/config remains usable outside Nix. Dotfiles remains a separate consumer transaction and keeps =~/Documents/AI/proxy= unless explicitly changed.
+
+* Design
+Implement the join in Common Lisp =expert/outcome-dataset.lisp= using the already-loaded #12/#13 classifier helpers or a dataset-local bounded wrapper around the same Tek9 indexes. Keep filtering exact and deterministic. Include classifier provenance in returned request examples even when classification filters are absent, provided bounded classifier assertions exist for that request.
+
+Do not persist a denormalized classification field into outcome assertions. That would couple two independently versioned expert products and make supersession/regeneration harder to audit.
+
+* Adversarial review
+1. *Authority confusion*: classification metadata must never make an outcome stronger. Mitigation: filter/projection only; outcome remains the stored #15 assertion.
+2. *Whole-corpus creep*: querying classifier history globally would violate the bounded contract. Mitigation: start from already-bounded outcome candidates and request IDs, then exact indexed joins.
+3. *Task fabrication*: task outcome labels do not have one canonical request classification. Mitigation: task assertions are excluded whenever classification filtering is active.
+4. *Re-inference drift*: rerunning #12 during dataset export could change historical labels as rules evolve. Mitigation: stored classifier assertions only, with rule/version/evidence provenance.
+5. *Ambiguous multi-label classifier*: a request can legitimately have many dimensions/values. Mitigation: existential exact-match filtering over persisted assertions; preserve all bounded matching request classifier metadata in output rather than collapsing to one label.
+6. *Database boundary*: no generic primitive is missing; changing Tek9 would add risk without benefit.
+
+* Decision
+Proceed with one RED-first #15 slice implementing exact classification-dimension/value/state selection and provenance projection on =query_outcome_dataset=. Do not touch Tek9 or dotfiles unless RED proves an actual missing boundary.
+
+* Exact RED-first acceptance
+Against untouched =main= =0fc60e81937502d65754f48ac81b58ebf0359d4d=:
+1. persist two request usage observations and two authoritative =success= outcome assertions;
+2. persist #12 classifier results for both request IDs with deliberately different classification values;
+3. restart the expert host so every join must come from Tek9;
+4. query =query_outcome_dataset= for =success= plus one exact classification selector;
+5. require exactly the matching request;
+6. require returned classifier assertion/rule/evidence provenance;
+7. require provider/model metadata from the already-green request-usage join to remain intact;
+8. keep all prior expert contracts, Python policy/transport, and Home Manager green.
+
+Expected untouched-baseline RED: classification selector fields are not validated or applied and =request_classifications= is absent, so both success examples remain visible and/or classification provenance is missing.
