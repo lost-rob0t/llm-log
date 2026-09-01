@@ -83,12 +83,15 @@
              (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
 
            ;; Adversarial upgrade model: assertions predate the new dataset
-           ;; index. Erase only that secondary index while retaining canonical
-           ;; Tek9 documents, then restart. The production host must perform a
-           ;; versioned one-time backfill rather than silently exporting an
-           ;; incomplete historical corpus.
-           (tek9:clear-index (llm-log-expert::expert-host-database host)
-                             "outcome-assertion-outcome")
+           ;; index and its migration marker. Erase only those two derived
+           ;; pieces while retaining canonical Tek9 outcome documents, then
+           ;; restart. The production host must perform a versioned one-time
+           ;; backfill rather than silently exporting an incomplete corpus.
+           (let ((database (llm-log-expert::expert-host-database host)))
+             (tek9:clear-index database "outcome-assertion-outcome")
+             (tek9:delete-document
+              database
+              llm-log-expert::+outcome-dataset-index-migration-key+))
            (llm-log-expert:stop-expert-host host)
            (setf host (llm-log-expert:start-expert-host data-dir))
 
