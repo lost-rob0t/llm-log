@@ -1,0 +1,36 @@
+#+title: LLM-LOG-EVIDENCE-036 — Outcome dataset upgrade/backfill RED
+#+filetags: :llm-log:evidence:expert:outcome:dataset:migration:red:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-047-outcome-dataset-export.org
+Draft PR: https://github.com/lost-rob0t/llm-log/pull/48
+Predecessor RED: ./LLM-LOG-EVIDENCE-035-outcome-dataset-red.org
+
+* Exact head
+Commit: =13831c9b0630629cfcc90307795f8f495704924f=
+Workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33454473730
+
+* Adversarial RED
+The first production implementation had already demonstrated a GREEN bounded dataset query on a corpus whose outcome index existed before assertions were written. Source review then identified an upgrade hazard: registering a new Tek9 secondary index does not backfill assertions already present in an older durable corpus.
+
+The adversarial contract retained canonical outcome evidence/assertion documents, cleared only =outcome-assertion-outcome=, restarted the expert host, and then queried the dataset.
+
+Observed product behavior on the exact head:
+- expert host restart succeeded;
+- query status remained =ok=;
+- canonical outcome records remained durable;
+- the dataset returned no success examples because the new secondary index had no historical postings;
+- assertions requiring one example plus truthful truncation/provenance therefore failed.
+
+This is an accepted product RED: without an explicit upgrade migration, an existing #15 corpus can be silently under-selected after deploying the dataset feature.
+
+* Independent lanes
+- Common Lisp / Tek9 / SWI-Prolog: RED only in the new dataset upgrade contract after preceding expert contracts passed.
+- Python expert policy / adapter / transport lifecycle / launch: GREEN.
+- Home Manager expert wiring: GREEN.
+
+* Decision
+Use existing Tek9 public =rebuild-index= from the Common Lisp expert host. Gate it with durable versioned migration metadata =meta:index-migration:outcome-assertion-outcome:v1= so the corpus scan happens once during schema upgrade, never per request and not on every ordinary restart. Write the marker only after a successful rebuild; repeating the rebuild after a crash is safe.
+
+No Tek9 repository mutation and no dotfiles mutation are justified by this RED.
