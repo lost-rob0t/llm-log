@@ -1,0 +1,52 @@
+#+title: LLM-LOG-EVIDENCE-039 — Task outcome breakdown GREEN
+#+filetags: :llm-log:evidence:expert:task:outcome:green:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/13
+Outcome authority: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-048-task-outcome-breakdowns.org
+PR: https://github.com/lost-rob0t/llm-log/pull/50
+Accepted RED: ./LLM-LOG-EVIDENCE-038-task-outcome-breakdown-red.org
+
+* RED -> GREEN chain
+** Accepted product RED
+Exact head: =54dd2d97263a6b59c340c8bd47ce9160ae4ad255=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33456066504
+
+All preceding expert contracts reached their expected assertions. Python and Home Manager were GREEN. The new task-outcome fixture alone failed because =breakdowns.outcome= did not exist.
+
+** Implementation GREEN
+Exact implementation head: =8f29d0c153efb3ddbb0fac21c31de00a4de124d0=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33457650079
+
+All lanes completed GREEN:
+- Common Lisp / Tek9 / SWI-Prolog expert integration;
+- Python expert policy / adapter / transport lifecycle / launch;
+- Home Manager expert wiring.
+
+* Verified behavior
+The implementation extends =query_task_accounting= only after the existing bounded task-root materialization has selected usage observations.
+
+For each request represented in that bounded usage set:
+- Common Lisp performs an exact bounded lookup through Tek9 =outcome-assertion-scope-key=;
+- superseded assertions are excluded using =outcome-assertion-supersedes=;
+- one current stored assertion contributes its finite #15 outcome value;
+- no current assertion contributes the distinct =unlabeled= bucket;
+- multiple current assertions are treated as an integrity error rather than selected arbitrarily;
+- labeled buckets retain outcome assertion IDs, rule IDs, and evidence IDs;
+- usage IDs and immutable cost assertion IDs remain attached through the existing accounting accumulator;
+- unlabeled data carries no fabricated outcome assertion/rule/evidence provenance;
+- explicit #15 =unknown= remains an actual expert label and is never collapsed into =unlabeled=.
+
+The restart fixture reconstructs three requests with =200= input tokens and =80= output tokens and projects explicit success, explicit failure, and unlabeled groups after reopening the same durable Tek9 KB.
+
+* Architecture result
+No new inference engine was introduced. SWI-Prolog remains the only outcome-inference owner; this slice consumes already-derived #15 assertions. Common Lisp owns bounded indexed resolution and projection. Tek9 remains canonical durable storage. Python remains capture/transport.
+
+No Tek9 repository change and no dotfiles change were required; the existing public exact-index/range and point-fetch primitives were sufficient.
+
+* Final merge gate
+This file records the implementation GREEN head. Because adding canonical evidence changes the branch head, the evidence-only head must independently pass the same three CI lanes before merge. Merge is forbidden if that exact current head is not GREEN and mergeable.
+
+* Remaining #13 boundary
+Keep #13 open. Outcome labels can now participate in task accounting without transport inference. A later bounded slice may compute expensive-failure/retry and token-burn-before-eventual-success analytics from explicit #15 outcome semantics and existing retry/cost projections.
