@@ -1,5 +1,8 @@
 (in-package #:llm-log-expert)
 
+(defparameter +outcome-dataset-index-migration-key+
+  "meta:index-migration:outcome-assertion-outcome:v1")
+
 (defstruct (expert-host
             (:constructor %make-expert-host))
   (data-directory nil :type (or null pathname))
@@ -69,7 +72,7 @@ execution must use them rather than enumerating the expert corpus."
   database)
 
 (defun %register-outcome-indexes (database)
-  "Register exact-scope and supersession indexes for bounded outcome history."
+  "Register bounded outcome history and dataset-selection indexes."
   (register-index
    database "outcome-assertion-scope-key"
    (lambda (document)
@@ -84,6 +87,35 @@ execution must use them rather than enumerating the expert corpus."
      (let ((assertion-id (%plist-index-value document :assertion-id))
            (supersedes (%plist-index-value document :supersedes)))
        (and assertion-id supersedes))))
+  (register-index
+   database "outcome-assertion-outcome"
+   (lambda (document)
+     (let ((assertion-id (%plist-index-value document :assertion-id))
+           (scope (%plist-index-value document :scope))
+           (scope-id (%plist-index-value document :scope-id))
+           (outcome (%plist-index-value document :outcome)))
+       ;; Require the complete outcome assertion identity so unrelated expert
+       ;; projections can never enter the dataset index merely by carrying an
+       ;; :OUTCOME field.
+       (and assertion-id scope scope-id outcome outcome))))
+  database)
+
+(defun %ensure-outcome-dataset-index-v1 (database)
+  "Backfill the v1 outcome corpus index exactly once for an existing Tek9 KB.
+
+Registering a new Tek9 index does not retroactively index documents written by
+older llm-log versions.  The durable migration marker therefore gates one
+startup rebuild.  A crash after REBUILD-INDEX but before the marker write is
+safe: the next startup repeats the idempotent rebuild.  Normal requests never
+scan the corpus."
+  (unless (fetch* database +outcome-dataset-index-migration-key+)
+    (tek9:rebuild-index database "outcome-assertion-outcome")
+    (with-write-transaction (database)
+      (unless (fetch* database +outcome-dataset-index-migration-key+)
+        (put* database
+              (list :schema-version 1
+                    :index-name "outcome-assertion-outcome")
+              :id +outcome-dataset-index-migration-key+))))
   database)
 
 (defun start-expert-host (data-directory)
@@ -103,6 +135,7 @@ execution must use them rather than enumerating the expert corpus."
           (%register-classification-indexes database)
           (%register-task-accounting-indexes database)
           (%register-outcome-indexes database)
+          (%ensure-outcome-dataset-index-v1 database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)

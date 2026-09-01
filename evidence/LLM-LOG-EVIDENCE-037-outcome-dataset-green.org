@@ -1,0 +1,65 @@
+#+title: LLM-LOG-EVIDENCE-037 — Bounded outcome dataset export GREEN
+#+filetags: :llm-log:evidence:expert:outcome:dataset:green:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-047-outcome-dataset-export.org
+PR: https://github.com/lost-rob0t/llm-log/pull/48
+Initial RED: ./LLM-LOG-EVIDENCE-035-outcome-dataset-red.org
+Upgrade RED: ./LLM-LOG-EVIDENCE-036-outcome-dataset-upgrade-red.org
+
+* RED -> GREEN chain
+** Initial product RED
+Exact head: =98b6c8d0965ca046708ca1b754c41398891cff9d=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33453859682
+
+All prior expert contracts plus Python and Home Manager remained GREEN. The new dataset contract alone failed with =unknown_operation= for =query_outcome_dataset=.
+
+** First implementation correction
+A first implementation fixture expected two current successes, but one record used authoritative =user_feedback=success=. Existing SWI-Prolog rules deliberately do not classify positive user feedback alone as authoritative task success; that record correctly became =unknown=. The fixture was corrected to use authoritative =test_result= success. No Prolog rule was weakened to satisfy the test.
+
+An intermediate suspicion that Tek9 DUPSORT range traversal skipped duplicate postings was disproven by fresh Tek9/LMDB source review. Temporary Tek9 issue #13 and draft PR #14 were closed without merge or production mutation.
+
+Corrected implementation head =0e9d1a3d4377815c9799ae3491cc215db5148f32= passed all three lanes in run https://github.com/lost-rob0t/llm-log/actions/runs/33454375674.
+
+** Adversarial upgrade RED
+Exact head: =13831c9b0630629cfcc90307795f8f495704924f=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33454473730
+
+The contract retained canonical outcome evidence/assertion documents while removing only the newly introduced outcome index and migration marker. Restart then returned an empty dataset. This proved that registering a new secondary index without historical backfill would silently omit a pre-upgrade #15 corpus.
+
+** Migration wiring correction
+Head =36b583291ced3035e07846c7eabd1e62c1b92a59= / run https://github.com/lost-rob0t/llm-log/actions/runs/33454694576 was rejected as GREEN evidence. Startup failed with =UNDEFINED-FUNCTION= for unqualified =LLM-LOG-EXPERT::REBUILD-INDEX=. Tek9 already exposes the required public primitive; llm-log had simply failed to call it through the Tek9 package.
+
+** Final implementation GREEN
+Exact head: =cf6693e43dd989fc9c9b32c87f465ca8370049f2=
+Run: https://github.com/lost-rob0t/llm-log/actions/runs/33455067295
+
+All lanes completed GREEN:
+- Common Lisp / Tek9 / SWI-Prolog expert integration;
+- Python expert policy / adapter / transport lifecycle / launch;
+- Home Manager expert wiring.
+
+* Verified behavior
+- finite declared =query_outcome_dataset= operation;
+- result limit 1..64 with a hard internal candidate ceiling;
+- exact outcome selection through the Tek9 =outcome-assertion-outcome= secondary index;
+- deterministic bounded projection without per-request corpus scans;
+- complete immutable assertion rule/version/expert provenance;
+- evidence IDs plus point-fetched evidence/source provenance;
+- missing evidence is an error, never silently dropped;
+- superseded assertions excluded by default and available through explicit historical opt-in;
+- truthful =truncated=true= when another matching current assertion exists;
+- dataset export reads stored assertions and never re-runs SWI-Prolog, so historical labels cannot drift after rule changes;
+- HTTP success remains unrelated to task-success inference;
+- legacy durable outcome assertions survive expert-host restart and are made queryable through a versioned one-time index migration;
+- migration marker is written only after successful index rebuild; crash before the marker safely repeats the idempotent rebuild;
+- routine restarts and dataset requests do not rebuild/scan the corpus.
+
+* Architecture result
+Python remains capture/transport. Common Lisp owns typed query validation, bounded Tek9 materialization, index migration, and result projection. Tek9 remains the durable document/graph KB. SWI-Prolog remains the sole outcome inference owner.
+
+No Tek9 repository production mutation and no dotfiles mutation were required. The existing Tek9 public =rebuild-index= and bounded index/query primitives were sufficient.
+
+* Remaining #15 boundary
+Keep #15 open. The base outcome dataset selection/export substrate is now GREEN. Future bounded slices may add provenance-preserving joins/filters for classification/provider/model/task-cost and explicit curation/export formats. Those must consume existing expert projections rather than recreate rules in Python or treat transport status as outcome.

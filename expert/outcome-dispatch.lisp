@@ -4,7 +4,7 @@
   (symbol-function 'dispatch-expert-request))
 
 (defun dispatch-expert-request (host request)
-  "Extend the declared expert surface with outcome evidence and bounded history."
+  "Extend the declared expert surface with outcome evidence and bounded queries."
   (let ((operation (and (consp request)
                         (eq (first request) :obj)
                         (jsown:val-safe request "operation"))))
@@ -26,5 +26,11 @@
             (query-outcome-history host (%request-payload request)))
          (error (condition)
            (%reply-error "outcome_history_error" (princ-to-string condition)))))
+      ((equal operation "query_outcome_dataset")
+       (handler-case
+           (%reply-ok
+            (query-outcome-dataset host (%request-payload request)))
+         (error (condition)
+           (%reply-error "outcome_dataset_error" (princ-to-string condition)))))
       (t
        (funcall *task-dispatch-expert-request* host request)))))

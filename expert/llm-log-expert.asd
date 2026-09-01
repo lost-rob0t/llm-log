@@ -16,6 +16,7 @@
                (:file "retry-accounting")
                (:file "task-breakdowns")
                (:file "outcome")
+               (:file "outcome-dataset")
                (:file "service")
                (:file "task-dispatch")
                (:file "outcome-dispatch")
