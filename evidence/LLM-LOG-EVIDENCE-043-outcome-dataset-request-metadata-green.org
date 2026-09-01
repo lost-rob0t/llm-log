@@ -1,0 +1,41 @@
+#+title: LLM-LOG-EVIDENCE-043 — Outcome dataset request metadata GREEN
+#+filetags: :llm-log:evidence:green:expert:outcome:dataset:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-050-outcome-dataset-request-metadata.org
+RED evidence: ./LLM-LOG-EVIDENCE-042-outcome-dataset-request-metadata-red.org
+
+* Implementation head
+=1134a68a64305c14a9e1897254c36b021c8663ee=
+
+* Execution
+GitHub Actions workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33465579867
+
+The exact implementation head passed all three existing expert-plane lanes:
+- Common Lisp/Tek9/SWI-Prolog integration: GREEN;
+- Python expert policy/adapter/transport/launch: GREEN;
+- Home Manager expert wiring: GREEN.
+
+* Verified behavior
+The integration contract writes two request usage observations with distinct provider/model/client metadata and two authoritative =success= outcome assertions, then restarts the expert host before querying.
+
+After restart, =query_outcome_dataset= with =outcome=success=, =provider=openrouter= and =model=fixture/model-a= returns exactly one example:
+- scope/request: =req-dataset-openrouter=;
+- durable usage projection: =usage-dataset-openrouter=;
+- provider: =openrouter=;
+- model: =fixture/model-a=;
+- client: =gptel=;
+- transport: =sse=.
+
+The unrelated Anthropic success assertion is excluded. Stored outcome rule/expert/evidence provenance remains the source of label authority; provider/model are metadata filters only and do not invoke or override SWI-Prolog inference.
+
+* Bounded durable implementation
+Common Lisp now owns a =usage-request-id= Tek9 secondary index over canonical immutable usage observations. Existing corpora receive one versioned startup rebuild guarded by a durable migration marker; normal restart/query operation does not enumerate the corpus.
+
+Dataset export begins from the existing bounded =outcome-assertion-outcome= candidate index and performs only request-local =usage-request-id= lookups. Task-scoped labels are not admitted under provider/model filters. Multiple usage projections for one request are rejected as an integrity error instead of guessed.
+
+No Tek9 repository primitive was added or changed. No Python rule engine was added. No Prolog predicate or inference semantics changed. Nix/non-Nix launch/configuration shape and dotfiles consumer configuration were not mutated.
+
+* Merge gate
+This file is evidence-only relative to the GREEN implementation head. The resulting documentation head must be rerun exactly across all three lanes before any PR merge; merge remains contingent on mergeability and review/discussion state at that exact head.

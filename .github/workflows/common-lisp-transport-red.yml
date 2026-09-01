@@ -18,6 +18,7 @@ on:
       - rage/15-outcome-evidence-red
       - rage/15-outcome-history-red
       - rage/15-outcome-dataset-red
+      - rage/15-outcome-dataset-metadata-red
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,35 @@
+#+title: LLM-LOG-EVIDENCE-042 — Outcome dataset request metadata RED
+#+filetags: :llm-log:evidence:red:expert:outcome:dataset:
+
+* Authority
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+Design: ../research/LLM-LOG-RESEARCH-050-outcome-dataset-request-metadata.org
+
+* Exact head
+=bf7cf35a2b2057b6e4bff006281b179a7c542a8d=
+
+* Execution
+GitHub Actions workflow run: https://github.com/lost-rob0t/llm-log/actions/runs/33465385051
+
+The run checked out the exact head above and executed the existing Nix expert-plane gates.
+
+* Accepted RED
+- Home Manager expert contract: GREEN.
+- Python expert policy/adapter/transport/launch contract: GREEN.
+- Common Lisp/Tek9/SWI-Prolog integration contract: RED.
+- All pre-existing Common Lisp expert contracts passed before the new slice failed.
+- The new fixture compiled, recorded task usage, recorded two authoritative success assertions, restarted the expert host, and executed the declared dataset query successfully.
+
+The product-specific failure is exact:
+- query payload requested =outcome=success=, =provider=openrouter=, =model=fixture/model-a=;
+- untouched production returned two examples instead of one: both OpenRouter and Anthropic success assertions;
+- no =request_metadata= object was present;
+- therefore =usage_id=, provider, model, client and transport metadata assertions failed as absent.
+
+This is not fixture syntax, launch failure, dependency failure, or unavailable execution evidence. It demonstrates that the current bounded outcome dataset surface does not yet honor provider/model request metadata filters or project request metadata after restart.
+
+* Database boundary
+The run used the llm-log flake's existing Tek9 pin and current public index APIs. The missing behavior is a llm-log projection/index contract: usage projections already durably carry =request_id=, provider, model, client and transport, while the host lacks a request-id usage secondary index. No missing generic Tek9 primitive was demonstrated, so Tek9 repository mutation is not authorized.
+
+* Decision
+RED accepted. Production mutation is authorized only for the bounded design in =LLM-LOG-RESEARCH-050=: add a llm-log-owned =usage-request-id= secondary index with one-time migration, then extend =query_outcome_dataset= to perform bounded request metadata resolution/filtering. SWI-Prolog outcome inference and Python capture/transport remain untouched.

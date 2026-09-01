@@ -3,6 +3,9 @@
 (defparameter +outcome-dataset-index-migration-key+
   "meta:index-migration:outcome-assertion-outcome:v1")
 
+(defparameter +usage-request-index-migration-key+
+  "meta:index-migration:usage-request-id:v1")
+
 (defstruct (expert-host
             (:constructor %make-expert-host))
   (data-directory nil :type (or null pathname))
@@ -69,6 +72,15 @@ execution must use them rather than enumerating the expert corpus."
      (let ((usage-id (%plist-index-value document :usage-id))
            (task-id (%plist-index-value document :task-id)))
        (and usage-id task-id))))
+  (register-index
+   database "usage-request-id"
+   (lambda (document)
+     (let ((usage-id (%plist-index-value document :usage-id))
+           (request-id (%plist-index-value document :request-id))
+           (task-id (%plist-index-value document :task-id)))
+       ;; Require the complete usage identity so cost/assertion projections
+       ;; carrying request IDs can never enter the request->usage index.
+       (and usage-id request-id task-id request-id))))
   database)
 
 (defun %register-outcome-indexes (database)
@@ -118,6 +130,18 @@ scan the corpus."
               :id +outcome-dataset-index-migration-key+))))
   database)
 
+(defun %ensure-usage-request-index-v1 (database)
+  "Backfill request->usage lookup once for durable pre-index usage records."
+  (unless (fetch* database +usage-request-index-migration-key+)
+    (tek9:rebuild-index database "usage-request-id")
+    (with-write-transaction (database)
+      (unless (fetch* database +usage-request-index-migration-key+)
+        (put* database
+              (list :schema-version 1
+                    :index-name "usage-request-id")
+              :id +usage-request-index-migration-key+))))
+  database)
+
 (defun start-expert-host (data-directory)
   "Open Tek9 and one persistent supervised SWI-Prolog worker for HOST."
   (let* ((root (uiop:ensure-directory-pathname data-directory))
@@ -136,6 +160,7 @@ scan the corpus."
           (%register-task-accounting-indexes database)
           (%register-outcome-indexes database)
           (%ensure-outcome-dataset-index-v1 database)
+          (%ensure-usage-request-index-v1 database)
           (%ensure-kb-revision host)
           (start-prolog-worker host)
           host)
