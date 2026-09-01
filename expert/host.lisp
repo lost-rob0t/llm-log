@@ -109,7 +109,7 @@ startup rebuild.  A crash after REBUILD-INDEX but before the marker write is
 safe: the next startup repeats the idempotent rebuild.  Normal requests never
 scan the corpus."
   (unless (fetch* database +outcome-dataset-index-migration-key+)
-    (rebuild-index database "outcome-assertion-outcome")
+    (tek9:rebuild-index database "outcome-assertion-outcome")
     (with-write-transaction (database)
       (unless (fetch* database +outcome-dataset-index-migration-key+)
         (put* database
