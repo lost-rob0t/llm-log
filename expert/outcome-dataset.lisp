@@ -15,6 +15,13 @@
         (error "~A must be absent or a non-empty string" field)))
     value))
 
+(defun %outcome-dataset-optional-nonnegative-number (payload field)
+  (when (%json-field-present-p payload field)
+    (let ((value (jsown:val-safe payload field)))
+      (unless (and (numberp value) (>= value 0))
+        (error "~A must be a non-negative number" field))
+      value)))
+
 (defun %validate-outcome-dataset-payload (payload)
   "Validate the finite version-1 dataset query surface before Tek9 access."
   (unless (and (consp payload) (eq (first payload) :obj))
@@ -31,6 +38,16 @@
           (%outcome-dataset-optional-string payload "classification_value"))
         (classification-state
           (%outcome-dataset-optional-string payload "classification_state"))
+        (task-cost-state
+          (%outcome-dataset-optional-string payload "task_cost_state"))
+        (task-cost-currency
+          (%outcome-dataset-optional-string payload "task_cost_currency"))
+        (task-cost-min-amount
+          (%outcome-dataset-optional-nonnegative-number
+           payload "task_cost_min_amount"))
+        (task-cost-max-amount
+          (%outcome-dataset-optional-nonnegative-number
+           payload "task_cost_max_amount"))
         (include-superseded (jsown:val-safe payload "include_superseded")))
     (unless (member outcome +outcome-values+ :test #'equal)
       (error "unsupported outcome filter: ~A" outcome))
@@ -42,12 +59,24 @@
       (error "scope must be request or task"))
     (when (and rule-version (not (%non-empty-string-p rule-version)))
       (error "rule_version must be absent or a non-empty string"))
+    (when (and task-cost-state
+               (not (member task-cost-state '("known" "partial" "unknown")
+                            :test #'equal)))
+      (error "task_cost_state must be known, partial, or unknown"))
+    (when (or task-cost-min-amount task-cost-max-amount)
+      (unless task-cost-currency
+        (error "task_cost_currency is required with task cost amount bounds")))
+    (when (and task-cost-min-amount task-cost-max-amount
+               (> task-cost-min-amount task-cost-max-amount))
+      (error "task_cost_min_amount must not exceed task_cost_max_amount"))
     (when (%json-field-present-p payload "include_superseded")
       (unless (or (eq include-superseded t) (null include-superseded))
         (error "include_superseded must be boolean")))
     (values outcome limit scope rule-version (eq include-superseded t)
             provider model
-            classification-dimension classification-value classification-state)))
+            classification-dimension classification-value classification-state
+            task-cost-state task-cost-currency
+            task-cost-min-amount task-cost-max-amount)))
 
 (defun %outcome-dataset-evidence-json (database evidence-id)
   "Point-fetch one immutable evidence projection; missing provenance is fatal."
@@ -65,9 +94,9 @@
 (defun %outcome-dataset-request-usage (database projection provider model)
   "Resolve at most one durable usage observation for one request assertion.
 
-Task assertions intentionally do not acquire synthetic provider/model metadata.
-When a metadata filter is active, missing request usage is simply a non-match;
-multiple usage projections are an integrity error rather than a guess."
+Task assertions intentionally do not acquire synthetic request metadata. Missing
+request usage is a non-match for request-local filters; duplicate projections
+are an integrity error rather than a guess."
   (when (equal "request" (getf projection :scope))
     (let* ((request-id (getf projection :scope-id))
            (candidates
@@ -136,8 +165,42 @@ multiple usage projections are an integrity error rather than a guess."
          (or (null state)
              (equal state (getf value :state))))))
 
+(defun %outcome-dataset-task-accounting (host usage cache)
+  "Reuse the bounded #13 projection and cache it for this dataset query."
+  (let ((task-id (and usage (getf usage :task-id))))
+    (when (%non-empty-string-p task-id)
+      (multiple-value-bind (cached present-p) (gethash task-id cache)
+        (if present-p
+            cached
+            (let ((accounting
+                    (query-task-accounting
+                     host
+                     (jsown:new-js
+                       ("task_id" task-id)
+                       ("include_children" t)
+                       ("max_depth" 16)
+                       ("max_nodes" 512)))))
+              (when (jsown:val-safe accounting "truncated")
+                (error "outcome_dataset_task_accounting_truncated: ~A" task-id))
+              (setf (gethash task-id cache) accounting)
+              accounting))))))
+
+(defun %outcome-dataset-task-accounting-matches-p
+    (accounting state currency min-amount max-amount)
+  (when accounting
+    (let ((actual-state (jsown:val-safe accounting "cost_state"))
+          (actual-currency (jsown:val-safe accounting "known_cost_currency"))
+          (actual-amount (jsown:val-safe accounting "known_cost_amount")))
+      (and (or (null state) (equal state actual-state))
+           (or (null currency) (equal currency actual-currency))
+           (or (and (null min-amount) (null max-amount))
+               (and (equal "known" actual-state)
+                    (numberp actual-amount)
+                    (or (null min-amount) (>= actual-amount min-amount))
+                    (or (null max-amount) (<= actual-amount max-amount))))))))
+
 (defun %outcome-dataset-example-json
-    (database projection request-usage request-classifications)
+    (database projection request-usage request-classifications task-accounting)
   "Project one stored assertion without re-running expert inference."
   (let ((evidence-ids (copy-list (getf projection :evidence-ids))))
     (%json-object
@@ -160,7 +223,8 @@ multiple usage projections are an integrity error rather than a guess."
            (%outcome-dataset-request-metadata-json request-usage))
      (cons "request_classifications"
            (mapcar #'%outcome-dataset-classification-json
-                   request-classifications)))))
+                   request-classifications))
+     (cons "task_accounting" task-accounting))))
 
 (defun %outcome-dataset-candidate-p
     (database projection scope rule-version include-superseded)
@@ -176,11 +240,13 @@ multiple usage projections are an integrity error rather than a guess."
 
 This operation deliberately does not invoke SWI-Prolog. Historical labels are
 immutable products of the rule/expert versions recorded on each assertion.
-Provider/model and stored classifications are metadata selectors over bounded
-request-local projections, never outcome authority."
+Request metadata, stored classifications, and task accounting are selectors
+over bounded durable projections, never outcome authority."
   (multiple-value-bind
         (outcome limit scope rule-version include-superseded provider model
-         classification-dimension classification-value classification-state)
+         classification-dimension classification-value classification-state
+         task-cost-state task-cost-currency task-cost-min-amount
+         task-cost-max-amount)
       (%validate-outcome-dataset-payload payload)
     (let* ((database (expert-host-database host))
            (metadata-filter-p (or provider model))
@@ -188,6 +254,10 @@ request-local projections, never outcome authority."
              (or classification-dimension
                  classification-value
                  classification-state))
+           (task-cost-filter-p
+             (or task-cost-state task-cost-currency
+                 task-cost-min-amount task-cost-max-amount))
+           (task-accounting-cache (make-hash-table :test #'equal))
            (candidates
              (select-index-range
               database "outcome-assertion-outcome" outcome
@@ -213,15 +283,27 @@ request-local projections, never outcome authority."
                               classification-dimension
                               classification-value
                               classification-state))
-                           request-classifications))))
+                           request-classifications)))
+                   (task-accounting
+                     (and task-cost-filter-p
+                          (%outcome-dataset-task-accounting
+                           host request-usage task-accounting-cache)))
+                   (task-cost-match-p
+                     (and task-cost-filter-p
+                          (%outcome-dataset-task-accounting-matches-p
+                           task-accounting task-cost-state task-cost-currency
+                           task-cost-min-amount task-cost-max-amount))))
               (when (and (or (not metadata-filter-p) request-usage)
                          (or (not classification-filter-p)
-                             classification-match-p))
+                             classification-match-p)
+                         (or (not task-cost-filter-p) task-cost-match-p))
                 ;; Active request-local filters never admit task assertions.
                 (when (or (and (not metadata-filter-p)
-                               (not classification-filter-p))
+                               (not classification-filter-p)
+                               (not task-cost-filter-p))
                           (equal "request" (getf projection :scope)))
-                  (push (list projection request-usage request-classifications)
+                  (push (list projection request-usage request-classifications
+                              task-accounting)
                         joined))))))
         (let* ((ordered
                  (stable-sort
@@ -236,6 +318,7 @@ request-local projections, never outcome authority."
                  (mapcar
                   (lambda (entry)
                     (%outcome-dataset-example-json
-                     database (first entry) (second entry) (third entry)))
+                     database (first entry) (second entry) (third entry)
+                     (fourth entry)))
                   bounded))
            (cons "truncated" truncated)))))))

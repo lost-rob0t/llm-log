@@ -1,0 +1,44 @@
+#+TITLE: LLM-LOG-EVIDENCE-047 — Outcome dataset task-cost GREEN
+
+* Scope
+Canonical design: [[../research/LLM-LOG-RESEARCH-052-outcome-dataset-task-cost.org][LLM-LOG-RESEARCH-052]]
+Accepted RED: [[./LLM-LOG-EVIDENCE-046-outcome-dataset-task-cost-red.org][LLM-LOG-EVIDENCE-046]]
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+PR: https://github.com/lost-rob0t/llm-log/pull/55
+
+* Exact implementation head
+- Commit: =662acc1ca9099a300a9bff01d26d124d50568b78=
+- Workflow run: =33472989667=
+
+* GREEN result
+The exact implementation head passed every expert-plane gate:
+- Common Lisp/Tek9/SWI-Prolog integration contract: GREEN.
+- Python expert policy/adapter/transport/launch contracts: GREEN.
+- Home Manager expert wiring contract: GREEN.
+
+The Common Lisp lane compiled the new contract and all preceding expert contracts. The final integration-system summary was GREEN.
+
+* Verified behavior
+After creating two durable tasks with immutable pricing snapshots, recording authoritative =success= outcomes, stopping the expert host, and restarting it, =query_outcome_dataset= accepted bounded task-cost selectors and returned exactly one example for the expensive task.
+
+The fixture verified:
+- cheap task complete known cost: USD 0.14;
+- expensive task complete known cost: USD 0.40;
+- query selector: =task_cost_state=known=, =task_cost_currency=USD=, =task_cost_min_amount=0.30=;
+- selected request: =req-dataset-cost-expensive= only;
+- returned task: =task-dataset-cost-expensive=;
+- returned cost state: =known=;
+- returned currency: =USD=;
+- returned amount: approximately 0.40;
+- durable usage provenance includes =usage-dataset-cost-expensive=;
+- immutable cost provenance includes =cost/usage-dataset-cost-expensive=.
+
+* Architectural evidence
+The implementation is confined to the Common Lisp dataset projection. It resolves request usage through the existing =usage-request-id= exact index and reuses #13's bounded =query-task-accounting= projection with fixed depth/node ceilings. Task projections are cached by =task_id= for the lifetime of one dataset query.
+
+No pricing is recomputed in the exporter. Numeric bounds only match complete =known= task accounting in the requested coherent currency; =partial= and =unknown= remain explicit states and are never promoted into exact numeric totals. The exporter does not invoke SWI-Prolog, so historical cost/outcome assertions retain the rule/pricing provenance present when they were created.
+
+No Tek9 repository primitive was added. No Python capture/transport behavior changed. No dotfiles consumer configuration changed. Proxy forwarding/fail-open semantics are unaffected.
+
+* Merge gate
+This implementation head is GREEN, but merge authorization still requires a final exact-head rerun after this evidence document is committed plus fresh mergeability/review/discussion checks. This document does not claim a merge before those gates complete.

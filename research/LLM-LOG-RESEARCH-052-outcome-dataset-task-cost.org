@@ -1,0 +1,100 @@
+#+TITLE: LLM-LOG-RESEARCH-052 — Outcome dataset task-cost projection
+#+PROPERTY: header-args :eval never-export
+
+* Links
+- Parent expert plane: https://github.com/lost-rob0t/llm-log/issues/8
+- Outcome dataset issue: https://github.com/lost-rob0t/llm-log/issues/15
+- Task accounting substrate: https://github.com/lost-rob0t/llm-log/issues/13
+- Prior dataset classification slice: https://github.com/lost-rob0t/llm-log/pull/54
+
+* Analyze
+Current =main= already has a bounded =query_outcome_dataset= over immutable #15 outcome assertions. It can select stored request outcomes by provider/model and stored #12 classification metadata. It returns outcome assertion/rule/evidence provenance and never re-runs Prolog during export.
+
+Issue #15 still requires selecting dataset examples by task cost. #13 is complete and already reconstructs bounded, restart-durable task accounting from Tek9 task/usage/cost projections. Per-request costs are immutable derived assertions whose amounts came from the declared SWI-Prolog =task_cost= predicate and immutable pricing snapshots. The dataset layer must consume those projections; it must not calculate prices or create a second rule engine.
+
+Fresh source review found no missing Tek9 generic primitive. =query-task-accounting= already traverses =task-parent-task-id= and =usage-task-id= through bounded indexed reads, point-fetches immutable =cost:<usage-id>= assertions, preserves =cost_assertion_ids=, and reports =known=, =partial=, or =unknown= cost state. Therefore this slice belongs entirely in =llm-log=.
+
+* Research
+** Authority and evidence boundaries
+Raw capture remains immutable evidence. Outcome labels remain stored #15 derived assertions. Cost assertions remain stored #13 derived assertions bound to immutable pricing snapshots. Dataset export is only a bounded join/projection over those records.
+
+A transport HTTP 200 never grants outcome authority. Provider/model/classification metadata never grants authority. Task cost never grants outcome authority. Unknown or partial cost must not be coerced into a numeric full-task cost.
+
+** Typed query contract
+Extend version-1 =query_outcome_dataset= with optional fields:
+
+- =task_cost_state=: one of =known=, =partial=, =unknown=;
+- =task_cost_currency=: non-empty currency string;
+- =task_cost_min_amount=: non-negative number, inclusive;
+- =task_cost_max_amount=: non-negative number, inclusive.
+
+If either amount bound is present, =task_cost_currency= is required. =task_cost_min_amount > task_cost_max_amount= is invalid. Numeric amount bounds match only a =known= task accounting result with the requested coherent currency. A =partial= or =unknown= task can still be selected explicitly by =task_cost_state= but never pretends its known subtotal is a complete amount.
+
+Task-cost filters are request-local selectors. Task-scoped outcome assertions have no request usage projection and therefore cannot be admitted while a task-cost filter is active.
+
+** Bounded materialization
+For each candidate request outcome that survives existing outcome/scope/rule/provider/model/classification filters:
+
+1. Resolve at most one request usage through the existing =usage-request-id= exact index.
+2. Read its durable =task_id=.
+3. Compute the task projection by invoking the existing Common Lisp =query-task-accounting= function with =include_children=true=, =max_depth=16=, =max_nodes=512=.
+4. Reject a truncated task projection instead of silently filtering against incomplete totals.
+5. Cache the projection per =task_id= for the duration of this dataset query so repeated requests from the same task do not re-traverse the same bounded subtree.
+
+No entire-corpus scan and no corpus-wide Prolog materialization are allowed.
+
+** Result projection
+For request examples with task accounting available, add =task_accounting= containing at least:
+
+- =task_id=;
+- =cost_state=;
+- =known_cost_amount=;
+- =known_cost_currency=;
+- =usage_observation_ids=;
+- =cost_assertion_ids=;
+- =truncated=.
+
+These are provenance-bearing projections of already-stored task/cost state. They do not become outcome evidence.
+
+** Failure semantics
+- malformed state/currency/bounds => =outcome_dataset_error=;
+- active task-cost selector on a request without one durable usage projection => non-match;
+- multiple usage projections for one request => existing integrity error;
+- unknown referenced task => integrity error;
+- truncated task accounting => =outcome_dataset_task_accounting_truncated=;
+- multiple currencies => existing =partial= state; numeric amount bounds do not match;
+- unavailable expert plane remains governed by proxy fail-open policy; this query is an expert operation and never changes forwarding semantics.
+
+** Packaging
+No packaging change is required. The operation runs inside the existing SBCL expert service already packaged with Tek9 and SWI-Prolog by the flake and Home Manager module. Non-Nix launch/config remains unchanged. No credential-bearing configuration is introduced.
+
+* Design
+Implement only a Common Lisp dataset join. Reuse =query-task-accounting= rather than duplicating task graph traversal or cost aggregation in =outcome-dataset.lisp=. Add a per-query hash cache keyed by =task_id=. Keep SWI-Prolog out of dataset export; all rule execution happened when immutable cost/outcome assertions were created.
+
+No Tek9 change. No Python capture/transport change. No dotfiles change. No provider-census work in this transaction.
+
+* Adversarial review
+- A naive numeric sum inside the dataset exporter would become a second cost engine and lose immutable pricing provenance: reject.
+- Treating =partial= known subtotal as exact task cost would undercount unknown pricing: reject.
+- Using HTTP completion as an outcome fallback would violate #15 authority: reject.
+- Traversing every task/cost record globally would violate bounded retrieval: reject.
+- Re-running =task_cost= Prolog predicates during export would make historical datasets drift with current rules: reject.
+- Letting task-scoped outcomes inherit a random request's task cost would fabricate a join: reject.
+- Silently accepting a truncated task graph could misclassify cost filters: reject.
+
+* Decision
+Proceed with one RED-first #15 slice for bounded task-cost selection/projection in =query_outcome_dataset=. Existing Tek9 public APIs and #13 task-accounting code are sufficient.
+
+* Exact RED-first acceptance
+Before production mutation, add one integration contract to the current untouched product and execute it through the repository's real Common Lisp/Tek9/SWI-Prolog CI lane.
+
+The fixture must:
+1. create two distinct tasks with one request usage each and immutable pricing snapshots producing different known USD totals;
+2. create authoritative =success= outcome assertions for both requests;
+3. restart the expert host so all joins come from durable Tek9 state;
+4. query =success= with =task_cost_state=known=, =task_cost_currency=USD=, and a minimum amount that only the expensive task satisfies;
+5. require exactly the expensive request;
+6. require returned =task_accounting= with the correct task ID, known amount/currency, usage ID and immutable cost assertion ID;
+7. keep all preceding expert contracts GREEN.
+
+On untouched production the new fields are ignored and both examples survive, so the new contract must fail for the missing product behavior. Fixture syntax/dependency/launch failures are not accepted as RED evidence.

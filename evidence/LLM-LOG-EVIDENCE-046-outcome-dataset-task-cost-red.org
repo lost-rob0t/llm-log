@@ -1,0 +1,38 @@
+#+TITLE: LLM-LOG-EVIDENCE-046 — Outcome dataset task-cost RED
+
+* Scope
+Canonical design: [[../research/LLM-LOG-RESEARCH-052-outcome-dataset-task-cost.org][LLM-LOG-RESEARCH-052]]
+Issue: https://github.com/lost-rob0t/llm-log/issues/15
+PR: https://github.com/lost-rob0t/llm-log/pull/55
+
+* Exact head
+- Commit: =d8f0a86a58a0337ba8757a681a352c30fa6bdf18=
+- Workflow run: =33472780086=
+
+* Baseline result
+The exact RED head contained the canonical design, the new integration fixture, integration-system registration, and CI branch registration only. Product source was untouched.
+
+The workflow result was intentionally asymmetric:
+- Python expert policy/adapter/transport/launch contracts: GREEN.
+- Home Manager expert wiring contract: GREEN.
+- Common Lisp/Tek9/SWI-Prolog integration lane: RED.
+
+All pre-existing Common Lisp expert contracts remained GREEN. The new =outcome-dataset-task-cost-red-contract= compiled and ran through the normal SBCL/Tek9/SWI-Prolog integration system.
+
+* Accepted product RED
+The fixture durably created two independent tasks and one request usage per task. Both requests received authoritative =success= outcome assertions. The expert host was stopped and restarted before export.
+
+The query requested:
+- =outcome=success=;
+- =task_cost_state=known=;
+- =task_cost_currency=USD=;
+- =task_cost_min_amount=0.30=.
+
+The cheap task has immutable known cost USD 0.14. The expensive task has immutable known cost USD 0.40.
+
+Untouched product returned *both* success examples. The contract's first new behavioral assertion expected exactly one example and observed two. Returned examples also had no =task_accounting= projection, causing the subsequent provenance assertions to fail.
+
+This is the intended missing-product RED: current =query_outcome_dataset= ignores task-cost selectors. It is not a fixture syntax, dependency, startup, storage, or Prolog failure.
+
+* Mutation gate
+RED is accepted. Production mutation is now authorized only for the bounded Common Lisp dataset join described by LLM-LOG-RESEARCH-052. No Tek9 repository, Python capture/transport, dotfiles, provider-census, or configuration-PR mutation is authorized by this evidence.

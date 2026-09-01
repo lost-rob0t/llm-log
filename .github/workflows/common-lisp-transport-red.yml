@@ -20,6 +20,7 @@ on:
       - rage/15-outcome-dataset-red
       - rage/15-outcome-dataset-metadata-red
       - rage/15-outcome-dataset-classification-red
+      - rage/15-outcome-dataset-task-cost-red
   workflow_dispatch:
 
 permissions:
