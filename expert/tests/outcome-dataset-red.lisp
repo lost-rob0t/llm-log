@@ -71,13 +71,16 @@
                     failure-id)))
              (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
 
-           ;; A second current success proves the bounded query reports truncation.
+           ;; A second current success proves the bounded query reports
+           ;; truncation. Use evidence that the current Prolog contract actually
+           ;; recognizes as authoritative success; positive user feedback alone
+           ;; intentionally remains unknown.
            (let ((reply
                    (%dataset-record
                     host "evt-dataset-success-2" "req-dataset-success-2"
                     (list (%dataset-evidence
-                           "ev-dataset-success-2" "user_feedback"
-                           "authoritative" "success" "capture:user-acceptance")))))
+                           "ev-dataset-success-2" "test_result"
+                           "authoritative" "success" "capture:test-success-2")))))
              (rove:ok (equal "ok" (jsown:val-safe reply "status"))))
 
            ;; Dataset construction must survive expert-host restart from Tek9.
