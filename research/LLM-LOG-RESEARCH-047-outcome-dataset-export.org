@@ -18,7 +18,7 @@ The first dataset slice MUST NOT attempt every future cross-expert join at once.
 * Research
 ** Existing source boundary
 - Python remains capture/transport and does not label or select training examples.
-- Common Lisp owns typed dataset query validation, bounded Tek9 retrieval and JSON projection.
+- Common Lisp owns typed dataset query validation, bounded Tek9 retrieval, index-schema migration and JSON projection.
 - Tek9 remains the canonical durable KB.
 - SWI-Prolog continues to own outcome inference; dataset export reads already-derived immutable assertions and MUST NOT re-run or reproduce outcome rules.
 - Raw evidence records and derived outcome assertions remain separate.
@@ -53,21 +53,33 @@ Each example contains at minimum:
 This is an auditable derived dataset view, not a copy or rewrite of raw capture.
 
 ** Tek9 schema/index decision
-Current exact-scope history uses =outcome-assertion-scope-key=. Corpus export MUST NOT enumerate the entire Tek9 database.
+Current exact-scope history uses =outcome-assertion-scope-key=. Corpus export MUST NOT enumerate the entire Tek9 database per request.
 
-Add generic bounded indexes over existing immutable outcome assertions:
+Add one generic index over existing immutable outcome assertions:
 - =outcome-assertion-outcome= -> =outcome=
-- optionally compose post-retrieval exact filters for =scope= and =rule_version= over the already-bounded outcome candidate set.
 
 Retrieval rule:
 1. query =outcome-assertion-outcome= for one exact outcome;
-2. request at most =limit + 1= after applying a hard internal candidate ceiling;
-3. apply declared exact filters only;
+2. enforce a hard internal candidate ceiling before materializing examples;
+3. apply only declared exact =scope= and =rule_version= filters;
 4. resolve evidence via point fetches from =outcome-evidence:<id>=;
 5. resolve replacement using the existing supersession index;
-6. never scan all assertions/documents.
+6. never scan all assertions/documents during a dataset request.
 
-If Tek9's existing public index registration/range APIs support this, no Tek9 repository mutation is allowed.
+Fresh source review and execution confirmed Tek9's existing public =register-index=, =select-index-range=, =rebuild-index=, =fetch*= and point/index APIs are sufficient. No Tek9 repository mutation is justified.
+
+** Existing-corpus migration
+A newly registered Tek9 secondary index does not retroactively populate postings for outcome assertions created by older llm-log versions. Therefore a service upgrade could otherwise return a silently incomplete dataset even though canonical outcome documents are intact.
+
+The expert host owns a versioned one-time migration:
+- migration key: =meta:index-migration:outcome-assertion-outcome:v1=;
+- after registering the index, absence of that durable marker triggers =rebuild-index= for =outcome-assertion-outcome=;
+- the marker is written only after a successful rebuild;
+- a crash between rebuild and marker commit is safe because restart repeats the idempotent rebuild;
+- once marked, normal restarts do not scan/rebuild the corpus;
+- normal dataset requests always remain bounded/indexed.
+
+The migration marker is runtime/index-schema metadata, not an outcome assertion and cannot enter the outcome index because the extractor requires assertion identity, scope, scope ID and outcome.
 
 ** Provenance and raw evidence
 The export MUST preserve evidence =source_id= verbatim when present. A source ID is a reference to immutable capture/derived evidence; export must not inline arbitrary raw prompt/response bodies by default. This keeps credentials/private payload handling at the capture/redaction boundary.
@@ -80,36 +92,40 @@ Default export returns only current assertions: an assertion with a durable =rep
 =include_superseded=true= returns historical assertions too. Nothing is deleted or rewritten.
 
 ** Failure semantics
-Reject before database work:
+Reject before dataset retrieval:
 - unknown outcome;
 - invalid scope;
 - limit outside 1..64;
 - non-string/empty rule version;
 - non-boolean =include_superseded=.
 
-If a referenced evidence record is missing, return an error rather than emitting an apparently auditable example with broken provenance.
+If candidate volume exceeds the hard internal ceiling, fail explicitly instead of silently emitting an incomplete selection. If a referenced evidence record is missing, return an error rather than emitting an apparently auditable example with broken provenance.
 
 Expert unavailability does not alter proxy forwarding policy. Python capture stays fail-open unless =require_expert_plane= is explicitly enabled.
 
 ** Nix / non-Nix
-No packaging change is required for this slice. The operation lives in the already-packaged Common Lisp expert service and uses its existing Tek9/SWI-Prolog runtime. Home Manager/systemd and standalone launch paths remain unchanged.
+No packaging change is required for this slice. The operation and one-time migration live in the already-packaged Common Lisp expert service and use its existing Tek9/SWI-Prolog runtime. Home Manager/systemd and standalone launch paths remain unchanged.
 
 * Design
 Implement the smallest reusable substrate:
 1. register =outcome-assertion-outcome= against immutable assertion projections;
-2. add =query-outcome-dataset= in Common Lisp;
-3. declare only that finite operation in the dispatcher;
-4. project immutable evidence by ID;
-5. default-exclude superseded assertions;
-6. expose explicit truncation;
-7. add restart-durable integration contract.
+2. one-time backfill that index when the v1 migration marker is absent;
+3. add =query_outcome_dataset= in Common Lisp;
+4. declare only that finite operation in the dispatcher;
+5. project immutable evidence by ID;
+6. default-exclude superseded assertions;
+7. expose explicit truncation;
+8. add restart- and upgrade-durable integration contracts.
 
 Do NOT add classification/provider/model/cost/Beagle joins in this slice. Those become later bounded extensions after this base selection surface is GREEN.
 
 * Adversarial review
-- A full-database walk would violate the bounded-materialization invariant: reject.
+- A per-request full-database walk would violate the bounded-materialization invariant: reject.
+- Registering the new index without historical backfill would silently omit pre-upgrade assertions: reject; require a versioned one-time migration.
+- Rebuilding the corpus index on every service start would make routine restart cost scale with corpus size: reject; durable marker gates the migration.
 - Re-running Prolog during export could silently relabel historical data after rule changes: reject; read stored assertions only.
 - Treating HTTP 200 as success would violate #15 semantics: export only explicit stored outcome assertions.
+- Positive user feedback is not currently an authoritative success rule; tests must not invent a success label the Prolog contract does not derive.
 - Dropping =source_id= would make examples unauditable: reject.
 - Exporting only latest state without an opt-in history mode would destroy research utility: preserve =include_superseded=.
 - Exporting superseded assertions by default would mix obsolete labels into ordinary datasets: default false.
@@ -119,13 +135,15 @@ Do NOT add classification/provider/model/cost/Beagle joins in this slice. Those 
 * Decision
 Proceed RED-first on branch =rage/15-outcome-dataset-red=.
 
-Exact RED acceptance:
-1. create success and failure assertions plus a corrected success that supersedes failure;
-2. restart the expert host;
-3. call =query_outcome_dataset= for =success= with =limit= 1;
-4. require exactly one current success example, explicit =truncated= when another current success exists, and complete rule/evidence/source provenance;
-5. query failure with default supersession behavior and prove the replaced failure is absent;
-6. query failure with =include_superseded=true= and prove it is present with =replaced_by_assertion_id=;
-7. existing expert, Python policy/transport and Home Manager gates must stay green.
+Exact acceptance:
+1. create authoritative success and failure assertions plus a corrected success that supersedes failure;
+2. create a second authoritative current success;
+3. model an upgrade by retaining canonical assertion/evidence documents while removing only the new outcome index and its v1 migration marker;
+4. restart the expert host and require the one-time migration to reconstruct the new index;
+5. call =query_outcome_dataset= for =success= with =limit= 1;
+6. require exactly one returned current success example, explicit =truncated=true= because another current success exists, and complete rule/evidence/source provenance;
+7. query failure with default supersession behavior and prove the replaced failure is absent;
+8. query failure with =include_superseded=true= and prove it is present with =replaced_by_assertion_id=;
+9. existing expert, Python policy/transport and Home Manager gates must stay green.
 
-The untouched baseline is expected to fail because =query_outcome_dataset= is not a declared operation and the outcome corpus index/export projection do not yet exist.
+The untouched baseline RED was =unknown_operation=. A later adversarial RED proved the upgrade gap: canonical assertions survived while the new index remained empty after restart. Both must be GREEN before merge.
