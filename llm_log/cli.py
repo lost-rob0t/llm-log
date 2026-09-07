@@ -9,6 +9,7 @@ from aiohttp import web
 
 from .classifier import PrologClassifier
 from .config import RuntimeConfig, default_config_path, load_config
+from .openrouter_policy import quantization_policy_middleware
 from .proxy import build_app
 from .recorder import RecorderActor
 
@@ -50,6 +51,11 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         help="enable or disable the bundled SWI-Prolog classifier",
     )
+    serve.add_argument(
+        "--openrouter-quantization-preset",
+        default=None,
+        help="select a configured OpenRouter quantization allowlist preset",
+    )
     return root
 
 
@@ -71,6 +77,14 @@ def resolve_serve_config(
     for name, url in args.upstream:
         upstreams[name] = url
 
+    quantization_preset = (
+        args.openrouter_quantization_preset
+        if args.openrouter_quantization_preset is not None
+        else config.openrouter_quantization_preset
+    )
+    if quantization_preset not in config.quantization_presets:
+        raise ValueError(f"unknown OpenRouter quantization preset: {quantization_preset!r}")
+
     return RuntimeConfig(
         listen_address=args.listen if args.listen is not None else config.listen_address,
         port=args.port if args.port is not None else config.port,
@@ -81,6 +95,8 @@ def resolve_serve_config(
             else config.enable_prolog_classifier
         ),
         upstreams=upstreams,
+        openrouter_quantization_preset=quantization_preset,
+        quantization_presets=dict(config.quantization_presets),
     )
 
 
@@ -93,6 +109,7 @@ def main() -> None:
     recorder = RecorderActor(config.data_dir)
     classifier = PrologClassifier() if config.enable_prolog_classifier else None
     app = build_app(config.upstreams, recorder, classifier)
+    app.middlewares.append(quantization_policy_middleware(config.openrouter_quantizations))
     web.run_app(app, host=config.listen_address, port=config.port)
 
 
