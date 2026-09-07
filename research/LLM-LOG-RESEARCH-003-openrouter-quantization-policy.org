@@ -1,0 +1,45 @@
+#+title: LLM-LOG-RESEARCH-003 — OpenRouter quantization policy
+
+* Decision
+
+llm-log treats OpenRouter endpoint precision as an enforceable routing policy, not advisory metadata.
+
+The default active preset is =high-precision=:
+
+#+begin_src text
+fp32 fp16 bf16 fp8
+#+end_src
+
+OpenRouter's =unknown= quantization class is omitted from every built-in preset. An endpoint that does not disclose its quantization is therefore ineligible by default.
+
+* Presets
+
+- =high-precision= :: =fp32 fp16 bf16 fp8=
+- =balanced= :: =fp32 fp16 bf16 fp8 int8 fp6=
+- =all-known= :: =fp32 fp16 bf16 fp8 int8 fp6 fp4 int4=
+
+Users may define named presets in TOML, with repeatable CLI flags, or through the Home Manager module. =unknown= is accepted only when a user explicitly includes it in a custom preset.
+
+* Enforcement
+
+For OpenRouter inference requests llm-log injects =provider.quantizations= when the client omitted it.
+
+If the client supplied =provider.quantizations=, llm-log intersects the request with the active preset. Client configuration may narrow policy but may not widen it. An empty intersection fails locally with HTTP 400 and is not sent upstream.
+
+This also applies to OpenRouter preset-capture inference skins because they terminate in the same =chat/completions=, =responses=, or =messages= routes. A preset captured through llm-log therefore records the enforced quantization allowlist in its provider configuration.
+
+* Rationale
+
+OpenRouter documents quantization as a provider-routing filter and exposes =unknown= as a distinct precision class. This lets llm-log fail closed without maintaining speculative provider-specific blocklists.
+
+Provider names alone are not a sufficient precision signal. Hardware, serving stack, and historical reputation must not be used to infer an undisclosed quantization.
+
+* Verification contract
+
+- default preset excludes =unknown=, =fp4=, and =int4=;
+- built-in =all-known= still excludes =unknown=;
+- caller-supplied quantizations are intersected with policy;
+- an empty intersection is rejected locally;
+- other provider routing fields are preserved when present in the request;
+- explicit custom presets may include =unknown=;
+- TOML, CLI, and Home Manager expose the same preset model.
