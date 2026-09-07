@@ -7,6 +7,7 @@ from aiohttp import web
 
 from .classifier import PrologClassifier
 from .expert_adapter import SubprocessExpertPlane
+from .openrouter_observability import openrouter_metadata_middleware
 from .proxy import build_app
 from .routing_recorder import RoutingRecorder
 
@@ -76,6 +77,7 @@ def main() -> None:
         expert_plane=expert_plane,
         require_expert_plane=args.require_expert_plane,
     )
+    app.middlewares.append(openrouter_metadata_middleware)
     web.run_app(app, host=args.listen, port=args.port)
 
 
