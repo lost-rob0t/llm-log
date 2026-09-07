@@ -45,6 +45,12 @@ listen = "127.0.0.1"
 port = 8787
 data_dir = "~/Documents/AI/proxy"
 prolog_classifier = true
+openrouter_quantization_preset = "high-precision"
+
+[quantization_presets]
+high-precision = ["fp32", "fp16", "bf16", "fp8"]
+balanced = ["fp32", "fp16", "bf16", "fp8", "int8", "fp6"]
+all-known = ["fp32", "fp16", "bf16", "fp8", "int8", "fp6", "fp4", "int4"]
 
 [upstreams]
 openai = "https://api.openai.com"
@@ -53,7 +59,7 @@ anthropic = "https://api.anthropic.com"
 chatgpt = "https://chatgpt.com"
 ```
 
-Standalone capture data defaults to `$XDG_DATA_HOME/llm-log`, or `~/.local/share/llm-log` when `XDG_DATA_HOME` is unset.
+Standalone capture data defaults to `~/.llm-proxy`.
 
 Precedence is:
 
@@ -70,7 +76,44 @@ llm-log serve
 llm-log serve --config ~/.config/llm-log/config.toml
 llm-log serve --port 9000 --no-prolog-classifier
 llm-log serve --upstream ollama=http://127.0.0.1:11434
+llm-log serve --openrouter-quantization-preset balanced
+llm-log serve \
+  --quantization-preset strict=fp16,bf16 \
+  --openrouter-quantization-preset strict
 ```
+
+## OpenRouter quantization policy
+
+OpenRouter exposes `provider.quantizations` as an endpoint allowlist. llm-log enforces that field on OpenRouter inference requests before forwarding them.
+
+The default preset is `high-precision`:
+
+```text
+fp32, fp16, bf16, fp8
+```
+
+`unknown` is deliberately absent from every built-in preset. An OpenRouter endpoint whose quantization is undisclosed therefore cannot satisfy the default route. `fp4` and `int4` are also excluded from the default high-precision preset.
+
+The built-ins are:
+
+| Preset | Allowed quantizations | Unknown allowed? |
+| --- | --- | --- |
+| `high-precision` | `fp32 fp16 bf16 fp8` | no |
+| `balanced` | `fp32 fp16 bf16 fp8 int8 fp6` | no |
+| `all-known` | `fp32 fp16 bf16 fp8 int8 fp6 fp4 int4` | no |
+
+A caller may send its own `provider.quantizations`, but llm-log intersects it with the active preset. The caller can narrow policy, never widen it. If the intersection is empty, llm-log returns HTTP 400 and does not send the request upstream.
+
+Allowing undisclosed precision requires an explicit custom preset containing `unknown`:
+
+```toml
+openrouter_quantization_preset = "unsafe-unknown"
+
+[quantization_presets]
+unsafe-unknown = ["fp8", "unknown"]
+```
+
+That opt-in is intentionally noisy; the safe default remains fail-closed.
 
 ## Nix / Home Manager
 
@@ -95,6 +138,13 @@ Enable the systemd **user** service from a Home Manager module:
     port = 8787;
     dataDir = "${config.xdg.dataHome}/llm-log";
     enablePrologClassifier = true;
+
+    openrouterQuantizationPreset = "high-precision";
+    quantizationPresets = {
+      high-precision = [ "fp32" "fp16" "bf16" "fp8" ];
+      balanced = [ "fp32" "fp16" "bf16" "fp8" "int8" "fp6" ];
+      all-known = [ "fp32" "fp16" "bf16" "fp8" "int8" "fp6" "fp4" "int4" ];
+    };
 
     upstreams = {
       openai = "https://api.openai.com";
