@@ -149,10 +149,10 @@ def main() -> None:
             if args.expert_data_dir is not None
             else Path(_string(expert_init, "data_dir", str(_DEFAULT_EXPERT_DATA_DIR))).expanduser()
         )
-    except (FileNotFoundError, InitConfigError) as exc:
+        recorder = RoutingRecorder(log_dir, init=init.data)
+    except (FileNotFoundError, InitConfigError, ValueError) as exc:
         parser().error(str(exc))
 
-    recorder = RoutingRecorder(log_dir)
     classifier = PrologClassifier() if prolog_classifier else None
     expert_plane = None
     if expert_service_bin is not None:
