@@ -5,12 +5,12 @@ from collections.abc import Sequence
 
 from aiohttp import web
 
-_OPENROUTER_INFERENCE_PATHS = (
-    "api/v1/chat/completions",
-    "api/v1/completions",
-    "api/v1/responses",
-    "api/v1/messages",
-    "api/v1/cursor",
+_OPENROUTER_INFERENCE_SUFFIXES = (
+    "chat/completions",
+    "completions",
+    "responses",
+    "messages",
+    "cursor",
 )
 
 
@@ -66,8 +66,11 @@ def _is_openrouter_inference_request(request: web.Request) -> bool:
         return False
     if request.match_info.get("provider") != "openrouter":
         return False
-    tail = request.match_info.get("tail", "").lstrip("/")
-    return any(tail == path or tail.startswith(path + "/") for path in _OPENROUTER_INFERENCE_PATHS)
+    tail = request.match_info.get("tail", "").strip("/")
+    return any(
+        tail == suffix or tail.endswith("/" + suffix)
+        for suffix in _OPENROUTER_INFERENCE_SUFFIXES
+    )
 
 
 def quantization_policy_middleware(
