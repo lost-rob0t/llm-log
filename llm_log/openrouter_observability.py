@@ -3,6 +3,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from aiohttp import web
+
+
+@web.middleware
+async def openrouter_metadata_middleware(request: web.Request, handler):
+    if request.match_info.get("provider") != "openrouter":
+        return await handler(request)
+
+    headers = request.headers.copy()
+    headers["X-OpenRouter-Metadata"] = "enabled"
+    return await handler(request.clone(headers=headers))
+
 
 def _json_payloads(response_body: bytes):
     try:
