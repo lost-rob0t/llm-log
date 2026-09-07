@@ -84,6 +84,25 @@ fast-known = ["fp8", "int8"]
         self.assertEqual(config.openrouter_quantization_preset, "fast-known")
         self.assertEqual(config.openrouter_quantizations, ("fp8", "int8"))
 
+    def test_cli_can_define_and_select_a_new_preset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = resolve_serve_config(
+                [
+                    "serve",
+                    "--quantization-preset",
+                    "strict=fp16,bf16",
+                    "--openrouter-quantization-preset",
+                    "strict",
+                ],
+                environ={
+                    "HOME": tmp,
+                    "XDG_CONFIG_HOME": str(Path(tmp) / "config"),
+                },
+            )
+
+        self.assertEqual(config.openrouter_quantization_preset, "strict")
+        self.assertEqual(config.openrouter_quantizations, ("fp16", "bf16"))
+
     def test_active_preset_must_exist(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
