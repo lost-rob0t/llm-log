@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 from aiohttp import web
 
 from .classifier import PrologClassifier
-from .config import RuntimeConfig, default_config_path, load_config
+from .config import KNOWN_QUANTIZATIONS, RuntimeConfig, default_config_path, load_config
 from .openrouter_policy import quantization_policy_middleware
 from .proxy import build_app
 from .recorder import RecorderActor
@@ -19,6 +19,23 @@ def _upstream(value: str) -> tuple[str, str]:
     if not sep or not name or not url:
         raise argparse.ArgumentTypeError("upstream must be NAME=URL")
     return name, url
+
+
+def _quantization_preset(value: str) -> tuple[str, tuple[str, ...]]:
+    name, sep, raw_quantizations = value.partition("=")
+    quantizations = tuple(item.strip() for item in raw_quantizations.split(",") if item.strip())
+    if not sep or not name or not quantizations:
+        raise argparse.ArgumentTypeError(
+            "quantization preset must be NAME=QUANTIZATION[,QUANTIZATION...]"
+        )
+    if len(set(quantizations)) != len(quantizations):
+        raise argparse.ArgumentTypeError("quantization preset contains duplicate values")
+    unsupported = [item for item in quantizations if item not in KNOWN_QUANTIZATIONS]
+    if unsupported:
+        raise argparse.ArgumentTypeError(
+            "unsupported quantization value(s): " + ", ".join(unsupported)
+        )
+    return name, quantizations
 
 
 def _port(value: str) -> int:
@@ -52,6 +69,14 @@ def parser() -> argparse.ArgumentParser:
         help="enable or disable the bundled SWI-Prolog classifier",
     )
     serve.add_argument(
+        "--quantization-preset",
+        action="append",
+        type=_quantization_preset,
+        default=[],
+        metavar="NAME=QUANTIZATION,...",
+        help="define or replace a named OpenRouter quantization allowlist",
+    )
+    serve.add_argument(
         "--openrouter-quantization-preset",
         default=None,
         help="select a configured OpenRouter quantization allowlist preset",
@@ -77,12 +102,16 @@ def resolve_serve_config(
     for name, url in args.upstream:
         upstreams[name] = url
 
+    quantization_presets = dict(config.quantization_presets)
+    for name, quantizations in args.quantization_preset:
+        quantization_presets[name] = quantizations
+
     quantization_preset = (
         args.openrouter_quantization_preset
         if args.openrouter_quantization_preset is not None
         else config.openrouter_quantization_preset
     )
-    if quantization_preset not in config.quantization_presets:
+    if quantization_preset not in quantization_presets:
         raise ValueError(f"unknown OpenRouter quantization preset: {quantization_preset!r}")
 
     return RuntimeConfig(
@@ -96,7 +125,7 @@ def resolve_serve_config(
         ),
         upstreams=upstreams,
         openrouter_quantization_preset=quantization_preset,
-        quantization_presets=dict(config.quantization_presets),
+        quantization_presets=quantization_presets,
     )
 
 
