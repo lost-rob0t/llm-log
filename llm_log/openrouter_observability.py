@@ -1,20 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from typing import Any
-
-_OPENROUTER_METADATA_HEADER = "X-OpenRouter-Metadata"
-
-
-def upstream_request_headers(
-    provider: str,
-    headers: Mapping[str, str],
-) -> dict[str, str]:
-    forwarded = dict(headers)
-    if provider == "openrouter":
-        forwarded[_OPENROUTER_METADATA_HEADER] = "enabled"
-    return forwarded
 
 
 def _json_payloads(response_body: bytes):
