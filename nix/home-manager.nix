@@ -3,12 +3,19 @@
 
 let
   cfg = config.services.llm-log;
-  inherit (lib) concatMapStringsSep escapeShellArg mkEnableOption mkIf mkOption optionalString types;
+  inherit (lib) concatMapStringsSep concatStringsSep escapeShellArg mkEnableOption mkIf mkOption optionalString types;
   system = pkgs.stdenv.hostPlatform.system;
   upstreamNames = builtins.sort builtins.lessThan (builtins.attrNames cfg.upstreams);
   upstreamArgs = concatMapStringsSep " "
     (name: "--upstream ${escapeShellArg "${name}=${cfg.upstreams.${name}}"}")
     upstreamNames;
+  quantizationPresetNames = builtins.sort builtins.lessThan (builtins.attrNames cfg.quantizationPresets);
+  quantizationPresetArgs = concatMapStringsSep " "
+    (name:
+      "--quantization-preset ${escapeShellArg "${name}=${concatStringsSep "," cfg.quantizationPresets.${name}}"}")
+    quantizationPresetNames;
+  selectedQuantizationPresetArg =
+    "--openrouter-quantization-preset ${escapeShellArg cfg.openrouterQuantizationPreset}";
   extraArgs = concatMapStringsSep " " escapeShellArg cfg.extraArgs;
   classifierArg = optionalString (!cfg.enablePrologClassifier) "--no-prolog-classifier";
   command = concatMapStringsSep " " (value: value) (builtins.filter (value: value != "") [
@@ -19,6 +26,8 @@ let
     "--log-dir ${escapeShellArg cfg.dataDir}"
     upstreamArgs
     classifierArg
+    quantizationPresetArgs
+    selectedQuantizationPresetArg
     extraArgs
   ]);
 in
@@ -69,6 +78,35 @@ in
       description = "Provider-prefix to upstream base URL mapping.";
     };
 
+    quantizationPresets = mkOption {
+      type = types.attrsOf (types.listOf (types.enum [
+        "fp32"
+        "fp16"
+        "bf16"
+        "fp8"
+        "int8"
+        "fp6"
+        "fp4"
+        "int4"
+        "unknown"
+      ]));
+      default = {
+        high-precision = [ "fp32" "fp16" "bf16" "fp8" ];
+        balanced = [ "fp32" "fp16" "bf16" "fp8" "int8" "fp6" ];
+        all-known = [ "fp32" "fp16" "bf16" "fp8" "int8" "fp6" "fp4" "int4" ];
+      };
+      description = ''
+        Named OpenRouter quantization allowlists. The defaults deliberately omit
+        "unknown" so endpoints without disclosed precision are not eligible.
+      '';
+    };
+
+    openrouterQuantizationPreset = mkOption {
+      type = types.str;
+      default = "high-precision";
+      description = "Quantization preset enforced for OpenRouter inference requests.";
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -77,6 +115,13 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = builtins.hasAttr cfg.openrouterQuantizationPreset cfg.quantizationPresets;
+        message = "services.llm-log.openrouterQuantizationPreset must name a configured quantizationPresets entry";
+      }
+    ];
+
     home.packages = [ cfg.package ];
 
     systemd.user.services.llm-log = {
