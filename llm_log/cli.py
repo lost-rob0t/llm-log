@@ -7,8 +7,9 @@ from aiohttp import web
 
 from .classifier import PrologClassifier
 from .expert_adapter import SubprocessExpertPlane
+from .openrouter_observability import openrouter_metadata_middleware
 from .proxy import build_app
-from .recorder import RecorderActor
+from .routing_recorder import RoutingRecorder
 
 _DEFAULT_UPSTREAMS = {
     "openai": "https://api.openai.com",
@@ -61,7 +62,7 @@ def main() -> None:
         raise SystemExit(2)
 
     upstreams = dict(args.upstream) if args.upstream else _DEFAULT_UPSTREAMS
-    recorder = RecorderActor(args.log_dir)
+    recorder = RoutingRecorder(args.log_dir)
     classifier = None if args.no_prolog_classifier else PrologClassifier()
     expert_plane = None
     if args.expert_service_bin is not None:
@@ -76,6 +77,7 @@ def main() -> None:
         expert_plane=expert_plane,
         require_expert_plane=args.require_expert_plane,
     )
+    app.middlewares.append(openrouter_metadata_middleware)
     web.run_app(app, host=args.listen, port=args.port)
 
 
