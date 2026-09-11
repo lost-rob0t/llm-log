@@ -276,6 +276,7 @@ async def _proxy_websocket(
     recorder: RecorderActor,
     classifier: Classifier | None,
     session: ClientSession,
+    expert_plane: ExpertPlane | None,
 ) -> web.StreamResponse:
     event_id = str(uuid.uuid4())
     started_at = _now()
@@ -448,6 +449,7 @@ def build_app(
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return await _proxy_websocket(
                 request,
+                expert_plane=expert_plane,
                 provider=provider,
                 upstream=upstream,
                 upstream_url=upstream_url,
