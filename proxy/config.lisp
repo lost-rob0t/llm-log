@@ -18,7 +18,11 @@
   (max-active 4)
   (max-queue-depth 32)
   (queue-timeout-seconds 30)
-  (retry-after-seconds 1))
+  (retry-after-seconds 1)
+  ;; Local policy defaults, not a statement of any provider's entitlement.
+  (requests-per-minute 60)
+  (burst 4)
+  (provider-groups nil))
 
 (defstruct runtime-config
   (data-directory nil)
@@ -98,6 +102,20 @@ The reusable default never hardcodes a consumer's personal data path;
     (%invalid "~A must be a non-negative integer, got ~S" name value))
   value)
 
+(defun %validate-provider-groups (groups)
+  "Validate a trusted provider alias -> quota group table, not client input."
+  (unless (and (listp groups) (every #'consp groups))
+    (%invalid "scheduler.provider_groups must be a table"))
+  (let ((seen (make-hash-table :test #'equal)))
+    (dolist (entry groups)
+      (unless (and (stringp (car entry)) (plusp (length (car entry)))
+                   (stringp (cdr entry)) (plusp (length (cdr entry))))
+        (%invalid "scheduler.provider_groups names must be non-empty strings"))
+      (when (gethash (car entry) seen)
+        (%invalid "duplicate scheduler provider group: ~S" (car entry)))
+      (setf (gethash (car entry) seen) t)))
+  groups)
+
 (defun validate-scheduler-config (scheduler)
   "Validate and return one scheduler-config."
   (unless (scheduler-config-p scheduler)
@@ -112,6 +130,12 @@ The reusable default never hardcodes a consumer's personal data path;
   (%validate-positive-integer
    "scheduler.retry_after_seconds"
    (scheduler-config-retry-after-seconds scheduler))
+  (%validate-positive-integer
+   "scheduler.requests_per_minute"
+   (scheduler-config-requests-per-minute scheduler))
+  (%validate-positive-integer
+   "scheduler.burst" (scheduler-config-burst scheduler))
+  (%validate-provider-groups (scheduler-config-provider-groups scheduler))
   scheduler)
 
 (defun %parse-upstreams-table (table)
@@ -144,6 +168,16 @@ The reusable default never hardcodes a consumer's personal data path;
            (setf (scheduler-config-retry-after-seconds scheduler)
                  (%validate-positive-integer
                   "scheduler.retry_after_seconds" value)))
+          ((equal key "requests_per_minute")
+           (setf (scheduler-config-requests-per-minute scheduler)
+                 (%validate-positive-integer
+                  "scheduler.requests_per_minute" value)))
+          ((equal key "burst")
+           (setf (scheduler-config-burst scheduler)
+                 (%validate-positive-integer "scheduler.burst" value)))
+          ((equal key "provider_groups")
+           (setf (scheduler-config-provider-groups scheduler)
+                 (%validate-provider-groups value)))
           (t
            (%invalid "unknown scheduler configuration key: ~S" key)))))))
 

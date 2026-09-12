@@ -16,6 +16,9 @@
    #:scheduler-config-max-queue-depth
    #:scheduler-config-queue-timeout-seconds
    #:scheduler-config-retry-after-seconds
+   #:scheduler-config-requests-per-minute
+   #:scheduler-config-burst
+   #:scheduler-config-provider-groups
    #:validate-scheduler-config
    #:invalid-configuration
    #:invalid-configuration-detail

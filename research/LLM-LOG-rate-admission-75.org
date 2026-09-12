@@ -1,0 +1,109 @@
+#+title: Request-rate admission: issue 75
+#+date: 2026-09-12
+
+* Scope
+This slice extends the provider scheduler from issue 70 / PR 74. It is a
+single-process request token bucket, active-request ceiling and bounded FIFO.
+It is not a provider entitlement detector, durable account budget, or complete
+Agent Zero/OpenCode adapter. Client wire profiles remain issue 71.
+
+* Configuration
+These defaults are local policy, not a statement of Z.ai or another provider's
+limits. Every group currently uses the same scheduler settings.
+
+#+begin_src toml
+[scheduler]
+max_active = 4
+max_queue_depth = 32
+queue_timeout_seconds = 30
+retry_after_seconds = 1
+requests_per_minute = 60
+burst = 4
+
+# Map EVERY upstream route using the same quota, including a native route.
+# These are configured provider-prefix names, not arbitrary client headers.
+[scheduler.provider_groups]
+glm = "glm-account"
+agentzero = "glm-account"
+opencode = "glm-account"
+#+end_src
+
+Declare corresponding routes in [upstreams] separately; this table does not
+create routes. Without an explicit mapping, a provider keeps its own independent
+bucket. Group names occupy a separate namespace from raw provider names. Equal
+upstream URLs do not automatically imply equal accounts, and the scheduler does
+not inspect credentials. The operator must map shared credentials correctly.
+
+=queue_timeout_seconds = 0= means do not wait; =max_queue_depth = 0= rejects
+immediately when admission is unavailable. Rate and burst must be positive
+integers; zero never silently disables enforcement. Changing configuration
+requires constructing a new scheduler. The running scheduler snapshots policy,
+including mutable alias/group strings.
+
+* Admission invariants
+One admission requires both an active slot and one request token. The same
+Bordeaux Threads lock protects checking, charging and queue transitions. There
+is no network I/O inside it. Tokens refill using elapsed clock ticks and cap at
+burst. Releases free active slots only; fast successes, errors and retries do
+not refund request tokens. Rejected, expired or cancelled waiters spend none.
+
+The RPM field is a refill rate, not a strict rolling-minute request cap. A full
+bucket permits a burst in addition to subsequent refill. For any elapsed T
+seconds, admitted requests cannot exceed the starting balance plus RPM*T/60.
+Use provider-appropriate headroom; do not equate this with five-hour or weekly
+provider accounting, or language-model tokens per minute.
+
+Existing FIFO waiters take precedence over new arrivals. Deadlines win when
+expiry and refill occur together. UNWIND-PROTECT removes waiters after normal,
+error and nonlocal exits. The optional cancelled-p callback is cooperative;
+transport-level disconnect detection is not wired in this slice.
+
+* HTTP and streaming
+Local rejection returns HTTP 429 before opening an upstream socket, with a
+rounded-up Retry-After based on rate deficit/queue depth and a configured minimum,
+and Cache-Control: no-store. Retry-After is a hint: active request completion
+and future arrivals cannot be predicted. No automatic retry is added.
+
+No heartbeat or fake 200 is emitted while transparent requests wait. Once an
+HTTP status has been sent it cannot later become 429. The opt-in smart-client
+SSE queue protocol remains issue 73. Existing relay streaming and Woo lifecycle
+behavior are not repaired or newly certified by this scheduler change.
+
+* Agent Zero -> OpenCode profile boundary
+Issue 71 must support a trusted pinned OpenCode outbound wire profile while
+retaining original Agent Zero provenance internally. User-Agent alone is not
+proof of equivalent headers, tools, bodies, streaming behavior, or acceptance.
+Admission group ownership must not depend on the outbound presentation. A 429
+must not trigger identity, credential or group rotation. No live provider
+acceptance test was performed as part of this slice.
+
+* Limits and next work
+Run one authoritative scheduler for each shared quota. Multiple proxy instances,
+new scheduler instances or restarts each begin with a fresh bucket; this does
+not enforce a cross-process or restart-safe account cap. TPM/reservations,
+provider Retry-After cooldown ingestion, per-group policy overrides, durable
+windows, per-client fairness and ingress thread/socket caps remain later work.
+The limiter bounds queued upstream work, not every inbound socket/thread.
+
+* Verification
+The tests-first head e81be9508efb7785df210af0948d3502fccf8682 failed real
+SBCL/Nix compilation in GitHub Actions run 34724484407, job 103636097666:
+REQUESTS-PER-MINUTE/BURST/PROVIDER-GROUPS constructor keywords were missing.
+This is an executed missing-API compile RED, not a behavioral assertion RED.
+
+There are 12 socket-free rate tests and one retained HTTP rate test. Unit tests
+run before socket tests so their output is not hidden by a later transport hang.
+No old tests are removed or skipped. Exact clock and injected sleeper cover
+refill/deadline boundaries without real-time sleeps; a 64-thread case checks
+burst overspend. Structural source checks are not Common Lisp test execution.
+
+The parent head ac26a689c56b1cf2b6c4999ad012b9bd2ced8497 already fails its full
+contract suite: run 34715742893, job 103612546205. The first HTTP assertions pass,
+then the process hangs for 15 minutes and exits with NIL not of type
+WOO.EV.SOCKET:SOCKET in the Woo event callback. This must be resolved before
+merging the stack. Do not claim the full suite is green on partial evidence.
+
+Run the existing full check:
+#+begin_src sh
+nix build -L .#checks.x86_64-linux.llm-log-config-contract
+#+end_src
