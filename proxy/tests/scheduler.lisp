@@ -12,6 +12,12 @@
           return nil
         do (sleep 0.01d0)))
 
+(defun %scheduler-toml (&rest lines)
+  (with-output-to-string (stream)
+    (write-line "[scheduler]" stream)
+    (dolist (line lines)
+      (write-line line stream))))
+
 (deftest scheduler-defaults-are-bounded
   (let* ((config (resolve-config :config-file nil))
          (scheduler (runtime-config-scheduler config)))
@@ -23,7 +29,11 @@
 (deftest scheduler-toml-overrides-defaults
   (let* ((config
            (parse-toml-config
-            "[scheduler]\nmax_active = 2\nmax_queue_depth = 7\nqueue_timeout_seconds = 9\nretry_after_seconds = 3\n"))
+            (%scheduler-toml
+             "max_active = 2"
+             "max_queue_depth = 7"
+             "queue_timeout_seconds = 9"
+             "retry_after_seconds = 3")))
          (scheduler (runtime-config-scheduler config)))
     (ok (eql (scheduler-config-max-active scheduler) 2))
     (ok (eql (scheduler-config-max-queue-depth scheduler) 7))
@@ -32,19 +42,19 @@
 
 (deftest scheduler-toml-rejects-invalid-values
   (ok (signals
-       (parse-toml-config "[scheduler]\nmax_active = 0\n")
+       (parse-toml-config (%scheduler-toml "max_active = 0"))
        'invalid-configuration))
   (ok (signals
-       (parse-toml-config "[scheduler]\nmax_queue_depth = -1\n")
+       (parse-toml-config (%scheduler-toml "max_queue_depth = -1"))
        'invalid-configuration))
   (ok (signals
-       (parse-toml-config "[scheduler]\nqueue_timeout_seconds = -1\n")
+       (parse-toml-config (%scheduler-toml "queue_timeout_seconds = -1"))
        'invalid-configuration))
   (ok (signals
-       (parse-toml-config "[scheduler]\nretry_after_seconds = 0\n")
+       (parse-toml-config (%scheduler-toml "retry_after_seconds = 0"))
        'invalid-configuration))
   (ok (signals
-       (parse-toml-config "[scheduler]\nwat = 1\n")
+       (parse-toml-config (%scheduler-toml "wat = 1"))
        'invalid-configuration)))
 
 (deftest scheduler-admits-up-to-provider-limit
@@ -93,8 +103,7 @@
                                    :queue-timeout-seconds 2
                                    :retry-after-seconds 1)))
          (waiter-result nil)
-         (waiter
-           nil))
+         (waiter nil))
     (ok (acquire-provider-slot scheduler "alpha"))
     (setf waiter
           (bt:make-thread
