@@ -9,6 +9,7 @@
                              (:file "config")
                              (:file "scheduler")
                              (:file "transport")
-                             (:file "backpressure"))))
+                             (:file "backpressure")
+                             (:file "rate-limits"))))
   :perform (asdf:test-op (operation component)
              (uiop:symbol-call :rove :run-system component)))
