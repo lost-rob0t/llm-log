@@ -31,7 +31,7 @@ upstream and Content-Length is recomputed from the forwarded octets.")
 (defparameter +relay-buffer-size+ 65536)
 
 (defstruct proxy-server
-  thread config)
+  thread config scheduler)
 
 (defun %utf8-octets (string)
   (trivial-utf-8:string-to-utf-8-bytes string))
@@ -172,19 +172,43 @@ the head, stream all body octets unchanged."
           do (write-sequence buffer client-stream :end n))
     (force-output client-stream)))
 
-(defun %write-raw-response (client-stream status reason body-text)
+(defun %write-raw-response (client-stream status reason body-text &key headers)
   "Write one complete plain response directly to the client stream."
   (let ((body (%utf8-octets body-text)))
     (write-sequence
      (%utf8-octets
-      (format nil "HTTP/1.1 ~A ~A~C~CContent-Type: text/plain; charset=utf-8~C~C~
-Connection: close~C~CContent-Length: ~A~C~C~C~C"
-              status reason #\Return #\Linefeed #\Return #\Linefeed
+      (format nil "HTTP/1.1 ~A ~A~C~C"
+              status reason #\Return #\Linefeed))
+     client-stream)
+    (write-sequence
+     (%utf8-octets
+      (format nil "Content-Type: text/plain; charset=utf-8~C~C"
+              #\Return #\Linefeed))
+     client-stream)
+    (dolist (header headers)
+      (write-sequence
+       (%utf8-octets
+        (format nil "~A: ~A~C~C"
+                (car header) (cdr header) #\Return #\Linefeed))
+       client-stream))
+    (write-sequence
+     (%utf8-octets
+      (format nil "Connection: close~C~CContent-Length: ~A~C~C~C~C"
               #\Return #\Linefeed (length body) #\Return #\Linefeed
               #\Return #\Linefeed))
      client-stream)
     (write-sequence body client-stream)
     (force-output client-stream)))
+
+(defun %write-overload-response (client-stream config reason)
+  (let* ((scheduler (runtime-config-scheduler config))
+         (retry-after (scheduler-config-retry-after-seconds scheduler))
+         (detail (ecase reason
+                   (:queue-full "provider request queue is full")
+                   (:queue-timeout "provider request queue wait expired"))))
+    (%write-raw-response
+     client-stream 429 "Too Many Requests" detail
+     :headers (list (cons "Retry-After" retry-after)))))
 
 (defun %make-blocking-client-stream (io)
   "Wrap the Woo client descriptor in a blocking octet fd-stream owned by the
@@ -217,8 +241,25 @@ octet vector or an input stream depending on the build."
                       do (vector-push-extend (aref buffer i) out)))
        out))))
 
-(defun %relay-request (client-stream config method uri headers body)
-  "Own one upstream exchange: connect, forward, relay the response."
+(defun %relay-admitted-request
+    (client-stream method headers body upstream-target upstream-url)
+  "Open and relay one request after the scheduler has granted a provider slot."
+  (multiple-value-bind (stream socket)
+      (%open-upstream upstream-url)
+    (unwind-protect
+         (progn
+           (%write-upstream-request
+            stream (string-upcase (symbol-name method))
+            upstream-target
+            (%upstream-host-header (quri:uri upstream-url))
+            headers body)
+           (%relay-upstream-response client-stream stream))
+      (ignore-errors (close stream))
+      (when socket
+        (ignore-errors (usocket:socket-close socket))))))
+
+(defun %relay-request (client-stream config scheduler method uri headers body)
+  "Own one scheduled upstream exchange: admit, connect, forward, relay."
   (handler-case
       (multiple-value-bind (provider upstream-target upstream-url)
           (%resolve-provider config uri)
@@ -227,26 +268,22 @@ octet vector or an input stream depending on the build."
            (%write-raw-response client-stream 404 "Not Found"
                                 (format nil "unknown upstream: ~A" provider)))
           (t
-           (multiple-value-bind (stream socket)
-               (%open-upstream upstream-url)
-             (unwind-protect
-                  (progn
-                    (%write-upstream-request
-                     stream (string-upcase (symbol-name method))
-                     upstream-target
-                     (%upstream-host-header (quri:uri upstream-url))
-                     headers body)
-                    (%relay-upstream-response client-stream stream))
-               (ignore-errors (close stream))
-               (when socket
-                 (ignore-errors (usocket:socket-close socket))))))))
+           (multiple-value-bind (admitted reason)
+               (acquire-provider-slot scheduler provider)
+             (if admitted
+                 (unwind-protect
+                      (%relay-admitted-request
+                       client-stream method headers body
+                       upstream-target upstream-url)
+                   (release-provider-slot scheduler provider))
+                 (%write-overload-response client-stream config reason))))))
     (error (condition)
       (ignore-errors
        (%write-raw-response client-stream 502 "Bad Gateway"
                             (format nil "upstream request failed: ~A"
                                     condition))))))
 
-(defun %make-proxy-app (config)
+(defun %make-proxy-app (config scheduler)
   (lambda (env)
     (let ((io (getf env :clack.io)))
       (bt:make-thread
@@ -256,6 +293,7 @@ octet vector or an input stream depending on the build."
                 (%relay-request
                  client-stream
                  config
+                 scheduler
                  (getf env :request-method)
                  (getf env :request-uri)
                  (getf env :headers)
@@ -270,16 +308,18 @@ octet vector or an input stream depending on the build."
 
 (defun start-proxy (config)
   "Start the transparent capture proxy for CONFIG; return a proxy-server."
-  (let ((thread
-          (bt:make-thread
-           (lambda ()
-             (woo:run (%make-proxy-app config)
-                      :port (runtime-config-port config)
-                      :address (runtime-config-listen-address config)
-                      :worker-num nil
-                      :debug nil))
-           :name "llm-log-proxy")))
-    (make-proxy-server :thread thread :config config)))
+  (let* ((scheduler
+           (make-request-scheduler (runtime-config-scheduler config)))
+         (thread
+           (bt:make-thread
+            (lambda ()
+              (woo:run (%make-proxy-app config scheduler)
+                       :port (runtime-config-port config)
+                       :address (runtime-config-listen-address config)
+                       :worker-num nil
+                       :debug nil))
+            :name "llm-log-proxy")))
+    (make-proxy-server :thread thread :config config :scheduler scheduler)))
 
 (defun stop-proxy (server)
   "Stop a proxy started by START-PROXY. The event loop thread is destroyed;
