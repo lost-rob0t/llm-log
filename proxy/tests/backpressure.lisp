@@ -50,14 +50,15 @@
                              :retry-after-seconds 7)
     (setf (fixture-server-response-spec upstream) (%slow-fixture-response))
     (let ((first-status nil)
-          (first-thread nil))
+          (first-thread nil)
+          (proxy-port +fixture-proxy-port+))
       (setf first-thread
             (bt:make-thread
              (lambda ()
                (setf first-status
                      (nth-value
                       0
-                      (%client-request +fixture-proxy-port+
+                      (%client-request proxy-port
                                        "GET" "/fixture/v1/first"))))
              :name "llm-log-test-first-active"))
       (ok (%wait-until
@@ -66,7 +67,7 @@
                    (proxy-server-scheduler proxy) "fixture")
                   1))))
       (multiple-value-bind (status headers body)
-          (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/second")
+          (%client-request proxy-port "GET" "/fixture/v1/second")
         (ok (eql status 429))
         (ok (equal (%head-header
                     (mapcar (lambda (entry)
@@ -90,19 +91,20 @@
                              :queue-timeout-seconds 0
                              :retry-after-seconds 2)
     (setf (fixture-server-response-spec upstream) (%slow-fixture-response))
-    (let ((first-thread
-            (bt:make-thread
-             (lambda ()
-               (%client-request +fixture-proxy-port+
-                                "GET" "/fixture/v1/first"))
-             :name "llm-log-test-timeout-active")))
+    (let* ((proxy-port +fixture-proxy-port+)
+           (first-thread
+             (bt:make-thread
+              (lambda ()
+                (%client-request proxy-port
+                                 "GET" "/fixture/v1/first"))
+              :name "llm-log-test-timeout-active")))
       (ok (%wait-until
            (lambda ()
              (eql (scheduler-provider-active-count
                    (proxy-server-scheduler proxy) "fixture")
                   1))))
       (multiple-value-bind (status headers body)
-          (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/queued")
+          (%client-request proxy-port "GET" "/fixture/v1/queued")
         (ok (eql status 429))
         (ok (equal (%head-header
                     (mapcar (lambda (entry)
