@@ -8,6 +8,7 @@
                 :components ((:file "package")
                              (:file "config")
                              (:file "scheduler")
-                             (:file "transport"))))
+                             (:file "transport")
+                             (:file "backpressure"))))
   :perform (asdf:test-op (operation component)
              (uiop:symbol-call :rove :run-system component)))
