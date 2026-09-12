@@ -200,15 +200,18 @@ the head, stream all body octets unchanged."
     (write-sequence body client-stream)
     (force-output client-stream)))
 
-(defun %write-overload-response (client-stream config reason)
+(defun %write-overload-response (client-stream config reason &optional retry-after)
   (let* ((scheduler (runtime-config-scheduler config))
-         (retry-after (scheduler-config-retry-after-seconds scheduler))
+         (retry-after (or retry-after
+                          (scheduler-config-retry-after-seconds scheduler)))
          (detail (ecase reason
                    (:queue-full "provider request queue is full")
-                   (:queue-timeout "provider request queue wait expired"))))
+                   (:queue-timeout "provider request queue wait expired")
+                   (:rate-limited "provider request rate limit exhausted"))))
     (%write-raw-response
      client-stream 429 "Too Many Requests" detail
-     :headers (list (cons "Retry-After" retry-after)))))
+     :headers (list (cons "Retry-After" retry-after)
+                    (cons "Cache-Control" "no-store")))))
 
 (defun %make-blocking-client-stream (io)
   "Wrap the Woo client descriptor in a blocking octet fd-stream owned by the
@@ -268,7 +271,7 @@ octet vector or an input stream depending on the build."
            (%write-raw-response client-stream 404 "Not Found"
                                 (format nil "unknown upstream: ~A" provider)))
           (t
-           (multiple-value-bind (admitted reason)
+           (multiple-value-bind (admitted reason retry-after)
                (acquire-provider-slot scheduler provider)
              (if admitted
                  (unwind-protect
@@ -276,7 +279,7 @@ octet vector or an input stream depending on the build."
                        client-stream method headers body
                        upstream-target upstream-url)
                    (release-provider-slot scheduler provider))
-                 (%write-overload-response client-stream config reason))))))
+                 (%write-overload-response client-stream config reason retry-after))))))
     (error (condition)
       (ignore-errors
        (%write-raw-response client-stream 502 "Bad Gateway"
