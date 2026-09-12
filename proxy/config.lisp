@@ -14,11 +14,18 @@
 (defun %invalid (control &rest arguments)
   (error 'invalid-configuration :detail (apply #'format nil control arguments)))
 
+(defstruct scheduler-config
+  (max-active 4)
+  (max-queue-depth 32)
+  (queue-timeout-seconds 30)
+  (retry-after-seconds 1))
+
 (defstruct runtime-config
   (data-directory nil)
   (listen-address nil)
   (port nil)
-  (upstreams nil))
+  (upstreams nil)
+  (scheduler nil))
 
 (defparameter +default-listen-address+ "127.0.0.1")
 
@@ -81,12 +88,64 @@ The reusable default never hardcodes a consumer's personal data path;
     (%invalid "port must be an integer between 1 and 65535, got ~S" port))
   port)
 
+(defun %validate-positive-integer (name value)
+  (unless (and (integerp value) (plusp value))
+    (%invalid "~A must be a positive integer, got ~S" name value))
+  value)
+
+(defun %validate-nonnegative-integer (name value)
+  (unless (and (integerp value) (not (minusp value)))
+    (%invalid "~A must be a non-negative integer, got ~S" name value))
+  value)
+
+(defun validate-scheduler-config (scheduler)
+  "Validate and return one scheduler-config."
+  (unless (scheduler-config-p scheduler)
+    (%invalid "scheduler must be a scheduler configuration"))
+  (%validate-positive-integer
+   "scheduler.max_active" (scheduler-config-max-active scheduler))
+  (%validate-nonnegative-integer
+   "scheduler.max_queue_depth" (scheduler-config-max-queue-depth scheduler))
+  (%validate-nonnegative-integer
+   "scheduler.queue_timeout_seconds"
+   (scheduler-config-queue-timeout-seconds scheduler))
+  (%validate-positive-integer
+   "scheduler.retry_after_seconds"
+   (scheduler-config-retry-after-seconds scheduler))
+  scheduler)
+
 (defun %parse-upstreams-table (table)
   (unless (and (listp table) (every #'consp table))
     (%invalid "upstreams must be a table of name = base-url"))
   (mapcar (lambda (entry)
             (validate-upstream (car entry) (cdr entry)))
           table))
+
+(defun %parse-scheduler-table (table)
+  (unless (and (listp table) (every #'consp table))
+    (%invalid "scheduler must be a TOML table"))
+  (let ((scheduler (make-scheduler-config)))
+    (dolist (entry table (validate-scheduler-config scheduler))
+      (let ((key (car entry))
+            (value (cdr entry)))
+        (cond
+          ((equal key "max_active")
+           (setf (scheduler-config-max-active scheduler)
+                 (%validate-positive-integer "scheduler.max_active" value)))
+          ((equal key "max_queue_depth")
+           (setf (scheduler-config-max-queue-depth scheduler)
+                 (%validate-nonnegative-integer
+                  "scheduler.max_queue_depth" value)))
+          ((equal key "queue_timeout_seconds")
+           (setf (scheduler-config-queue-timeout-seconds scheduler)
+                 (%validate-nonnegative-integer
+                  "scheduler.queue_timeout_seconds" value)))
+          ((equal key "retry_after_seconds")
+           (setf (scheduler-config-retry-after-seconds scheduler)
+                 (%validate-positive-integer
+                  "scheduler.retry_after_seconds" value)))
+          (t
+           (%invalid "unknown scheduler configuration key: ~S" key)))))))
 
 (defun %toml-config (root)
   (unless (listp root)
@@ -110,6 +169,9 @@ The reusable default never hardcodes a consumer's personal data path;
                ((equal key "upstreams")
                 (setf (runtime-config-upstreams config)
                       (%parse-upstreams-table value)))
+               ((equal key "scheduler")
+                (setf (runtime-config-scheduler config)
+                      (%parse-scheduler-table value)))
                (t
                 (%invalid "unknown configuration key: ~S" key))))
     config))
@@ -130,7 +192,7 @@ The reusable default never hardcodes a consumer's personal data path;
                 (uiop:native-namestring path)))
     (parse-toml-config (uiop:read-file-string path))))
 
-(defun resolve-config (&key config-file data-directory listen port upstreams)
+(defun resolve-config (&key config-file data-directory listen port upstreams scheduler)
   "Merge built-in defaults, the config-file layer and CLI overrides.
 
 CONFIG-FILE is one of:
@@ -160,7 +222,12 @@ CONFIG-FILE is one of:
             (or data-directory
                 (and file-config
                      (runtime-config-data-directory file-config))
-                (default-data-directory)))))
+                (default-data-directory))))
+         (scheduler
+           (validate-scheduler-config
+            (or scheduler
+                (and file-config (runtime-config-scheduler file-config))
+                (make-scheduler-config)))))
     (unless (and (stringp listen) (plusp (length listen)))
       (%invalid "listen address must be a non-empty string, got ~S" listen))
     (make-runtime-config
@@ -170,4 +237,5 @@ CONFIG-FILE is one of:
      :upstreams (%merge-upstreams
                  +default-upstreams+
                  (and file-config (runtime-config-upstreams file-config))
-                 upstreams))))
+                 upstreams)
+     :scheduler scheduler)))
