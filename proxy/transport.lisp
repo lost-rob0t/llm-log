@@ -321,10 +321,19 @@ octet vector or an input stream depending on the build."
             :name "llm-log-proxy")))
     (make-proxy-server :thread thread :config config :scheduler scheduler)))
 
+(defun %break-proxy-event-loop ()
+  "Run inside the Woo thread and ask libev to unwind normally.
+
+Woo installs process signal watchers in each event loop. Destroying the thread
+skips Woo's unwind-protect cleanup and leaves those watchers registered against
+the dead loop, which makes the next Woo loop abort in libev."
+  (when woo.ev:*evloop*
+    (lev:ev-break woo.ev:*evloop* lev:+EVBREAK-ALL+)))
+
 (defun stop-proxy (server)
-  "Stop a proxy started by START-PROXY. The event loop thread is destroyed;
-production deployments stop via process termination (systemd)."
+  "Stop a proxy started by START-PROXY and let Woo run its cleanup forms."
   (let ((thread (proxy-server-thread server)))
-    (when thread
-      (ignore-errors (bt:destroy-thread thread))))
+    (when (and thread (bt:thread-alive-p thread))
+      (bt:interrupt-thread thread #'%break-proxy-event-loop)
+      (bt:join-thread thread)))
   server)
