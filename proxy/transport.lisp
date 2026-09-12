@@ -330,10 +330,30 @@ the dead loop, which makes the next Woo loop abort in libev."
   (when woo.ev:*evloop*
     (lev:ev-break woo.ev:*evloop* lev:+EVBREAK-ALL+)))
 
+(defun %proxy-wakeup-host (address)
+  (cond
+    ((string= address "0.0.0.0") "127.0.0.1")
+    ((or (string= address "::") (string= address "[::]")) "::1")
+    (t address)))
+
+(defun %wake-proxy-event-loop (config)
+  "Wake Woo's blocking poll so a scheduled thread interrupt can run."
+  (let ((socket nil))
+    (unwind-protect
+         (setf socket
+               (usocket:socket-connect
+                (%proxy-wakeup-host (runtime-config-listen-address config))
+                (runtime-config-port config)
+                :element-type '(unsigned-byte 8)
+                :timeout 1))
+      (when socket
+        (ignore-errors (usocket:socket-close socket))))))
+
 (defun stop-proxy (server)
   "Stop a proxy started by START-PROXY and let Woo run its cleanup forms."
   (let ((thread (proxy-server-thread server)))
     (when (and thread (bt:thread-alive-p thread))
       (bt:interrupt-thread thread #'%break-proxy-event-loop)
+      (ignore-errors (%wake-proxy-event-loop (proxy-server-config server)))
       (bt:join-thread thread)))
   server)
