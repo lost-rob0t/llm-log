@@ -1,0 +1,28 @@
+(in-package #:llm-log)
+
+(defun apply-outbound-profile (config provider headers)
+  "Apply the operator's header profile without touching body, auth or routing.
+Unmapped providers remain transparent. Source headers are never mutated."
+  (let* ((name (cdr (assoc provider (runtime-config-provider-profiles config)
+                           :test #'equal)))
+         (profile (and name (find name (runtime-config-profiles config)
+                                  :key #'outbound-profile-name :test #'equal))))
+    (unless name (return-from apply-outbound-profile headers))
+    (unless profile (%invalid "unknown outbound profile: ~S" name))
+    (validate-outbound-profile profile)
+    (let ((outbound (make-hash-table :test #'equal)))
+      (maphash
+       (lambda (header value)
+         (let ((key (string-downcase header)))
+           (unless (member key (outbound-profile-drop-headers profile)
+                           :test #'string-equal)
+             (when (nth-value 1 (gethash key outbound))
+               (%invalid "ambiguous duplicate outbound header name"))
+             (setf (gethash key outbound) value))))
+       headers)
+      (when (outbound-profile-user-agent profile)
+        (setf (gethash "user-agent" outbound)
+              (outbound-profile-user-agent profile)))
+      (when (outbound-profile-title profile)
+        (setf (gethash "x-title" outbound) (outbound-profile-title profile)))
+      outbound)))

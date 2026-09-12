@@ -1,0 +1,96 @@
+#+title: Rate budget and outbound profile foundation
+#+date: 2026-09-12
+
+* Scope and priority
+This slice extends #70 / PR #74 and implements the header-only foundation of
+#71. Request-rate control is independent from simultaneous active requests.
+Hermes, OpenClaw and Agent Zero may use the same explicitly configured outbound
+profile. Agent Zero's general-purpose prompts, tools and message bodies remain
+unchanged. No new actor framework or second scheduler is introduced: the
+existing Bordeaux Threads state lock serializes admission atomically, while
+network I/O remains outside the critical section.
+
+* Admission contract
+An upstream origin owns a token bucket (request starts, NOT LLM tokens), an
+active count and a bounded FIFO. Admission requires all three to permit work.
+Only admission spends a token. Completing or failing a request releases an
+active slot but does not refund its start token. Queue rejection, expiration
+and non-local exit while waiting do not spend a token. Retry-After is a positive
+integer ceiling of the refill delay, never smaller than the configured fallback.
+It is guidance, not a reservation or a guarantee that the next retry is admitted.
+
+Aliases sharing scheme, case-normalized host and effective port share state,
+regardless of source harness, path, profile or API credential. This deliberately
+conservative origin-level grouping avoids multiplying one quota through aliases.
+It can over-restrict independent accounts on one origin. Shared account limits
+across DIFFERENT origins still need explicit quota groups in a later slice.
+
+State is process-local and resets on restart. Run one gateway process for a
+shared credential. This is not distributed/persistent quota enforcement, a
+strict rolling-window counter, TPM accounting, a five-hour credit budget, or an
+upstream-429 cooldown implementation. Requests-per-minute is a continuous refill
+rate with a separately bounded burst, not a guarantee of at most N in every
+rolling minute. Upstream quotas must still be respected.
+
+* Configuration
+This example is a LOCAL OPERATOR POLICY, not a claimed Z.ai allowance. It spaces
+starts by at least three seconds when idle burst capacity is one. Choose actual
+limits from the operator's account. Rate zero (the backward-compatible default)
+disables only request-rate enforcement; existing concurrency limits remain.
+
+#+begin_src toml
+[scheduler]
+max_active = 2
+max_queue_depth = 16
+queue_timeout_seconds = 30
+retry_after_seconds = 1
+requests_per_minute = 20
+burst = 1
+
+[upstreams]
+zai = "https://api.z.ai"
+
+[profiles.metadata_minimized]
+version = "local-1"
+user_agent = "llm-log"
+drop_headers = ["x-agent-name", "x-agent-version", "x-session-id", "traceparent", "tracestate", "baggage", "x-stainless-package-version"]
+
+[provider_profiles]
+zai = "metadata_minimized"
+#+end_src
+
+Define another named profile with user_agent/title values from a reviewed,
+version-pinned OpenCode capture to use that application identity. The tests use
+=opencode/test-fixture= and =OpenCode= as SYNTHETIC fixture values, not evidence
+of a real released OpenCode wire contract. Provider mappings are trusted config;
+an incoming header cannot choose a profile or a new budget. Unmapped providers
+remain transparent. Multiple provider routes can select the same named profile.
+
+Only User-Agent and X-Title may be overwritten in this foundation. drop_headers
+is constrained to a small metadata allowlist. Authorization, API keys, cookies,
+provider protocol/version headers, routing authority and message framing cannot
+be altered by profile rules. Header matching is case-insensitive; configured
+values reject CR/LF, controls and excessive length. Source headers are retained
+unchanged; the outbound copy is separate. Profile versions are local metadata,
+not extra headers transmitted to the provider.
+
+* Limits of the profile claim
+This is application-header normalization, not full anonymization or proof of
+indistinguishability. Account identity, prompts, tool schemas, TLS/network traits,
+request timing and provider behavior are not concealed by these profiles.
+No real provider request or genuine OpenCode capture has been used to certify
+a profile in this slice. Capture/export/diff, explicit provenance persistence,
+real-client/provider conformance and any separately justified protocol adapters
+remain in #71. Profiles do not alter authentication or grant account permissions.
+
+* Verification
+Test-only commit =72901bf58dc8e7caf292a988ee1b1c2e84c3bbf5= ran on its exact
+head in Actions run =34724841525=, job =103637062682=. The runtime was untouched:
+2 contracts passed and 12 failed on missing rate configuration/profile support.
+The new runner tests policy with an injected clock, 32 concurrent callers and
+a substituted final network function at the real relay/admission boundary.
+It does not claim live Woo, HTTP/SSE or provider conformance.
+
+The parent's full proxy check is separately blocked by the Woo socket/lifecycle
+failure in run =34715742893=. The full existing gate remains enabled and must
+pass before merge/deployment. The isolated policy job is not a replacement.

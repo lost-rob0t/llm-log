@@ -10,13 +10,22 @@
    #:runtime-config-port
    #:runtime-config-upstreams
    #:runtime-config-scheduler
+   #:runtime-config-profiles
+   #:runtime-config-provider-profiles
    #:scheduler-config
    #:make-scheduler-config
    #:scheduler-config-max-active
    #:scheduler-config-max-queue-depth
    #:scheduler-config-queue-timeout-seconds
    #:scheduler-config-retry-after-seconds
+   #:scheduler-config-requests-per-minute
+   #:scheduler-config-burst
    #:validate-scheduler-config
+   #:outbound-profile
+   #:outbound-profile-name
+   #:outbound-profile-version
+   #:validate-outbound-profile
+   #:apply-outbound-profile
    #:invalid-configuration
    #:invalid-configuration-detail
    #:default-upstreams
