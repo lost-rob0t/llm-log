@@ -1,5 +1,5 @@
 (asdf:defsystem #:llm-log
-  :description "Common Lisp llm-log runtime: configuration, scheduling, CLI, and transparent transport."
+  :description "Common Lisp llm-log runtime: configuration, scheduling, profiles, CLI, and transparent transport."
   :author "lost-rob0t"
   :license "MIT"
   :version "0.1.0"
@@ -9,5 +9,6 @@
   :components ((:file "package")
                (:file "config")
                (:file "scheduler")
+               (:file "profiles")
                (:file "transport")
                (:file "cli")))

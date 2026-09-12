@@ -200,12 +200,13 @@ the head, stream all body octets unchanged."
     (write-sequence body client-stream)
     (force-output client-stream)))
 
-(defun %write-overload-response (client-stream config reason)
+(defun %write-overload-response (client-stream config reason &key retry-after)
   (let* ((scheduler (runtime-config-scheduler config))
-         (retry-after (scheduler-config-retry-after-seconds scheduler))
+         (retry-after (or retry-after (scheduler-config-retry-after-seconds scheduler)))
          (detail (ecase reason
                    (:queue-full "provider request queue is full")
                    (:queue-timeout "provider request queue wait expired"))))
+    (assert (typep retry-after '(integer 1 *)))
     (%write-raw-response
      client-stream 429 "Too Many Requests" detail
      :headers (list (cons "Retry-After" retry-after)))))
@@ -259,7 +260,7 @@ octet vector or an input stream depending on the build."
         (ignore-errors (usocket:socket-close socket))))))
 
 (defun %relay-request (client-stream config scheduler method uri headers body)
-  "Own one scheduled upstream exchange: admit, connect, forward, relay."
+  "Own one scheduled upstream exchange: profile, admit, connect, forward, relay."
   (handler-case
       (multiple-value-bind (provider upstream-target upstream-url)
           (%resolve-provider config uri)
@@ -268,15 +269,17 @@ octet vector or an input stream depending on the build."
            (%write-raw-response client-stream 404 "Not Found"
                                 (format nil "unknown upstream: ~A" provider)))
           (t
-           (multiple-value-bind (admitted reason)
-               (acquire-provider-slot scheduler provider)
-             (if admitted
-                 (unwind-protect
-                      (%relay-admitted-request
-                       client-stream method headers body
-                       upstream-target upstream-url)
-                   (release-provider-slot scheduler provider))
-                 (%write-overload-response client-stream config reason))))))
+           (let ((outbound (apply-outbound-profile config provider headers)))
+             (multiple-value-bind (admitted reason retry-after)
+                 (acquire-provider-slot scheduler provider)
+               (if admitted
+                   (unwind-protect
+                        (%relay-admitted-request
+                         client-stream method outbound body
+                         upstream-target upstream-url)
+                     (release-provider-slot scheduler provider))
+                   (%write-overload-response client-stream config reason
+                                             :retry-after retry-after)))))))
     (error (condition)
       (ignore-errors
        (%write-raw-response client-stream 502 "Bad Gateway"
@@ -309,7 +312,9 @@ octet vector or an input stream depending on the build."
 (defun start-proxy (config)
   "Start the transparent capture proxy for CONFIG; return a proxy-server."
   (let* ((scheduler
-           (make-request-scheduler (runtime-config-scheduler config)))
+           (make-request-scheduler
+            (runtime-config-scheduler config)
+            :upstreams (runtime-config-upstreams config)))
          (thread
            (bt:make-thread
             (lambda ()
