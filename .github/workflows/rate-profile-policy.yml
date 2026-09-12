@@ -1,0 +1,37 @@
+name: Rate and profile policy contracts
+
+on:
+  pull_request:
+    paths:
+      - "proxy/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/rate-profile-policy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run isolated policy contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          nix build -L .#llm-log-cl-sbcl --out-link policy-sbcl
+          timeout 60 ./policy-sbcl/bin/sbcl \
+            --noinform --no-userinit --no-sysinit --non-interactive \
+            --load proxy/tests/policy-runner.lisp
