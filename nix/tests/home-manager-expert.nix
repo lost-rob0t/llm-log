@@ -27,7 +27,15 @@ let
           xdg.dataHome = lib.mkOption { type = lib.types.str; };
           xdg.cacheHome = lib.mkOption { type = lib.types.str; };
           systemd.user.services = lib.mkOption {
-            type = lib.types.attrs;
+            # Like Home Manager, evaluate each service as a module definition.
+            # An opaque attrs stub leaves nested mkIf values unevaluated.
+            type = lib.types.attrsOf (lib.types.submodule {
+              options = {
+                Unit = lib.mkOption { type = lib.types.attrs; default = { }; };
+                Service = lib.mkOption { type = lib.types.attrs; default = { }; };
+                Install = lib.mkOption { type = lib.types.attrs; default = { }; };
+              };
+            });
             default = { };
           };
         };
