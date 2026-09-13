@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,8 +79,7 @@ class ActorTests(unittest.IsolatedAsyncioTestCase):
     async def test_codex_handshake_reads_quota_without_starting_a_turn(self):
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / 'fake-codex'
-            executable.write_text('''#!/usr/bin/env python3
-import json,sys
+            executable.write_text('#!' + sys.executable + '\n' + '''import json,sys
 assert sys.argv[1:] == ['app-server']
 initialized = False
 for line in sys.stdin:
