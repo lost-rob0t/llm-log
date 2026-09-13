@@ -1,0 +1,55 @@
+name: Quota telemetry
+on:
+  push:
+    branches: [feat/79-quota-telemetry]
+  pull_request:
+    paths:
+      - 'llm_log/quotas*'
+      - 'tests/test_quota*'
+      - '.github/workflows/quota-telemetry.yml'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          path: llm-log
+      - uses: actions/checkout@v5
+        with:
+          repository: lost-rob0t/dotfiles
+          ref: 3e8c001f112d0202fd48ee0a44582ba727cf35d2
+          persist-credentials: false
+          path: dotfiles
+      - uses: actions/checkout@v5
+        with:
+          repository: lost-rob0t/llm-log
+          ref: ac26a689c56b1cf2b6c4999ad012b9bd2ced8497
+          persist-credentials: false
+          path: scheduler
+      - name: Archive exact source inputs (no Git credentials or untracked files)
+        run: |
+          mkdir -p "$RUNNER_TEMP/quota-sources"
+          for repo in llm-log dotfiles scheduler; do
+            git -C "$repo" rev-parse HEAD > "$RUNNER_TEMP/quota-sources/$repo.sha"
+            git -C "$repo" archive --format=tar HEAD > "$RUNNER_TEMP/quota-sources/$repo.tar"
+          done
+      - name: Publish reproducible source inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quota-sources-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/quota-sources/
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install capture runtime test dependencies
+        run: python -m pip install ./llm-log
+      - name: Run quota contracts
+        working-directory: llm-log
+        run: python -m unittest discover -s tests -p 'test_quota*.py' -v
