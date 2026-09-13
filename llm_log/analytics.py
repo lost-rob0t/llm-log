@@ -8,6 +8,8 @@ from typing import Any, Iterable
 
 from aiohttp import web
 
+from .quotas import install_quota_routes
+
 _BUCKET_SECONDS = {"minute": 60, "hour": 3600, "day": 86400}
 
 
@@ -148,6 +150,7 @@ def openapi_document() -> dict[str, Any]:
         "/api/v1/stats/models": {"get": {"summary": "Token totals grouped by provider and model", "parameters": query_parameters, "responses": response}},
         "/api/v1/stats/timeline": {"get": {"summary": "Bucketed token I/O timeline", "parameters": [*query_parameters, {"name": "granularity", "in": "query", "schema": {"type": "string", "enum": list(_BUCKET_SECONDS), "default": "minute"}}], "responses": response}},
     }
+    paths["/api/v1/quotas"] = {"get": {"summary": "Cached provider-reported subscription quotas (localhost only)", "responses": {"200": {"description": "Version 1 quota snapshot; percentages are used, not remaining"}, "403": {"description": "Local clients only"}}}}
     return {"openapi": "3.1.0", "info": {"title": "llm-log analytics API", "version": "1.0.0"}, "paths": paths}
 
 
@@ -169,3 +172,4 @@ def install_analytics_routes(app: web.Application, events_path: Path) -> None:
     app.router.add_get("/api/v1/stats/models", models)
     app.router.add_get("/openapi.json", openapi)
     app.router.add_get("/docs", docs)
+    install_quota_routes(app)
