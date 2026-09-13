@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
+from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
@@ -520,5 +521,6 @@ def build_app(
 
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
+    install_analytics_routes(app, recorder.root / "events.jsonl")
     app.router.add_route("*", "/{provider}/{tail:.*}", proxy)
     return app

@@ -66,6 +66,22 @@ Then point the client at `http://127.0.0.1:8787/ollama/...` or `http://127.0.0.1
 
 Each JSONL row includes event/timing IDs, provider/upstream, method/path/query, redacted headers, complete request bytes, complete response bytes, response status, model when discoverable, latency, SHA-256 hashes, and Prolog classifier labels. Non-UTF-8 bodies are stored as base64.
 
+Provider-reported token counters are normalized as `input_tokens`, `output_tokens`, and `total_tokens`. The extractor recognizes OpenAI/OpenRouter-compatible, Anthropic, Gemini, Cohere, and Ollama JSON fields in regular JSON, SSE, and text WebSocket responses. Missing counters remain `null`; llm-log does not estimate tokens from body size or text.
+
+## Analytics API
+
+The capture service exposes a provider-neutral, read-only analytics API on the same listener:
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /api/v1/stats/summary` | total requests, usage coverage, and aggregate token I/O |
+| `GET /api/v1/stats/timeline?granularity=minute` | exact minute/hour/day buckets for graphs |
+| `GET /api/v1/stats/models` | token totals grouped by provider and model |
+| `GET /openapi.json` | OpenAPI 3.1 contract |
+| `GET /docs` | Swagger UI |
+
+All stats endpoints accept optional RFC 3339 `start` (inclusive), `end` (exclusive), `provider`, and `model` query parameters. The timeline `bucket_seconds` and exact UTC bucket edge let consumers such as the Qtile telemetry widget calculate token rates without maintaining a second provider-specific history database.
+
 The recorder is a single-writer `asyncio.Queue` actor. Concurrent proxy requests can complete in parallel, but only the recorder actor appends corpus/KB records, preventing interleaved file writes.
 
 The initial SWI-Prolog classifier is intentionally coarse (`coding`, `research`, `search`, `writing`, `analysis`, fallback `chat`). It is a seed for an evolving expert system, not training truth.

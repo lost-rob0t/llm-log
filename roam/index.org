@@ -1,0 +1,14 @@
+:PROPERTIES:
+:ID:       672b3c90-68cc-40d4-8185-eacb36428a6c
+:END:
+#+title: llm-log Issues And Solutions
+#+filetags: :llm-log:index:
+
+This graph records reusable engineering problems and their verified solutions.
+
+* Issues
+- [[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
+
+* Solutions
+- [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
+- [[id:b1235424-a592-4aad-afac-f38191614aa1][Background GitHub Actions polling]]

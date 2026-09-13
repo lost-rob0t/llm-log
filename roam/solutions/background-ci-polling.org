@@ -1,0 +1,13 @@
+:PROPERTIES:
+:ID:       b1235424-a592-4aad-afac-f38191614aa1
+:END:
+#+title: Background GitHub Actions polling
+#+filetags: :llm-log:solution:ci:
+
+* Problem
+Waiting synchronously for GitHub Actions prevents an agent from continuing independent work.
+
+* Solution
+Run =scripts/poll-ci.sh --background=. The launcher detaches a bounded poll process and prints its state directory. =status= contains the latest machine-readable state, =poll.log= contains progress, and =pid= identifies the poller.
+
+The foreground mode remains available for automation that should block and inherit success, failure, or timeout as its exit status.

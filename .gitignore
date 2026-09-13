@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 result
 /data/
+/.prolog/facts.kb
+/.prolog/.facts.lock
+/.prolog/result.json
+/.prolog/verify.pl
+/.prolog/runs/

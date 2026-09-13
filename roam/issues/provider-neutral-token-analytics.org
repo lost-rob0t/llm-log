@@ -1,0 +1,17 @@
+:PROPERTIES:
+:ID:       0750164e-ceb8-4415-a660-0ea5f9c19b1f
+:END:
+#+title: Provider-neutral token analytics
+#+filetags: :llm-log:issue:analytics:
+
+* Problem
+Token telemetry was provider-specific and the Qtile OpenRouter widget maintained a separate history database. Captures did not normalize provider-reported input and output counters, so one local API could not truthfully serve totals, model breakdowns, or graph timelines.
+
+* Constraints
+- Preserve unknown usage instead of estimating tokens.
+- Support regular JSON, SSE, and text WebSocket captures.
+- Keep time ranges half-open and timeline buckets UTC-aligned.
+- Let consumers filter by exact provider and model values.
+
+* Resolution
+Implemented by [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]].
