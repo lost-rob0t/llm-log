@@ -1,0 +1,25 @@
+name: Relay socket ownership
+on:
+  push:
+    branches: [fix/74-relay-socket-ownership]
+  pull_request:
+    paths: ['proxy/**', '.github/workflows/relay-ownership.yml']
+permissions:
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Full transport and lifecycle contracts
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          timeout --kill-after=10s 600s nix build -L .#checks.x86_64-linux.llm-log-config-contract

@@ -11,12 +11,9 @@
 ;; verbatim at the octet level so the reason phrase, duplicate headers,
 ;; chunked framing and streaming timing survive.
 ;;
-;; Documented tradeoff (research 012): Woo's output buffers only flush from
-;; the event-loop thread, so the relay thread bypasses them with a blocking
-;; client fd-stream. Woo's read watcher is harmless under Connection: close
-;; semantics; the 15 minute idle-timeout guard is disabled per connection by
-;; marking the woo socket closed after the relay completes.
-;; See research/LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org.
+;; Woo's event loop owns all watchers, timers and the descriptor registry.
+;; Transfer one duplicate descriptor to the blocking relay only after closing
+;; the original Woo socket in its event-loop thread. Workers never touch Woo.
 
 (defparameter +hop-by-hop-headers+
   '("connection" "keep-alive" "proxy-authenticate" "proxy-authorization"
@@ -29,6 +26,11 @@
 upstream and Content-Length is recomputed from the forwarded octets.")
 
 (defparameter +relay-buffer-size+ 65536)
+
+;; The delivered proxy targets Linux (x86_64/aarch64). SB-POSIX 2.6.7 does
+;; not export FD-CLOEXEC. This is Linux's UAPI value, not an SBCL symbol:
+;; include/uapi/asm-generic/fcntl.h: #define FD_CLOEXEC 1.
+(defconstant +linux-fd-cloexec+ 1)
 
 (defstruct proxy-server
   thread config scheduler)
@@ -71,8 +73,6 @@ preserved) is appended to the configured upstream base URL."
              (base (upstream-base-url config provider)))
         (unless base
           (return-from %resolve-provider (values provider nil nil)))
-        ;; origin-form target: path and query only; the authority is
-        ;; carried separately by the Host header
         (values provider
                 (concatenate 'string (subseq rest slash) query)
                 base)))))
@@ -161,7 +161,6 @@ the head, stream all body octets unchanged."
                                           '("connection")))
             (push-head-line line))))
       (push-head-line "Connection: close")
-      ;; blank line terminates the response head
       (vector-push-extend 13 head-bytes)
       (vector-push-extend 10 head-bytes))
     (write-sequence head-bytes client-stream)
@@ -211,18 +210,23 @@ the head, stream all body octets unchanged."
      :headers (list (cons "Retry-After" retry-after)))))
 
 (defun %make-blocking-client-stream (io)
-  "Wrap the Woo client descriptor in a blocking octet fd-stream owned by the
-relay thread. Woo's buffers cannot flush from a foreign thread, so the relay
-bypasses them; the descriptor is closed exactly once, by this stream."
-  (let ((fd (woo.ev.socket::socket-fd io)))
-    (sb-posix:fcntl fd sb-posix:f-setfl
-                    (logandc2 (sb-posix:fcntl fd sb-posix:f-getfl)
-                              sb-posix:o-nonblock))
-    (sb-sys:make-fd-stream fd
-                           :input nil
-                           :output t
-                           :element-type '(unsigned-byte 8)
-                           :buffering :none)))
+  "Detach IO on its owning Woo event loop, returning a relay-owned duplicate."
+  (let ((fd (sb-posix:dup (woo.ev.socket::socket-fd io)))
+        (stream nil))
+    (unwind-protect
+         (progn
+           (sb-posix:fcntl fd sb-posix:f-setfd +linux-fd-cloexec+)
+           ;; Stop watchers/timer and remove the registry entry in its owner.
+           ;; close-socket closes ONLY the original descriptor (not shutdown).
+           (woo.ev.socket:close-socket io)
+           (sb-posix:fcntl fd sb-posix:f-setfl
+                           (logandc2 (sb-posix:fcntl fd sb-posix:f-getfl)
+                                     sb-posix:o-nonblock))
+           (setf stream (sb-sys:make-fd-stream
+                         fd :input nil :output t
+                         :element-type '(unsigned-byte 8) :buffering :none)))
+      (unless stream
+        (ignore-errors (sb-posix:close fd))))))
 
 (defun %request-body-octets (raw-body)
   "Return the request body as an octet vector. Woo provides :raw-body as an
@@ -285,26 +289,31 @@ octet vector or an input stream depending on the build."
 
 (defun %make-proxy-app (config scheduler)
   (lambda (env)
-    (let ((io (getf env :clack.io)))
-      (bt:make-thread
-       (lambda ()
-         (let ((client-stream (%make-blocking-client-stream io)))
-           (unwind-protect
-                (%relay-request
-                 client-stream
-                 config
-                 scheduler
-                 (getf env :request-method)
-                 (getf env :request-uri)
-                 (getf env :headers)
-                 (%request-body-octets (getf env :raw-body)))
-             ;; disable Woo's timeout guard, then close the descriptor
-             ;; exactly once, through the fd-stream
-             (setf (woo.ev.socket::socket-open-p io) nil)
-             (ignore-errors (close client-stream)))))
-       :name "llm-log-relay")
-      (lambda (respond)
-        (declare (ignore respond))))))
+    ;; Snapshot parser-owned data before closing the Woo socket. All libev
+    ;; operations happen here, never in the relay thread.
+    (let* ((method (getf env :request-method))
+           (target (copy-seq (getf env :request-uri)))
+           (headers (make-hash-table :test 'equalp))
+           (body (%request-body-octets (getf env :raw-body)))
+           (stream nil)
+           (transferred nil))
+      (maphash (lambda (key value)
+                 (setf (gethash (copy-seq key) headers)
+                       (if (stringp value) (copy-seq value) value)))
+               (getf env :headers))
+      (setf stream (%make-blocking-client-stream (getf env :clack.io)))
+      (unwind-protect
+           (progn
+             (bt:make-thread
+              (lambda ()
+                (unwind-protect
+                     (%relay-request stream config scheduler method target headers body)
+                  (ignore-errors (close stream))))
+              :name "llm-log-relay")
+             (setf transferred t)
+             (lambda (respond) (declare (ignore respond))))
+        (unless transferred
+          (ignore-errors (close stream)))))))
 
 (defun start-proxy (config)
   "Start the transparent capture proxy for CONFIG; return a proxy-server."
