@@ -1,0 +1,18 @@
+:PROPERTIES:
+:ID:       bb394c6a-af0c-4d87-8a06-85b188d3db53
+:END:
+#+title: Normalized token capture and analytics API
+#+filetags: :llm-log:solution:analytics:
+
+* Solves
+[[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
+
+* Approach
+Normalize authoritative response counters into =input_tokens=, =output_tokens=, and =total_tokens= when recording each event. Extract known OpenAI-compatible, Anthropic, Gemini, Cohere, and Ollama field shapes without depending on provider names. For streamed responses, retain maxima rather than summing cumulative counters.
+
+Expose read-only summary, UTC timeline, and provider/model grouping endpoints from the capture service. Report request coverage separately so records with unknown or partial usage remain visible.
+
+* Verification
+- =tests/test_analytics.py= includes provider-shape, malformed-record, partial-usage, filtering, range, and bucket-boundary contracts.
+- =nix develop -c python -m unittest discover -s tests -v=
+- =nix build -L .#llm-log=
