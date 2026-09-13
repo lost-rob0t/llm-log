@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -156,8 +157,7 @@ class ActorTests(unittest.IsolatedAsyncioTestCase):
     async def test_codex_protocol_handshake_and_account_queries_without_a_turn(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "fake-codex"
-            script.write_text('''#!/usr/bin/env python3
-import json, sys
+            script.write_text('#!' + sys.executable + '\n' + '''import json, sys
 for line in sys.stdin:
     message = json.loads(line)
     method = message['method']
