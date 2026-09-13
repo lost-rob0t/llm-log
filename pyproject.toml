@@ -13,6 +13,7 @@ dependencies = ["aiohttp>=3.10,<4"]
 
 [project.scripts]
 llm-log = "llm_log.cli:main"
+llm-log-quotas = "llm_log.quotas_service:main"
 
 [tool.setuptools.packages.find]
 include = ["llm_log*"]

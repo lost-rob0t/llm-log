@@ -57,6 +57,41 @@ class QuotaContractTests(unittest.TestCase):
         self.assertTrue(window["expired"])
         self.assertEqual(window["used_percent"], 99)
 
+class ZaiSchemaTests(unittest.TestCase):
+    def test_credit_plan_windows_and_millisecond_reset(self):
+        payload = {"code": 200, "success": True, "data": {"planName": "Max", "limits": [
+            {"type": "CREDIT_LIMIT", "unit": 6, "number": 1, "percentage": 73, "nextResetTime": (NOW + 86400) * 1000},
+            {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "percentage": 21, "nextResetTime": (NOW + 3000) * 1000},
+            {"type": "TIME_LIMIT", "unit": 5, "number": 1, "percentage": 5}]}}
+        result = normalize_zai(payload, NOW)
+        self.assertEqual(result["plan"], "Max")
+        self.assertEqual([w["duration_seconds"] for w in result["windows"]], [18000, 604800])
+        self.assertEqual(result["windows"][0]["resets_at"], NOW + 3000)
+        self.assertEqual(len(result["windows"]), 2)
+
+    def test_unknown_units_are_not_assumed_five_hours(self):
+        result = normalize_zai({"success": True, "data": {"limits": [
+            {"type": "TOKENS_LIMIT", "unit": 999, "number": 5, "percentage": 0}]}}, NOW)
+        self.assertIsNone(result["windows"][0]["duration_seconds"])
+        self.assertEqual(result["windows"][0]["used_percent"], 0)
+
+    def test_credits_unlimited_is_not_unlimited_subscription(self):
+        raw = {"rateLimits": {"credits": {"unlimited": True}}}
+        self.assertEqual(normalize_codex(raw, {}, NOW)["windows"], [])
+
+    def test_malformed_or_oversized_zai_limits_rejected(self):
+        for data in ({"success": False}, {"success": True, "data": {"limits": [None]}},
+                     {"success": True, "data": {"limits": [{}] * 65}}):
+            with self.assertRaises(ValueError):
+                normalize_zai(data, NOW)
+
+    def test_implausible_reset_does_not_alter_usage(self):
+        result = normalize_zai({"success": True, "data": {"limits": [
+            {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 42,
+             "nextResetTime": (NOW + 36000) * 1000}]}}, NOW)
+        self.assertIsNone(result["windows"][0]["resets_at"])
+        self.assertEqual(result["windows"][0]["used_percent"], 42)
+
 
 if __name__ == "__main__":
     unittest.main()
