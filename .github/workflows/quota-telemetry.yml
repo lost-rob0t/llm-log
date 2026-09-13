@@ -1,0 +1,36 @@
+name: Quota telemetry
+on:
+  push:
+    branches: [feat/79-quota-telemetry]
+  pull_request:
+    paths: ['llm_log/quotas*', 'tests/test_quota*', 'pyproject.toml', 'nix/home-manager.nix', 'nix/tests/home-manager-expert.nix', '.github/workflows/quota-telemetry.yml']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Exact-head package and full Python contracts
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          nix build -L .#llm-log
+          result/bin/llm-log-quotas --help
+      - name: Parse Home Manager module
+        run: nix-instantiate --parse nix/home-manager.nix >/dev/null
+      - name: Evaluate proxy, expert and quota Home Manager contract
+        run: |
+          nix build -L --impure --expr '
+            let flake = builtins.getFlake (toString ./.);
+                pkgs = import flake.inputs.nixpkgs { system = "x86_64-linux"; };
+            in import ./nix/tests/home-manager-expert.nix {
+              self = flake; inherit pkgs; lib = pkgs.lib;
+            }'

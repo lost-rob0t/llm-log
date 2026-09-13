@@ -12,3 +12,6 @@ This graph records reusable engineering problems and their verified solutions.
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
 - [[id:b1235424-a592-4aad-afac-f38191614aa1][Background GitHub Actions polling]]
+
+* Subscription quota telemetry
+- [[id:llm-log-provider-quota-telemetry][Provider quota telemetry and desktop consumers]]

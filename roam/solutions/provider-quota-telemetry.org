@@ -1,0 +1,63 @@
+#+title: Provider quota telemetry and desktop consumers
+:PROPERTIES:
+:ID: llm-log-provider-quota-telemetry
+:END:
+
+* Contract
+Issue #79. Subscription quotas are not captured tokens, API spend, or local
+request-start rate admission. Keep those three accounting domains separate.
+Use reported percentages, durations, reset times and plan labels. Never infer
+an entitlement from a plan name, missing quota, purchased credits or HTTP 200.
+
+* Sources
+- Codex App Server account/read and account/rateLimits/read:
+  https://developers.openai.com/codex/app-server
+  Supports primary/secondary windows and rateLimitsByLimitId. Resets are Unix
+  seconds. The scope is Codex through ChatGPT authentication, not all ChatGPT
+  web, voice or model quotas. No thread or model turn is started by a read.
+- Official z.AI quota endpoint and authorization:
+  https://github.com/zai-org/zai-coding-plugins/blob/0446d0bb0bc537d97d3ab3664c4b8b9c4a0e1254/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs
+- Credit/window protocol mapping observed in the original CodexBar parser:
+  https://github.com/steipete/CodexBar/blob/d394565751ab6b3c27f0c9c1e7879647ac5d029d/Sources/CodexBarCore/Resources/Plugins/zai.js
+  Numeric units: 1 day, 3 hour, 5 minute, 6 week; nextResetTime is Unix ms.
+  TOKENS_LIMIT/CREDIT_LIMIT are coding windows; TIME_LIMIT is separate MCP.
+  This mapping is an implementation observation, not a published z.AI schema
+  guarantee. Unknown shapes remain unavailable. Retain regression fixtures.
+
+* Architecture
+Provider poll tasks -> bounded asyncio.Queue -> one QuotaActor -> atomic
+0600 JSON snapshot and a cached read-only HTTP API. Only the actor mutates
+provider state. Provider outages preserve the last observation but mark it
+stale. Advancing past a reset never guesses that usage is now zero.
+
+The quota service is a separately supervised llm-log entrypoint, usable with
+the Python capture service and the experimental Lisp forwarding runtime.
+Neither a widget poll nor an API GET makes a provider request. API binds only
+127.0.0.1 and rejects browser origins/unrecognized Host names. Credentials
+never appear in public snapshots, errors, notifications or Qtile configuration.
+
+* Operation
+Run =llm-log-quotas= after =codex login=. Set =Z_AI_API_KEY= or provide a
+=--zai-key-file= absolute local path. Do not put credentials in Git/Nix values.
+The endpoint is =http://127.0.0.1:8788/api/v1/quotas=; snapshot defaults to
+=XDG_CACHE_HOME/llm-log/quotas.json= or =~/.cache/llm-log/quotas.json=.
+Home Manager offers =services.llm-log.quotas= with enable, port, package,
+codexPackage, refreshSeconds, cacheFile, codexHome, zaiKeyFile and optional
+environmentFile. Runtime key-file paths are strings, not Nix store paths.
+The optional environment file may contain =Z_AI_API_KEY=; no file is generated
+with a secret value. Logout/unsupported login appears as unavailable, not 0%.
+
+* Desktop semantics
+Qtile consumes the same versioned snapshot. =z.AI= and =GPT= rotate actual
+windows every five seconds. Percent USED: green <70, yellow >=70, red >=90.
+Unknown/stale/expired observations are neutral, not misleading green. Plan
+names are metadata, including Pro, Plus, enterprise or future labels; no
+fixed capacity table. Multiple GPT meter IDs are retained, never double-counted.
+
+* Verification
+Executed local RED: imports of missing llm_log.quotas failed before runtime
+implementation. Local provider/adversarial, actor/cache/API and real subprocess
+handshake tests passed after implementation. They use fake provider responses;
+no real subscription credential or live host was available for verification.
+The Nix package check runs the full Python suite with SWI-Prolog. Live account
+retrieval and user-host Home Manager activation remain separate deployment gates.
