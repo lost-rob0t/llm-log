@@ -19,12 +19,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           path: llm-log
-      - uses: actions/checkout@v5
-        with:
-          repository: lost-rob0t/dotfiles
-          ref: 3e8c001f112d0202fd48ee0a44582ba727cf35d2
-          persist-credentials: false
-          path: dotfiles
+      - name: Fetch pinned public consumer sources without gitlink checkout
+        run: |
+          git init dotfiles
+          git -C dotfiles remote add origin https://github.com/lost-rob0t/dotfiles
+          git -C dotfiles fetch --depth=1 origin 3e8c001f112d0202fd48ee0a44582ba727cf35d2
+          git -C dotfiles update-ref HEAD FETCH_HEAD
       - uses: actions/checkout@v5
         with:
           repository: lost-rob0t/llm-log
