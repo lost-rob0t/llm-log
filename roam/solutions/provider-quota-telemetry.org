@@ -1,0 +1,55 @@
+:PROPERTIES:
+:ID: llm-log-provider-quota-telemetry
+:END:
+#+title: Provider-reported quota telemetry for adjacent Qtile meters
+
+* Contract and ownership
+Issue: https://github.com/lost-rob0t/llm-log/issues/79
+Consumer: https://github.com/lost-rob0t/dotfiles/issues/233
+
+=GET /api/v1/quotas= is a versioned, local-only, read-only snapshot API.
+=used_percent= means USED, not remaining. Quotas, captured tokens, and local
+scheduler admission are separate domains. A plan name never determines a cap.
+The single asyncio actor owns provider snapshots; reads do not trigger polling.
+Polls are bounded, default to once a minute, and preserve provider Retry-After.
+No credentials, emails, raw responses or raw exceptions are published.
+Absent or invalid usage is not zero. A passed reset time becomes expired, not
+an invented fresh quota. =credits.unlimited= does not mean unlimited requests.
+
+* Enable in the Python capture service
+Set =LLM_LOG_QUOTAS_ENABLED= to =1= in the service environment and restart the
+Python =llm-log serve= capture service. This adds quotas alongside its existing
+=/api/v1/stats/*= endpoints. The separate =llm-log-cl= forwarding executable does
+not expose these Python APIs. This change does not deploy/restart a live host.
+
+For z.AI, set =LLM_LOG_ZAI_KEY_FILE= to an owner-only (0600) file containing the
+account API key, or supply =ZAI_API_KEY= in the private service environment.
+For GPT, =codex= must be on the service PATH and already signed in using managed
+ChatGPT authentication. =LLM_LOG_CODEX_BIN= may specify its absolute executable.
+The collector uses account queries only: no thread, turn, prompt, or login flow.
+=LLM_LOG_QUOTA_SNAPSHOT= optionally names a sanitized atomic 0600 cache file.
+No secrets belong in Git, widget configuration, URLs, or notification bodies.
+
+* Source-verified wire contracts
+- OpenAI App Server: https://developers.openai.com/codex/app-server
+  =account/read= supplies plan metadata; =account/rateLimits/read= supplies
+  =rateLimitsByLimitId= or the legacy single bucket, =usedPercent=,
+  =windowDurationMins= and epoch-second =resetsAt=. Meter IDs are preserved;
+  a =codex= meter is not all ChatGPT web, voice, or model usage.
+- Official Z.ai usage plugin, commit =0446d0bb0bc537d97d3ab3664c4b8b9c4a0e1254=:
+  https://github.com/zai-org/zai-coding-plugins/blob/0446d0bb0bc537d97d3ab3664c4b8b9c4a0e1254/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs
+  Verifies GET =https://api.z.ai/api/monitor/usage/quota/limit=, literal
+  Authorization API key and =data.limits[].percentage=. Legacy TOKENS_LIMIT
+  is five-hour usage; TIME_LIMIT is monthly MCP usage.
+- Weekly-period implementation cross-check (not a provider API specification):
+  https://github.com/guyinwonder168/opencode-glm-quota/blob/f31d4f250c792b293c2a8812955e569efd96277f/src/utils/token-limits.ts
+  =(unit=3, number=5)= is five hours; =(unit=6, number=1)= is weekly. Unknown
+  combinations remain =period?= rather than guessing by array order or quota.
+  A live account response has not been verified in this editing environment.
+
+* Verification boundary
+Fourteen new tests executed locally with Python 3.13 and aiohttp 3.13.3,
+including a real loopback HTTP API and an actual fake Codex subprocess exchange.
+Tests were written and executed before implementation (missing-module RED).
+These are not live-provider tests, a running-Qtile smoke test, a Nix build,
+or proof that the separate Common Lisp transport blocker is repaired.
