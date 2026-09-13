@@ -1,0 +1,28 @@
+#+title: Relay descriptor ownership repair
+#+filetags: :llm-log:transport:issue-74:
+
+* Observed failure
+Parent ac26a689c56b1cf2b6c4999ad012b9bd2ced8497 failed full transport run
+34715742893 after its first HTTP test: a long stall then a Woo callback
+TYPE-ERROR (NIL is not WOO.EV.SOCKET:SOCKET). Pure scheduler green did not
+certify this transport.
+
+* Ownership correction
+The old worker closed Woo's descriptor and manually set socket-open-p to NIL,
+leaving live libev watchers, timeout state and a registry entry. Duplicate the
+descriptor and close-socket the original in the event-loop owner before giving
+the duplicate to a blocking worker. Snapshot parser-owned headers/body first.
+The duplicate retains the TCP connection; close-socket closes, not shuts down,
+the original descriptor. A failed handoff closes the duplicate. Workers never
+mutate Woo state.
+
+* Verification boundary
+Lifecycle regressions are committed before this repair. The full real-socket
+suite remains mandatory, including binary bodies, duplicate response headers,
+SSE, backpressure and repeated descriptor reuse/restarts. The workflow checks
+out the exact requested head, has a bounded timeout and never substitutes a
+partial policy result for transport green. No live deployment claim.
+
+* Source
+- https://github.com/fukamachi/woo/blob/master/src/ev/socket.lisp
+- https://github.com/fukamachi/woo/blob/master/src/woo.lisp

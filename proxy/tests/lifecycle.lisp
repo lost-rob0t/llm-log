@@ -1,8 +1,6 @@
 (in-package #:llm-log/tests)
 
-;; A relay must detach Woo's watchers/registry in the event-loop thread before
-;; its descriptor can be closed or recycled by a worker. Reuse the real socket
-;; fixtures; neither the acceptor nor the upstream relay is substituted.
+;; Exercise real sockets, descriptor reuse, and repeated event-loop teardown.
 (deftest repeated-relays-and-server-restarts-retain-socket-ownership
   (dotimes (cycle 3)
     (with-fixture-proxy (proxy upstream)
