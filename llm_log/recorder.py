@@ -85,6 +85,97 @@ def _model(request_body: bytes) -> str | None:
     return None
 
 
+_INPUT_TOKEN_KEYS = (
+    "input_tokens",
+    "prompt_tokens",
+    "promptTokenCount",
+    "inputTokens",
+    "prompt_eval_count",
+)
+_OUTPUT_TOKEN_KEYS = (
+    "output_tokens",
+    "completion_tokens",
+    "candidatesTokenCount",
+    "outputTokens",
+    "eval_count",
+)
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _json_documents(raw: bytes) -> list[Any]:
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    documents: list[Any] = []
+    try:
+        documents.append(json.loads(decoded))
+    except json.JSONDecodeError:
+        pass
+    for line in decoded.splitlines():
+        payload = line.strip()
+        if payload.startswith("data:"):
+            payload = payload[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            value = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("type") == "text":
+            text = value.get("text")
+            if isinstance(text, str):
+                try:
+                    documents.append(json.loads(text))
+                except json.JSONDecodeError:
+                    pass
+        else:
+            documents.append(value)
+    return documents
+
+
+def _token_candidates(value: Any) -> list[tuple[int | None, int | None]]:
+    candidates: list[tuple[int | None, int | None]] = []
+    if isinstance(value, dict):
+        incoming = next(
+            (_nonnegative_int(value[key]) for key in _INPUT_TOKEN_KEYS if key in value),
+            None,
+        )
+        outgoing = next(
+            (_nonnegative_int(value[key]) for key in _OUTPUT_TOKEN_KEYS if key in value),
+            None,
+        )
+        if incoming is not None or outgoing is not None:
+            candidates.append((incoming, outgoing))
+        for child in value.values():
+            candidates.extend(_token_candidates(child))
+    elif isinstance(value, list):
+        for child in value:
+            candidates.extend(_token_candidates(child))
+    return candidates
+
+
+def token_usage(response_body: bytes) -> tuple[int | None, int | None]:
+    """Extract authoritative token counters from JSON, SSE, or WS payloads."""
+    candidates = [
+        candidate
+        for document in _json_documents(response_body)
+        for candidate in _token_candidates(document)
+    ]
+    incoming = [value for value, _ in candidates if value is not None]
+    outgoing = [value for _, value in candidates if value is not None]
+    return (max(incoming) if incoming else None, max(outgoing) if outgoing else None)
+
+
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -150,6 +241,9 @@ class CaptureEvent:
     response_sha256: str
     intents: list[str]
     transport: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
     @classmethod
     def from_bytes(
@@ -172,6 +266,12 @@ class CaptureEvent:
         intents: Sequence[str] = (),
         transport: str = "http",
     ) -> "CaptureEvent":
+        input_tokens, output_tokens = token_usage(response_body)
+        total_tokens = (
+            input_tokens + output_tokens
+            if input_tokens is not None and output_tokens is not None
+            else None
+        )
         return cls(
             event_id=event_id,
             provider=provider,
@@ -192,6 +292,9 @@ class CaptureEvent:
             response_sha256=_sha256(response_body),
             intents=sorted(set(intents)),
             transport=transport,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -220,7 +323,15 @@ class CaptureEvent:
             f"intent({_prolog_atom(self.event_id)}, {_intent_atom(label)}).\n"
             for label in self.intents
         )
-        return fact + transport + intents
+        usage = ""
+        if self.input_tokens is not None or self.output_tokens is not None:
+            input_tokens = "null" if self.input_tokens is None else self.input_tokens
+            output_tokens = "null" if self.output_tokens is None else self.output_tokens
+            usage = (
+                f"token_usage({_prolog_atom(self.event_id)}, {input_tokens}, "
+                f"{output_tokens}).\n"
+            )
+        return fact + transport + usage + intents
 
 
 class RecorderActor:

@@ -1,0 +1,57 @@
+name: Analytics API
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/stats-analytics-api
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Python regression suite
+        run: nix develop --command python -m unittest discover -s tests -v
+
+      - name: Run adversarial analytics contract
+        run: nix develop --command python -m unittest tests.test_analytics -v
+
+  package:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build package
+        run: nix build -L .#llm-log
+
+      - name: Archive package closure
+        run: tar --dereference -czf "$RUNNER_TEMP/llm-log-${GITHUB_SHA}.tar.gz" result
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: llm-log-${{ github.sha }}
+          path: ${{ runner.temp }}/llm-log-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
