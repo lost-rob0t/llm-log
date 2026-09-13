@@ -27,6 +27,11 @@ upstream and Content-Length is recomputed from the forwarded octets.")
 
 (defparameter +relay-buffer-size+ 65536)
 
+;; The delivered proxy targets Linux (x86_64/aarch64). SB-POSIX 2.6.7 does
+;; not export FD-CLOEXEC. This is Linux's UAPI value, not an SBCL symbol:
+;; include/uapi/asm-generic/fcntl.h: #define FD_CLOEXEC 1.
+(defconstant +linux-fd-cloexec+ 1)
+
 (defstruct proxy-server
   thread config scheduler)
 
@@ -210,7 +215,7 @@ the head, stream all body octets unchanged."
         (stream nil))
     (unwind-protect
          (progn
-           (sb-posix:fcntl fd sb-posix:f-setfd sb-posix:fd-cloexec)
+           (sb-posix:fcntl fd sb-posix:f-setfd +linux-fd-cloexec+)
            ;; Stop watchers/timer and remove the registry entry in its owner.
            ;; close-socket closes ONLY the original descriptor (not shutdown).
            (woo.ev.socket:close-socket io)
