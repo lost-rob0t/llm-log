@@ -101,15 +101,19 @@
             (let ((io (getf env :clack.io)))
               (bt:make-thread
                (lambda ()
-                 (let ((client-stream (%make-blocking-client-stream io)))
+                 (let ((client-stream (%make-blocking-client-stream io))
+                       (event nil))
                    (unwind-protect
-                        (%relay-request
-                         client-stream config infill-worker
-                         (getf env :request-method)
-                         uri
-                         (getf env :headers)
-                         (%request-body-octets (getf env :raw-body)))
+                        (setf event
+                              (%relay-request
+                               client-stream config
+                               (getf env :request-method)
+                               uri
+                               (getf env :headers)
+                               (%request-body-octets (getf env :raw-body))))
                      (setf (woo.ev.socket::socket-open-p io) nil)
-                     (ignore-errors (close client-stream)))))
+                     (ignore-errors (close client-stream)))
+                   (when event
+                     (%persist-and-queue-capture config infill-worker event))))
                :name "llm-log-relay")
               (lambda (respond) (declare (ignore respond)))))))))
