@@ -70,6 +70,7 @@
               expertLib
               cl.clop
               cl.clack
+              cl.clack-handler-hunchentoot
               cl.hunchentoot
               cl.usocket
               cl.quri
