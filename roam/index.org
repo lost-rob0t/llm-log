@@ -9,8 +9,10 @@ This graph records reusable engineering problems and their verified solutions.
 * Issues
 - [[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
 - [[id:llm-log-subscription-quota-observation][Subscription quota observation is not token accounting]]
+- [[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
 
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
 - [[id:b1235424-a592-4aad-afac-f38191614aa1][Background GitHub Actions polling]]
 - [[id:llm-log-provider-quota-telemetry][Provider-reported quota telemetry for adjacent Qtile meters]]
+- [[id:llm-log-historical-expert-corpus-replay][Replay immutable captures through the single live expert owner]]

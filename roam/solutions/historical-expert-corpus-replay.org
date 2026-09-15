@@ -1,0 +1,25 @@
+:PROPERTIES:
+:ID:       llm-log-historical-expert-corpus-replay
+:END:
+#+title: Replay immutable captures through the single live expert owner
+#+filetags: :llm-log:solution:expert:backfill:dataset:
+
+* Resolves
+[[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
+
+* Solution
+Keep =events.jsonl= immutable and replay historical rows through the same finite expert operations used by live ingest. Reuse stable capture IDs, checkpoint only a contiguous successful prefix, and persist request usage independently when historical rows have no task/pricing context.
+
+Keep the proxy-owned Common Lisp child as the only live Tek9 owner. Operator query/backfill traffic goes through a literal-loopback maintenance listener; direct second-process database access is not a maintenance mechanism.
+
+For corpus export, keep each expert query bounded and paginate through an outcome/assertion composite index. Join request-scoped expert examples back to the exact raw capture only after expert selection, and hash both source and export in the manifest.
+
+* Invariants
+- transport success is not task success;
+- missing usage/task/pricing facts remain unknown rather than estimated;
+- replay is idempotent or conflicts explicitly;
+- pagination must advance or fail, never silently truncate;
+- exported labels retain expert rule/evidence provenance and raw-source identity.
+
+* Verification
+Verified by [[../../evidence/LLM-LOG-EVIDENCE-048-historical-corpus-backfill-green.org][LLM-LOG-EVIDENCE-048]].

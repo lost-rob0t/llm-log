@@ -14,14 +14,27 @@ _ALLOWED_OPERATIONS = frozenset(
         "observe_response",
         "observe_usage",
         "query_classification",
+        "query_classification_history",
         "query_task",
         "query_outcome",
         "query_rewrite",
+        "account_task_usage",
+        "query_task_accounting",
+        "record_outcome_evidence",
+        "query_outcome_history",
+        "query_outcome_dataset",
         "health",
     }
 )
 _OBSERVATION_OPERATIONS = frozenset(
-    {"observe_user_message", "observe_request", "observe_response", "observe_usage"}
+    {
+        "observe_user_message",
+        "observe_request",
+        "observe_response",
+        "observe_usage",
+        "record_outcome_evidence",
+        "account_task_usage",
+    }
 )
 
 

@@ -7,6 +7,8 @@ from aiohttp import web
 
 from .classifier import PrologClassifier
 from .expert_adapter import SubprocessExpertPlane
+from .expert_admin import install_expert_admin_listener
+from .expert_cli import add_expert_subcommands, run as run_expert_command
 from .proxy import build_app
 from .recorder import RecorderActor
 
@@ -29,6 +31,7 @@ def _upstream(value: str) -> tuple[str, str]:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="llm-log")
     sub = root.add_subparsers(dest="command", required=True)
+
     serve = sub.add_parser("serve", help="run the transparent capture proxy")
     serve.add_argument("--listen", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8787)
@@ -52,14 +55,23 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fail closed when the configured expert plane is unavailable",
     )
+    serve.add_argument(
+        "--expert-admin-listen",
+        default="127.0.0.1",
+        help="literal loopback address for expert maintenance API",
+    )
+    serve.add_argument(
+        "--expert-admin-port",
+        type=int,
+        default=8788,
+        help="loopback expert maintenance port; 0 disables it",
+    )
+
+    add_expert_subcommands(sub)
     return root
 
 
-def main() -> None:
-    args = parser().parse_args()
-    if args.command != "serve":
-        raise SystemExit(2)
-
+def _serve(args: argparse.Namespace) -> None:
     upstreams = dict(args.upstream) if args.upstream else _DEFAULT_UPSTREAMS
     recorder = RecorderActor(args.log_dir)
     classifier = None if args.no_prolog_classifier else PrologClassifier()
@@ -76,7 +88,24 @@ def main() -> None:
         expert_plane=expert_plane,
         require_expert_plane=args.require_expert_plane,
     )
+    if expert_plane is not None:
+        install_expert_admin_listener(
+            app,
+            expert_plane,
+            listen=args.expert_admin_listen,
+            port=args.expert_admin_port,
+        )
     web.run_app(app, host=args.listen, port=args.port)
+
+
+def main() -> None:
+    args = parser().parse_args()
+    if args.command == "serve":
+        _serve(args)
+        return
+    if args.command == "expert":
+        raise SystemExit(run_expert_command(args))
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,15 @@
 name: Expert plane contracts
 
 on:
+  pull_request:
+    paths:
+      - "expert/**"
+      - "llm_log/expert_*.py"
+      - "llm_log/cli.py"
+      - "nix/tests/home-manager-expert.nix"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/common-lisp-transport-red.yml"
   push:
     branches:
       - rage/10-expert-runtime-red
@@ -42,7 +51,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The RED contract must fail on product behavior, never fixture syntax.
           nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract \
             2>&1 | tee "$RUNNER_TEMP/common-lisp-expert.log"
 
@@ -66,7 +74,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Execute Python proxy expert-policy, adapter, transport lifecycle, and launch contracts
+      - name: Execute Python expert-policy, adapter, maintenance, and transport contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -75,6 +83,9 @@ jobs:
             tests.test_expert_adapter \
             tests.test_expert_transport_lifecycle \
             tests.test_expert_launch_config \
+            tests.test_expert_backfill \
+            tests.test_expert_admin \
+            tests.test_expert_cli \
             -v 2>&1 | tee "$RUNNER_TEMP/python-expert-policy.log"
 
       - name: Preserve Python contract log
