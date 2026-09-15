@@ -14,7 +14,7 @@ packaging/operations glue.
 * Runtime topology
 #+begin_example
 LLM client
-  -> CL/Woo transparent proxy
+  -> CL / Clack / Hunchentoot transparent streaming proxy
      -> upstream provider
      -> append events.jsonl
      -> direct in-process ingest-capture-event
@@ -22,6 +22,11 @@ LLM client
         -> SWI-Prolog
         -> durable analytics aggregates
 #+end_example
+
+Hunchentoot owns downstream client sockets and request threads. The proxy never
+wraps or closes server-owned file descriptors. Provider response framing is
+decoded in Common Lisp and streamed through Clack's delayed-response writer while
+body bytes are tee'd into immutable capture evidence.
 
 No local expert operation traverses HTTP or a subprocess protocol.
 
@@ -38,8 +43,8 @@ checkpoint; stable IDs make this safe.
 ** Infill
 =llm-log infill= requires the bulk-load checkpoint and seeks directly to its
 byte offset. It processes only appended records. Live capture performs the same
-projection in-process immediately after the raw JSONL append; manual infill is
-crash/catch-up recovery.
+projection in-process after the raw JSONL append through one serialized Common
+Lisp infill worker; manual infill is crash/catch-up recovery.
 
 * Analytics
 The old implementation rescanned raw JSONL to answer API queries. That does not
@@ -61,8 +66,9 @@ deployment boundary rather than an internal architecture boundary:
 llm-log-expert serve --http --listen ADDR --port PORT --data-dir DIR
 #+end_example
 
-Woo serves the typed versioned expert protocol. A bounded batch endpoint exists
-for remote use. Local bulk-load and local infill never use it.
+Woo serves this separate, bounded Common Lisp RPC surface. A bounded batch
+endpoint exists for remote use. Non-loopback binds require an explicit bearer
+token. Local live infill, bulk-load, and manual infill never use this transport.
 
 * Language invariant
 CI fails if a tracked =*.py= file or =pyproject.toml= appears. Embedded Prolog
@@ -70,7 +76,7 @@ rules are marked as vendored for GitHub language accounting so the repository's
 visible implementation languages remain Common Lisp plus Nix/shell glue.
 
 * Verification requirements
-- Common Lisp proxy/runtime Rove suite;
+- Common Lisp proxy/runtime Rove suite, including incremental chunk streaming;
 - Common Lisp/Tek9/SWI integration suite;
 - bulk-load -> restart -> infill regression;
 - delivered Nix package build;
