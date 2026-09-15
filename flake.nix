@@ -69,7 +69,8 @@
             lispLibs = [
               expertLib
               cl.clop
-              cl.woo
+              cl.clack
+              cl.hunchentoot
               cl.usocket
               cl.quri
               cl.cl_plus_ssl
