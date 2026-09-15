@@ -136,30 +136,32 @@ committed records; stable projection IDs make that replay idempotent."
         (when (and (plusp limit) (>= replayed limit)) (return))
         (multiple-value-bind (bytes start end) (%read-jsonl-octets stream)
           (unless bytes (return))
-          (when (zerop (length bytes))
-            (setf last-good-offset end)
-            (loop-finish))
-          (incf seen)
-          (let* ((event (%parse-jsonl-octets bytes source start))
-                 (event-id (%capture-required-string event "event_id")))
-            (unless dry-run
-              (let ((result (ingest-capture-event
-                             host event
-                             :record-transport-evidence record-transport-evidence)))
-                (incf classified (if (jsown:val-safe result "classified") 1 0))
-                (incf usage-projected (if (jsown:val-safe result "usage_projected") 1 0))
-                (incf transport-outcomes
-                      (if (jsown:val-safe result "transport_outcome") 1 0))))
-            (incf replayed)
-            (setf last-event-id event-id
-                  last-good-offset end)
-            (incf since-checkpoint)
-            (when (and (not dry-run)
-                       (>= since-checkpoint checkpoint-every))
-              (%write-corpus-checkpoint checkpoint source fingerprint
-                                        last-good-offset last-event-id
-                                        record-transport-evidence)
-              (setf since-checkpoint 0))))))
+          (if (zerop (length bytes))
+              ;; Blank JSONL lines are harmless. Advance the source offset and
+              ;; continue rather than terminating the corpus scan.
+              (setf last-good-offset end)
+              (progn
+                (incf seen)
+                (let* ((event (%parse-jsonl-octets bytes source start))
+                       (event-id (%capture-required-string event "event_id")))
+                  (unless dry-run
+                    (let ((result (ingest-capture-event
+                                   host event
+                                   :record-transport-evidence record-transport-evidence)))
+                      (incf classified (if (jsown:val-safe result "classified") 1 0))
+                      (incf usage-projected (if (jsown:val-safe result "usage_projected") 1 0))
+                      (incf transport-outcomes
+                            (if (jsown:val-safe result "transport_outcome") 1 0))))
+                  (incf replayed)
+                  (setf last-event-id event-id
+                        last-good-offset end)
+                  (incf since-checkpoint)
+                  (when (and (not dry-run)
+                             (>= since-checkpoint checkpoint-every))
+                    (%write-corpus-checkpoint checkpoint source fingerprint
+                                              last-good-offset last-event-id
+                                              record-transport-evidence)
+                    (setf since-checkpoint 0))))))))
     (when (and (not dry-run) last-event-id)
       (%write-corpus-checkpoint checkpoint source fingerprint
                                 last-good-offset last-event-id
