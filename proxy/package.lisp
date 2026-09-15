@@ -3,9 +3,9 @@
 (uiop:define-package #:llm-log
   (:use #:cl)
   (:export
-   ;; configuration surface (zero-Python rewrite slice 1)
    #:runtime-config
    #:runtime-config-data-directory
+   #:runtime-config-expert-data-directory
    #:runtime-config-listen-address
    #:runtime-config-port
    #:runtime-config-upstreams
@@ -21,11 +21,13 @@
    #:load-config-file
    #:resolve-config
    #:parse-serve-arguments
-   ;; transport surface (zero-Python rewrite slice 2)
+   #:make-capture-event
+   #:append-capture-event
    #:start-proxy
    #:stop-proxy
    #:proxy-server
    #:proxy-server-thread
    #:proxy-server-config
-   ;; CLI entry point
+   #:start-quota-collector
+   #:stop-quota-collector
    #:main))

@@ -1,5 +1,5 @@
 {
-  description = "Transparent LLM capture proxy with a Prolog sidecar KB";
+  description = "All-Common-Lisp transparent LLM capture, analytics, and symbolic expert runtime";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -19,66 +19,84 @@
         let
           pkgs = import nixpkgs { inherit system; };
           cl = pkgs.sbcl.pkgs;
-          llmLog = pkgs.callPackage ./nix/package.nix { };
           tek9Package = tek9.packages.${system}.tek9;
+
           expertLib = pkgs.sbcl.buildASDFSystem {
             pname = "llm-log-expert";
-            version = "0.1.0";
+            version = "0.2.0";
             src = ./expert;
             systems = [ "llm-log-expert" ];
-            lispLibs = [ tek9Package cl.jsown ];
+            lispLibs = [
+              tek9Package
+              cl.jsown
+              cl.woo
+              cl.bordeaux-threads
+              cl.trivial-utf-8
+              cl.ironclad
+            ];
           };
+
           sbclWithExpert = pkgs.sbcl.withPackages (_: [ expertLib ]);
-          # Precompiled SBCL core: loading the ASDF system per process costs
-          # ~1.3s, which blows the bounded first-RPC reply deadline. Save the
-          # fully loaded runtime as a core at build time so the packaged
-          # executable boots in a fraction of a second.
           expertCore = pkgs.runCommand "llm-log-expert-core" {
             nativeBuildInputs = [ sbclWithExpert ];
           } ''
             export HOME="$TMPDIR/home"
-            mkdir -p "$HOME"
-            mkdir -p "$out/lib"
+            mkdir -p "$HOME" "$out/lib"
             sbcl --noinform --non-interactive \
               --eval '(require :asdf)' \
               --eval '(asdf:load-system :llm-log-expert)' \
               --eval "(sb-ext:save-lisp-and-die \"$out/lib/llm-log-expert.core\")"
           '';
+
           expertService = pkgs.writeShellApplication {
             name = "llm-log-expert";
             runtimeInputs = [ sbclWithExpert pkgs.swi-prolog ];
             text = ''
               : "''${LLM_LOG_PROLOG_WORKER:=${./expert/prolog/worker.pl}}"
               export LLM_LOG_PROLOG_WORKER
-              exec sbcl --noinform --core ${expertCore}/lib/llm-log-expert.core --no-sysinit --no-userinit --non-interactive \
+              exec sbcl --noinform --core ${expertCore}/lib/llm-log-expert.core \
+                --no-sysinit --no-userinit --non-interactive \
                 --eval '(uiop:quit (llm-log-expert:main (uiop:command-line-arguments)))' \
                 "$@"
             '';
           };
-          # Common Lisp runtime (zero-Python rewrite, research 012). The
-          # wrapper-provided ASDF must be loaded before require :asdf in every
-          # Nix-run entrypoint, see research/LLM-LOG-RESEARCH-012.
-          llmLogClLib = pkgs.sbcl.buildASDFSystem {
+
+          llmLogLib = pkgs.sbcl.buildASDFSystem {
             pname = "llm-log";
-            version = "0.1.0";
+            version = "0.2.0";
             src = ./proxy;
             systems = [ "llm-log" ];
-            lispLibs = with cl; [ clop woo usocket quri cl_plus_ssl
-                                  bordeaux-threads trivial-utf-8 ];
+            lispLibs = [
+              expertLib
+              cl.clop
+              cl.woo
+              cl.usocket
+              cl.quri
+              cl.cl_plus_ssl
+              cl.bordeaux-threads
+              cl.trivial-utf-8
+              cl.jsown
+              cl.ironclad
+            ];
           };
-          llmLogClTests = pkgs.sbcl.buildASDFSystem {
+
+          llmLogTests = pkgs.sbcl.buildASDFSystem {
             pname = "llm-log-tests";
-            version = "0.1.0";
+            version = "0.2.0";
             src = ./proxy;
             systems = [ "llm-log-tests" ];
-            lispLibs = [ llmLogClLib cl.rove cl.bordeaux-threads cl.usocket ];
+            lispLibs = [ llmLogLib cl.rove cl.bordeaux-threads cl.usocket ];
           };
-          sbclWithClTests = pkgs.sbcl.withPackages (_: [ llmLogClTests ]);
-          sbclWithClRuntime = pkgs.sbcl.withPackages (_: [ llmLogClLib ]);
-          llmLogCl = pkgs.writeShellApplication {
+
+          sbclWithRuntime = pkgs.sbcl.withPackages (_: [ llmLogLib ]);
+          sbclWithTests = pkgs.sbcl.withPackages (_: [ llmLogTests ]);
+
+          llmLog = pkgs.writeShellApplication {
             name = "llm-log";
-            runtimeInputs = [ sbclWithClRuntime ];
+            runtimeInputs = [ sbclWithRuntime pkgs.swi-prolog ];
             text = ''
+              : "''${LLM_LOG_PROLOG_WORKER:=${./expert/prolog/worker.pl}}"
+              export LLM_LOG_PROLOG_WORKER
               exec sbcl --noinform --no-userinit --no-sysinit --non-interactive \
                 --load ${./proxy/entrypoint.lisp} "$@"
             '';
@@ -87,14 +105,11 @@
         {
           default = llmLog;
           llm-log = llmLog;
+          llm-log-lib = llmLogLib;
+          llm-log-tests = llmLogTests;
+          llm-log-sbcl = sbclWithTests;
           llm-log-expert-lib = expertLib;
           llm-log-expert = expertService;
-          llm-log-cl-lib = llmLogClLib;
-          llm-log-cl-tests = llmLogClTests;
-          llm-log-cl = llmLogCl;
-          # Standalone SBCL closure carrying the Common Lisp runtime system;
-          # also the interpreter used by the CL contract checks.
-          llm-log-cl-sbcl = sbclWithClTests;
         });
 
       homeManagerModules = {
@@ -103,19 +118,15 @@
       };
 
       devShells = eachSystem (system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ]);
-        in
-        {
+        let pkgs = import nixpkgs { inherit system; };
+        in {
           default = pkgs.mkShell {
             packages = [
-              python
               pkgs.sbcl
               pkgs.swi-prolog
               tek9.packages.${system}.tek9
+              self.packages.${system}.llm-log
               self.packages.${system}.llm-log-expert
-              self.packages.${system}.llm-log-cl-lib
             ];
           };
         });
@@ -124,32 +135,22 @@
         let
           pkgs = import nixpkgs { inherit system; };
           cl = pkgs.sbcl.pkgs;
-          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ]);
           expertLib = self.packages.${system}.llm-log-expert-lib;
-          expertService = self.packages.${system}.llm-log-expert;
           transportTestSbcl = pkgs.sbcl.withPackages (_: [ expertLib cl.rove ]);
         in
         {
           package = self.packages.${system}.default;
           expert-lib = expertLib;
 
-          # Migration-only historical evidence.  This remains Python-backed
-          # until equivalent CL/Prolog black-box contracts replace it.
-          expert-service-contract = pkgs.runCommand "llm-log-expert-service-contract" {
-            nativeBuildInputs = [ python expertService ];
-          } ''
-            export HOME="$TMPDIR/home"
-            export LLM_LOG_EXPERT_BIN="${expertService}/bin/llm-log-expert"
-            mkdir -p "$HOME"
-            cd ${self}
-            python -m unittest \
-              tests.test_expert_service_red \
-              tests.test_reasoner_result_validation_red \
-              -v
+          source-language-contract = pkgs.runCommand "llm-log-source-language-contract" { } ''
+            bad="$(find ${self} -type f \( -name '*.py' -o -name 'pyproject.toml' \) -print -quit)"
+            if [ -n "$bad" ]; then
+              echo "Python source is forbidden in llm-log: $bad" >&2
+              exit 1
+            fi
             touch "$out"
           '';
 
-          # Authoritative zero-Python transport RED/GREEN gate.
           common-lisp-transport-contract = pkgs.runCommand "llm-log-common-lisp-transport-contract" {
             nativeBuildInputs = [ transportTestSbcl ];
           } ''
@@ -162,8 +163,6 @@
             touch "$out"
           '';
 
-          # RESEARCH-023: authoritative #10 Common Lisp/Tek9/SWI-Prolog
-          # substrate gate. Keep this isolated from transport/recorder tests.
           common-lisp-expert-integration-contract = pkgs.runCommand "llm-log-common-lisp-expert-integration-contract" {
             nativeBuildInputs = [ transportTestSbcl pkgs.swi-prolog ];
           } ''
@@ -177,27 +176,13 @@
             touch "$out"
           '';
 
-          llm-log-config-contract = pkgs.runCommand "llm-log-config-contract" {
-            nativeBuildInputs = [ self.packages.${system}.llm-log-cl-sbcl ];
+          llm-log-runtime-contract = pkgs.runCommand "llm-log-runtime-contract" {
+            nativeBuildInputs = [ self.packages.${system}.llm-log-sbcl pkgs.swi-prolog ];
           } ''
             export HOME="$TMPDIR/home"
             mkdir -p "$HOME"
             sbcl --noinform --no-userinit --no-sysinit --non-interactive \
               --load ${./proxy/tests/runner.lisp}
-            touch "$out"
-          '';
-
-          # RESEARCH-019 RED: this must fail on the untouched dependency
-          # closure until Sento/cl-gserver and every transitive Lisp system
-          # are explicitly pinned and packaged. Ambient Quicklisp is forbidden.
-          common-lisp-recorder-deps = pkgs.runCommand "llm-log-common-lisp-recorder-deps" {
-            nativeBuildInputs = [ transportTestSbcl ];
-          } ''
-            export HOME="$TMPDIR/home"
-            mkdir -p "$HOME"
-            sbcl --noinform --non-interactive \
-              --eval '(require :asdf)' \
-              --eval '(asdf:load-system :sento)'
             touch "$out"
           '';
         });

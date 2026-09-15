@@ -1,0 +1,34 @@
+name: Common Lisp runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  common-lisp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject Python source
+        run: nix build -L .#checks.x86_64-linux.source-language-contract
+
+      - name: Run Common Lisp proxy/runtime contracts
+        run: nix build -L .#checks.x86_64-linux.llm-log-runtime-contract
+
+      - name: Run Common Lisp Tek9 + SWI-Prolog contracts
+        run: nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract
+
+      - name: Build delivered all-Common-Lisp package
+        run: nix build -L .#llm-log

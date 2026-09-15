@@ -1,32 +1,56 @@
 # Project Agent Context
 
-## Runtime Boundaries
+## Runtime boundaries
 
-- `llm_log/` is the Python capture runtime and owns `events.jsonl`, normalized provider token usage, and the HTTP analytics API.
-- `proxy/` is the packaged Common Lisp forwarding runtime. It does not currently persist captures; do not assume Python analytics are exposed by that executable.
-- `expert/` owns durable Tek9 projections and SWI-Prolog inference. Analytics must not duplicate expert authority or estimate missing provider usage.
-- `events.jsonl` is append-only source data. Missing token counters stay unknown.
+- `proxy/` is the production Common Lisp llm-log runtime. It owns HTTP forwarding, lossless `events.jsonl` capture, normalized provider token extraction, the analytics API, provider quota telemetry, and direct local expert infill.
+- `expert/` is the Common Lisp Tek9/SWI-Prolog expert runtime. It owns typed projections, rules, analytics aggregates, bulk-load/infill, dataset queries, and the optional remote HTTP expert service.
+- `events.jsonl` is append-only raw evidence. Giant prompt/completion blobs remain there; Tek9 receives bounded projections and provenance.
+- SWI-Prolog is an embedded rule engine. Common Lisp owns lifecycle, persistence, validation, and callable operation boundaries.
+- Python is not part of this repository's maintained implementation. Do not add `*.py`, `pyproject.toml`, aiohttp, or a Python control/adapter layer.
 
-## Analytics Contract
+## Local vs remote expert paths
+
+Local is the default and must remain zero-HTTP:
+
+- live capture -> direct Common Lisp `ingest-capture-event` call;
+- historical corpus -> `llm-log bulk-load` direct to Tek9/SWI;
+- catch-up -> `llm-log infill` from the same byte-offset checkpoint.
+
+HTTP exists only for a separately deployed expert service and must itself be implemented in Common Lisp (`llm-log-expert serve --http`). Never route local bulk-load or local infill through HTTP.
+
+## Large-corpus invariants
+
+- Stream JSONL; never materialize the corpus.
+- Checkpoint byte offsets, not line counts.
+- A checkpoint advances only after successful durable projection.
+- Replays must be idempotent through stable event/assertion IDs.
+- Do not compute a full 50GB source hash on startup; use bounded source identity/fingerprint checks.
+- Raw request/response bodies stay in `events.jsonl`; only bounded message/metadata/token/evidence projections enter Tek9.
+- Bulk-load also derives durable analytics aggregates so API consumers never rescan the raw corpus per request.
+
+## Analytics contract
 
 - Summary: `GET /api/v1/stats/summary`
 - Timeline: `GET /api/v1/stats/timeline?granularity=minute|hour|day`
 - Model groups: `GET /api/v1/stats/models`
-- OpenAPI: `GET /openapi.json`; Swagger UI: `GET /docs`
-- `start` is inclusive, `end` is exclusive, and buckets are UTC-aligned.
-- Qtile and other consumers should read this API instead of maintaining provider-specific token history.
+- Quotas: `GET /api/v1/quotas`
+- OpenAPI: `GET /openapi.json`
 
-## Knowledge Workflow
+Missing provider token counters remain unknown; never estimate them from text or bytes.
 
-- Load the project-local `llm-log-knowledge` skill for every substantive repository task.
-- Load `llm-log-ci` for pushes, workflow changes, CI diagnosis, or delivery work.
+## Knowledge workflow
+
+- Load the project-local `llm-log-knowledge` skill for substantive repository work.
 - Org-roam nodes live under `roam/`; begin at `roam/index.org`.
-- Record a concrete problem in `roam/issues/` and link its implemented resolution from `roam/solutions/`.
-- Keep raw execution evidence out of roam nodes. Use `.prolog/runs/` for local task state and promote reusable verified facts to `.prolog/kb/`.
+- Raw command/test evidence belongs under `evidence/` or local verifier state, not mixed into design authority.
 
-## Verification And CI
+## Verification
 
-- Run Python checks with `nix develop -c python -m unittest discover -s tests -v`.
-- Build the delivered package with `nix build -L .#llm-log`.
-- Start non-blocking CI observation with `scripts/poll-ci.sh --background`; inspect the printed state directory for status and logs.
-- Use GitHub (`gh`) for this repository because `origin` is hosted at `github.com`.
+Required gates:
+
+- `nix build -L .#checks.x86_64-linux.source-language-contract`
+- `nix build -L .#checks.x86_64-linux.llm-log-runtime-contract`
+- `nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract`
+- `nix build -L .#llm-log`
+
+The source-language contract must remain hard-fail on Python source reintroduction.

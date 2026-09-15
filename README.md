@@ -1,104 +1,153 @@
 # llm-log
 
-Transparent LLM traffic capture for building a durable training corpus and a symbolic Prolog knowledge base.
+**Common Lisp runtime for transparent LLM capture, durable analytics, and a Tek9/SWI-Prolog expert system.**
 
-The first slice is deliberately small: route an LLM client through `llm-log`, forward the request unchanged, stream the response back immediately, and append the completed exchange to disk.
-
-## Documentation
-
-Canonical documentation is Org-mode under [`research/`](research/):
-
-- [`research/LLM-LOG-RESEARCH-INDEX.org`](research/LLM-LOG-RESEARCH-INDEX.org) — document map and migration status
-- [`research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org`](research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org) — Common Lisp proxy runtime architecture reference
-- [`research/LLM-LOG-RESEARCH-014-configuration-and-operations.org`](research/LLM-LOG-RESEARCH-014-configuration-and-operations.org) — configuration and operations guide
-- [`research/LLM-LOG-RESEARCH-015-testing-and-verification.org`](research/LLM-LOG-RESEARCH-015-testing-and-verification.org) — testing and verification guide
-
-The Common Lisp runtime lives in `proxy/`; the expert plane in `expert/`.
+The maintained implementation is Common Lisp. Nix packages it; shell is used for deployment/operations glue. There is no Python runtime, Python admin shim, or Python corpus importer.
 
 ## Architecture
 
 ```text
 LLM client
-   |
-   v
-llm-log proxy
-   |---------------------------> configured upstream
-   |                                OpenAI / OpenRouter / Anthropic / local
-   |
-   +--> recorder actor --> data/events.jsonl   # lossless corpus
-                       +--> data/events.pl      # compact Prolog projection
+    |
+    v
+Common Lisp llm-log (Woo)
+    |-------------------------------> provider upstream
+    |
+    +--> append-only events.jsonl
+    |
+    +--> in-process CL infill
+            |
+            +--> Tek9 durable projections
+            +--> SWI-Prolog bounded rules
+            +--> durable analytics aggregates
+
+Optional remote deployment:
+
+client/runtime ---- typed HTTP ----> llm-log-expert serve --http
+                                     Common Lisp / Tek9 / SWI
 ```
 
-`events.jsonl` is the source of truth for future fine-tuning/export. `events.pl` is the symbolic index used for request classification and later expert-system rules; it intentionally does not duplicate giant prompt/completion blobs.
+Local capture/infill never uses HTTP or a subprocess protocol. The proxy and expert live in the same Common Lisp process and call the same typed functions directly.
 
-Authorization, cookie, and API-key header values are forwarded to the upstream but replaced with `<redacted>` before persistence.
+The standalone HTTP expert service exists for the case where Tek9/SWI is deployed on another host. It is also Common Lisp and exposes the same closed expert protocol; it does not make HTTP the local control plane.
+
+## Raw corpus
+
+`events.jsonl` is the immutable source of truth. Each row retains provider/upstream, method/path/query, redacted headers, complete request/response bodies, status, timing, model, SHA-256 identities, transport, and authoritative provider token counters when present.
+
+Missing token counters remain unknown. llm-log does not estimate tokens from byte length.
 
 ## Run
 
 ```sh
-nix develop
-python -m pip install -e .
-llm-log serve --log-dir ./data
+nix run .#llm-log -- serve \
+  --data-dir ./data \
+  --expert-data-dir ./data/expert
 ```
 
-Default upstream prefixes:
-
-| Client base URL | Upstream |
-| --- | --- |
-| `http://127.0.0.1:8787/openai/v1` | `https://api.openai.com/v1` |
-| `http://127.0.0.1:8787/openrouter/api/v1` | `https://openrouter.ai/api/v1` |
-| `http://127.0.0.1:8787/anthropic` | `https://api.anthropic.com` |
-
-Keep using the provider's normal API-key mechanism in the client. The proxy does not own or store the key.
-
-Custom/local endpoints are explicit:
+Default provider prefixes include OpenAI, OpenRouter, Anthropic, and ChatGPT-compatible routing. Custom upstreams are explicit:
 
 ```sh
-llm-log serve \
-  --log-dir ./data \
+nix run .#llm-log -- serve \
+  --data-dir ./data \
+  --expert-data-dir ./data/expert \
   --upstream ollama=http://127.0.0.1:11434 \
   --upstream vllm=http://127.0.0.1:8000
 ```
 
-Then point the client at `http://127.0.0.1:8787/ollama/...` or `http://127.0.0.1:8787/vllm/...`.
+## 50GB+ historical corpus ingestion
 
-## Captured event
+There are two local ingestion paths and neither uses HTTP.
 
-Each JSONL row includes event/timing IDs, provider/upstream, method/path/query, redacted headers, complete request bytes, complete response bytes, response status, model when discoverable, latency, SHA-256 hashes, and Prolog classifier labels. Non-UTF-8 bodies are stored as base64.
+### Bulk load
 
-Provider-reported token counters are normalized as `input_tokens`, `output_tokens`, and `total_tokens`. The extractor recognizes OpenAI/OpenRouter-compatible, Anthropic, Gemini, Cohere, and Ollama JSON fields in regular JSON, SSE, and text WebSocket responses. Missing counters remain `null`; llm-log does not estimate tokens from body size or text.
+One high-volume sequential pass over the historical JSONL corpus:
+
+```sh
+systemctl --user stop llm-log
+
+llm-log bulk-load \
+  --source "$HOME/Documents/AI/proxy/events.jsonl" \
+  --data-dir "$HOME/Documents/AI/proxy/expert" \
+  --from-start
+
+systemctl --user start llm-log
+```
+
+The loader:
+
+- reads the source as a binary stream;
+- keeps only one JSONL row in memory at a time;
+- writes directly to the CL-owned Tek9/SWI expert host;
+- updates durable analytics aggregates during the same pass;
+- stores a byte-offset checkpoint next to the corpus;
+- never copies giant request/response bodies into Tek9;
+- replays safely through stable IDs after a crash.
+
+The checkpoint defaults to:
+
+```text
+events.jsonl.expert-offset.json
+```
+
+### Local infill
+
+After bulk load, catch up only bytes appended after the checkpoint:
+
+```sh
+systemctl --user stop llm-log
+
+llm-log infill \
+  --source "$HOME/Documents/AI/proxy/events.jsonl" \
+  --data-dir "$HOME/Documents/AI/proxy/expert"
+
+systemctl --user start llm-log
+```
+
+Normal live operation performs the same infill directly in-process after each successful append to `events.jsonl`, so manual infill is primarily crash/catch-up recovery.
+
+## Optional remote expert HTTP service
+
+For a separate expert server:
+
+```sh
+LLM_LOG_EXPERT_HTTP_TOKEN='...' \
+llm-log-expert serve --http \
+  --listen 0.0.0.0 \
+  --port 8788 \
+  --data-dir /var/lib/llm-log/expert
+```
+
+The service is implemented in Common Lisp/Woo. `/v1/expert/rpc` accepts one typed expert envelope and `/v1/expert/batch` accepts a bounded batch. Local bulk-load/infill do not go through these endpoints.
 
 ## Analytics API
 
-The capture service exposes a provider-neutral, read-only analytics API on the same listener:
+The main CL runtime exposes:
 
 | Endpoint | Result |
 | --- | --- |
-| `GET /api/v1/stats/summary` | total requests, usage coverage, and aggregate token I/O |
-| `GET /api/v1/stats/timeline?granularity=minute` | exact minute/hour/day buckets for graphs |
-| `GET /api/v1/stats/models` | token totals grouped by provider and model |
-| `GET /openapi.json` | OpenAPI 3.1 contract |
-| `GET /docs` | Swagger UI |
+| `GET /api/v1/stats/summary` | request/usage coverage and token totals |
+| `GET /api/v1/stats/timeline?granularity=minute` | minute/hour/day token buckets |
+| `GET /api/v1/stats/models` | provider/model totals |
+| `GET /api/v1/quotas` | cached provider-reported z.AI/GPT quota meters |
+| `GET /openapi.json` | API description |
+| `GET /docs` | local API landing page |
 
-All stats endpoints accept optional RFC 3339 `start` (inclusive), `end` (exclusive), `provider`, and `model` query parameters. The timeline `bucket_seconds` and exact UTC bucket edge let consumers such as the Qtile telemetry widget calculate token rates without maintaining a second provider-specific history database.
+Analytics are derived into Tek9 as captures are infilled. A 50GB corpus is therefore scanned once by bulk-load rather than once per widget refresh.
 
-The recorder is a single-writer `asyncio.Queue` actor. Concurrent proxy requests can complete in parallel, but only the recorder actor appends corpus/KB records, preventing interleaved file writes.
+## Expert authority
 
-The initial SWI-Prolog classifier is intentionally coarse (`coding`, `research`, `search`, `writing`, `analysis`, fallback `chat`). It is a seed for an evolving expert system, not training truth.
+Common Lisp owns lifecycle, schemas, bounded materialization, persistence, and validation. Tek9 is the durable knowledge store. SWI-Prolog owns declared inference rules.
 
-## Test locally
+HTTP 200 is not task success. Transport observations are weak evidence only when explicitly imported. Strong success/failure labels require the outcome expert's declared evidence rules.
+
+## Verification
 
 ```sh
-nix develop
-python -m unittest discover -s tests -v
+nix build -L .#checks.x86_64-linux.source-language-contract
+nix build -L .#checks.x86_64-linux.llm-log-runtime-contract
+nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract
+nix build -L .#llm-log
 ```
 
-No GitHub Actions development loop is required for this slice.
-
-## Capture boundary
-
-This captures traffic from software you deliberately point at the proxy: gptel, OpenAI-compatible tools, OpenRouter clients, local model clients, and similar configurable callers. It does **not** magically capture the ChatGPT/Claude web apps or arbitrary HTTPS applications. Doing that later would require a system proxy / TLS interception design and should be a separate security-sensitive slice.
-
-## Next ARADR directions
-
-Later slices can derive fine-tuning datasets, mine repeated failure paths, grow Prolog expert rules, add semantic retrieval, route by symbolic intent, and optionally inject search/tool results before forwarding. Those are intentionally outside ARADR-001.
+The source-language contract fails if a `*.py` file or `pyproject.toml` is added to the repository.

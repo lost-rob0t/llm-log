@@ -10,61 +10,55 @@ let
     (name: "--upstream ${escapeShellArg "${name}=${cfg.upstreams.${name}}"}")
     upstreamNames;
   extraArgs = concatMapStringsSep " " escapeShellArg cfg.extraArgs;
-  classifierArg = optionalString (!cfg.enablePrologClassifier) "--no-prolog-classifier";
-  expertServiceArg = optionalString cfg.expert.enable
-    "--expert-service-bin ${escapeShellArg "${cfg.expert.package}/bin/llm-log-expert"}";
   expertDataDirArg = optionalString cfg.expert.enable
     "--expert-data-dir ${escapeShellArg cfg.expert.dataDir}";
-  requireExpertArg = optionalString (cfg.expert.enable && cfg.expert.require)
-    "--require-expert-plane";
   command = concatMapStringsSep " " (value: value) (builtins.filter (value: value != "") [
     "${cfg.package}/bin/llm-log"
     "serve"
     "--listen ${escapeShellArg cfg.listenAddress}"
     "--port ${toString cfg.port}"
-    "--log-dir ${escapeShellArg cfg.dataDir}"
-    upstreamArgs
-    classifierArg
-    expertServiceArg
+    "--data-dir ${escapeShellArg cfg.dataDir}"
     expertDataDirArg
-    requireExpertArg
+    upstreamArgs
     extraArgs
   ]);
 in
 {
   options.services.llm-log = {
-    enable = mkEnableOption "transparent llm-log capture proxy";
+    enable = mkEnableOption "all-Common-Lisp transparent llm-log capture proxy";
 
     package = mkOption {
       type = types.package;
       default = self.packages.${system}.default;
       defaultText = lib.literalExpression "inputs.llm-log.packages.${pkgs.stdenv.hostPlatform.system}.default";
-      description = "llm-log package to run.";
+      description = "All-Common-Lisp llm-log runtime package.";
     };
 
     listenAddress = mkOption {
       type = types.str;
       default = "127.0.0.1";
-      description = "Address for the local proxy listener.";
+      description = "Address for the local proxy/API listener.";
     };
 
     port = mkOption {
       type = types.port;
       default = 8787;
-      description = "Port for the local proxy listener.";
+      description = "Port for the local proxy/API listener.";
     };
 
     dataDir = mkOption {
       type = types.str;
       default = "${config.xdg.dataHome}/llm-log";
       defaultText = lib.literalExpression ''"${config.xdg.dataHome}/llm-log"'';
-      description = "Append-only capture directory. Defaults under XDG_DATA_HOME.";
+      description = "Append-only raw capture directory.";
     };
 
+    # Compatibility option retained for existing consumers. Classification is
+    # now owned by the in-process CL/Tek9/SWI expert and is not a Python toggle.
     enablePrologClassifier = mkOption {
       type = types.bool;
       default = true;
-      description = "Classify captured requests with the bundled SWI-Prolog classifier.";
+      description = "Compatibility flag; the Common Lisp expert owns classification.";
     };
 
     upstreams = mkOption {
@@ -79,26 +73,29 @@ in
     };
 
     expert = {
-      enable = mkEnableOption "Common Lisp llm-log expert plane";
+      enable = mkEnableOption "in-process Common Lisp llm-log expert plane";
 
+      # Retained so existing dotfiles using this option continue to evaluate.
+      # The default llm-log package already contains the expert system and does
+      # not spawn this package as a child.
       package = mkOption {
         type = types.package;
         default = self.packages.${system}.llm-log-expert;
         defaultText = lib.literalExpression "inputs.llm-log.packages.${pkgs.stdenv.hostPlatform.system}.llm-log-expert";
-        description = "Packaged Common Lisp expert service launched as a child of llm-log.";
+        description = "Standalone CL expert package for remote/bulk administration.";
       };
 
       dataDir = mkOption {
         type = types.str;
-        default = "${config.home.homeDirectory}/.llm-proxy/expert";
-        defaultText = lib.literalExpression ''"${config.home.homeDirectory}/.llm-proxy/expert"'';
-        description = "Mutable Tek9/expert-plane state directory, separate from append-only capture evidence.";
+        default = "${config.xdg.dataHome}/llm-log/expert";
+        defaultText = lib.literalExpression ''"${config.xdg.dataHome}/llm-log/expert"'';
+        description = "Mutable Tek9/SWI expert state used directly by the CL runtime.";
       };
 
       require = mkOption {
         type = types.bool;
         default = false;
-        description = "Fail closed before upstream contact when the configured expert plane is unavailable.";
+        description = "Compatibility option retained for existing configurations.";
       };
     };
 
@@ -110,11 +107,18 @@ in
   };
 
   config = mkIf cfg.enable {
-    home.packages = [ cfg.package ];
+    home.packages = [ cfg.package cfg.expert.package ];
+
+    assertions = [
+      {
+        assertion = cfg.expert.enable;
+        message = "services.llm-log.expert.enable must be true: the CL expert is now a core in-process runtime component";
+      }
+    ];
 
     systemd.user.services.llm-log = {
       Unit = {
-        Description = "Transparent LLM capture proxy";
+        Description = "All-Common-Lisp LLM capture and expert runtime";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
       };

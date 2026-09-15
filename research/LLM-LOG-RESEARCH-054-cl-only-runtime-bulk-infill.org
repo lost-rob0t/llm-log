@@ -1,0 +1,77 @@
+#+title: LLM-LOG-RESEARCH-054 — Common Lisp-only runtime and corpus ingestion
+#+filetags: :llm-log:architecture:common-lisp:tek9:prolog:bulk-load:infill:
+
+* Decision
+llm-log has one maintained implementation runtime: Common Lisp.
+
+Python is removed from capture, proxying, analytics, quota telemetry, expert
+administration, historical backfill, CLI, tests, packaging, and CI.
+
+SWI-Prolog remains the bounded rule engine embedded by the Common Lisp expert
+host. Tek9 remains the durable derived-state store. Nix and shell remain
+packaging/operations glue.
+
+* Runtime topology
+#+begin_example
+LLM client
+  -> CL/Woo transparent proxy
+     -> upstream provider
+     -> append events.jsonl
+     -> direct in-process ingest-capture-event
+        -> Tek9
+        -> SWI-Prolog
+        -> durable analytics aggregates
+#+end_example
+
+No local expert operation traverses HTTP or a subprocess protocol.
+
+* Local historical corpus paths
+** Bulk load
+=llm-log bulk-load= opens the expert host directly and scans =events.jsonl= as
+a binary stream. It keeps one row in memory, derives bounded projections, and
+advances a byte-offset checkpoint only after durable success.
+
+The source identity check hashes only a bounded prefix rather than hashing a
+50GB corpus at startup. A crash may replay the bounded interval since the last
+checkpoint; stable IDs make this safe.
+
+** Infill
+=llm-log infill= requires the bulk-load checkpoint and seeks directly to its
+byte offset. It processes only appended records. Live capture performs the same
+projection in-process immediately after the raw JSONL append; manual infill is
+crash/catch-up recovery.
+
+* Analytics
+The old implementation rescanned raw JSONL to answer API queries. That does not
+scale to a tens-of-gigabytes corpus or a 1Hz desktop consumer.
+
+Every capture projection now idempotently updates Tek9 aggregate documents for:
+- global request/token totals;
+- provider/model totals;
+- minute buckets used to derive minute/hour/day timelines.
+
+Bulk load therefore builds analytics state in the same single pass as expert
+state. API reads query derived Tek9 aggregates instead of the raw corpus.
+
+* Remote deployment
+A remote expert deployment remains supported, but transport is explicitly a
+deployment boundary rather than an internal architecture boundary:
+
+#+begin_example
+llm-log-expert serve --http --listen ADDR --port PORT --data-dir DIR
+#+end_example
+
+Woo serves the typed versioned expert protocol. A bounded batch endpoint exists
+for remote use. Local bulk-load and local infill never use it.
+
+* Language invariant
+CI fails if a tracked =*.py= file or =pyproject.toml= appears. Embedded Prolog
+rules are marked as vendored for GitHub language accounting so the repository's
+visible implementation languages remain Common Lisp plus Nix/shell glue.
+
+* Verification requirements
+- Common Lisp proxy/runtime Rove suite;
+- Common Lisp/Tek9/SWI integration suite;
+- bulk-load -> restart -> infill regression;
+- delivered Nix package build;
+- Python-source absence gate.
