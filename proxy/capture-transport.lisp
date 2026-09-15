@@ -1,6 +1,67 @@
 (in-package #:llm-log)
 
 (defparameter *proxy-expert-hosts* (make-hash-table :test #'eq))
+(defparameter *proxy-infill-workers* (make-hash-table :test #'eq))
+
+(defstruct infill-worker
+  thread host
+  (lock (bt:make-lock "llm-log-infill-queue"))
+  head tail
+  (stop nil))
+
+(defun %infill-dequeue (worker)
+  (bt:with-lock-held ((infill-worker-lock worker))
+    (let ((cell (infill-worker-head worker)))
+      (when cell
+        (setf (infill-worker-head worker) (cdr cell))
+        (when (null (infill-worker-head worker))
+          (setf (infill-worker-tail worker) nil))
+        (car cell)))))
+
+(defun %enqueue-infill (worker event)
+  "Enqueue EVENT in FIFO order without putting expert work on the relay path."
+  (let ((cell (list event)))
+    (bt:with-lock-held ((infill-worker-lock worker))
+      (if (infill-worker-tail worker)
+          (setf (cdr (infill-worker-tail worker)) cell
+                (infill-worker-tail worker) cell)
+          (setf (infill-worker-head worker) cell
+                (infill-worker-tail worker) cell))))
+  event)
+
+(defun %infill-queue-empty-p (worker)
+  (bt:with-lock-held ((infill-worker-lock worker))
+    (null (infill-worker-head worker))))
+
+(defun %run-infill-worker (worker)
+  "Serialize all live Tek9/SWI projection through one in-process CL worker."
+  (loop
+    for event = (%infill-dequeue worker)
+    do (cond
+         (event
+          (handler-case
+              (llm-log-expert:ingest-capture-event (infill-worker-host worker) event)
+            (error (condition)
+              (format *error-output* "llm-log: expert infill failed for ~A: ~A~%"
+                      (jsown:val-safe event "event_id") condition))))
+         ((infill-worker-stop worker)
+          (return))
+         (t (sleep 0.01)))))
+
+(defun %start-infill-worker (host)
+  (let ((worker (make-infill-worker :host host)))
+    (setf (infill-worker-thread worker)
+          (bt:make-thread (lambda () (%run-infill-worker worker))
+                          :name "llm-log-expert-infill"))
+    worker))
+
+(defun %stop-infill-worker (worker)
+  "Drain queued events before allowing the sole expert host to close."
+  (setf (infill-worker-stop worker) t)
+  (let ((thread (infill-worker-thread worker)))
+    (when thread
+      (ignore-errors (bt:join-thread thread))))
+  worker)
 
 (defun %response-head-metadata (lines)
   (let ((status 0)
@@ -18,7 +79,7 @@
     (values status headers)))
 
 (defun %relay-upstream-response (client-stream stream)
-  "Relay the response and return STATUS, HEADERS, BODY for durable capture."
+  "Tee upstream response bytes to client and raw capture without changing framing."
   (let* ((head (%read-head-octets stream))
          (lines (loop for line in
                          (uiop:split-string
@@ -47,8 +108,8 @@
           for n = (read-sequence buffer stream)
           until (zerop n)
           do (write-sequence buffer client-stream :end n)
+             (force-output client-stream)
              (loop for i below n do (vector-push-extend (aref buffer i) body)))
-    (force-output client-stream)
     (multiple-value-bind (status headers) (%response-head-metadata lines)
       (values status headers body))))
 
@@ -57,9 +118,10 @@
     (values (if q (subseq uri 0 q) uri)
             (if q (subseq uri (1+ q)) ""))))
 
-(defun %capture-and-infill (config expert-host provider upstream method uri headers
-                            request-body response-status response-headers response-body
-                            started-at start-ticks)
+(defun %capture-and-queue-infill
+    (config infill-worker provider upstream method uri headers
+     request-body response-status response-headers response-body
+     started-at start-ticks)
   (multiple-value-bind (path query) (%uri-path-query uri)
     (let* ((completed-at (%utc-now))
            (elapsed (- (get-internal-real-time) start-ticks))
@@ -78,16 +140,13 @@
                    :started-at started-at
                    :completed-at completed-at
                    :latency-ms latency-ms)))
+      ;; Raw evidence is authoritative. Persist it before derived work is queued.
       (append-capture-event (runtime-config-data-directory config) event)
-      (handler-case
-          (llm-log-expert:ingest-capture-event expert-host event)
-        (error (condition)
-          (format *error-output* "llm-log: expert infill failed for ~A: ~A~%"
-                  (jsown:val-safe event "event_id") condition)))
+      (%enqueue-infill infill-worker event)
       event)))
 
-(defun %relay-request (client-stream config expert-host method uri headers body)
-  "Forward one request, durably capture it, then infill the local CL expert."
+(defun %relay-request (client-stream config infill-worker method uri headers body)
+  "Forward/capture one exchange; expert derivation is queued after raw append."
   (let ((started-at (%utc-now))
         (start-ticks (get-internal-real-time)))
     (handler-case
@@ -108,8 +167,8 @@
                        headers body)
                       (multiple-value-bind (status response-headers response-body)
                           (%relay-upstream-response client-stream stream)
-                        (%capture-and-infill
-                         config expert-host provider upstream-url method uri headers body
+                        (%capture-and-queue-infill
+                         config infill-worker provider upstream-url method uri headers body
                          status response-headers response-body started-at start-ticks)))
                  (ignore-errors (close stream))
                  (when socket (ignore-errors (usocket:socket-close socket))))))))
@@ -123,50 +182,62 @@
                 (%resolve-provider config uri)
               (declare (ignore target))
               (when (and provider upstream-url)
-                (%capture-and-infill
-                 config expert-host provider upstream-url method uri headers body
+                (%capture-and-queue-infill
+                 config infill-worker provider upstream-url method uri headers body
                  502 response-headers response-body started-at start-ticks)))))))))
 
 (defun %make-proxy-app (config expert-host)
-  (lambda (env)
-    (let ((io (getf env :clack.io)))
-      (bt:make-thread
-       (lambda ()
-         (let ((client-stream (%make-blocking-client-stream io)))
-           (unwind-protect
-                (%relay-request
-                 client-stream config expert-host
-                 (getf env :request-method)
-                 (getf env :request-uri)
-                 (getf env :headers)
-                 (%request-body-octets (getf env :raw-body)))
-             (setf (woo.ev.socket::socket-open-p io) nil)
-             (ignore-errors (close client-stream)))))
-       :name "llm-log-relay")
-      (lambda (respond) (declare (ignore respond))))))
+  (let ((infill-worker (gethash expert-host *proxy-infill-workers*)))
+    (lambda (env)
+      (let ((io (getf env :clack.io)))
+        (bt:make-thread
+         (lambda ()
+           (let ((client-stream (%make-blocking-client-stream io)))
+             (unwind-protect
+                  (%relay-request
+                   client-stream config infill-worker
+                   (getf env :request-method)
+                   (getf env :request-uri)
+                   (getf env :headers)
+                   (%request-body-octets (getf env :raw-body)))
+               (setf (woo.ev.socket::socket-open-p io) nil)
+               (ignore-errors (close client-stream)))))
+         :name "llm-log-relay")
+        (lambda (respond) (declare (ignore respond)))))))
 
 (defun start-proxy (config)
-  "Start the all-Common-Lisp proxy and its in-process expert host."
+  "Start the all-Common-Lisp proxy, sole expert host, and serialized infill worker."
   (let* ((expert-host
            (llm-log-expert:start-expert-host
             (runtime-config-expert-data-directory config)))
-         (thread
-           (bt:make-thread
-            (lambda ()
-              (woo:run (%make-proxy-app config expert-host)
-                       :port (runtime-config-port config)
-                       :address (runtime-config-listen-address config)
-                       :worker-num nil :debug nil))
-            :name "llm-log-proxy"))
-         (server (make-proxy-server :thread thread :config config)))
-    (setf (gethash server *proxy-expert-hosts*) expert-host)
-    server))
+         (infill-worker (%start-infill-worker expert-host)))
+    (setf (gethash expert-host *proxy-infill-workers*) infill-worker)
+    (handler-case
+        (let* ((thread
+                 (bt:make-thread
+                  (lambda ()
+                    (woo:run (%make-proxy-app config expert-host)
+                             :port (runtime-config-port config)
+                             :address (runtime-config-listen-address config)
+                             :worker-num nil :debug nil))
+                  :name "llm-log-proxy"))
+               (server (make-proxy-server :thread thread :config config)))
+          (setf (gethash server *proxy-expert-hosts*) expert-host)
+          server)
+      (error (condition)
+        (%stop-infill-worker infill-worker)
+        (remhash expert-host *proxy-infill-workers*)
+        (llm-log-expert:stop-expert-host expert-host)
+        (error condition)))))
 
 (defun stop-proxy (server)
   (let ((thread (proxy-server-thread server))
         (expert-host (gethash server *proxy-expert-hosts*)))
     (when thread (ignore-errors (bt:destroy-thread thread)))
     (when expert-host
+      (let ((worker (gethash expert-host *proxy-infill-workers*)))
+        (when worker (%stop-infill-worker worker))
+        (remhash expert-host *proxy-infill-workers*))
       (remhash server *proxy-expert-hosts*)
       (ignore-errors (llm-log-expert:stop-expert-host expert-host))))
   server)
