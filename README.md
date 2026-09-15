@@ -10,12 +10,12 @@ The maintained implementation is Common Lisp. Nix packages it; shell is used for
 LLM client
     |
     v
-Common Lisp llm-log (Woo)
+Common Lisp llm-log (Clack / Hunchentoot)
     |-------------------------------> provider upstream
     |
     +--> append-only events.jsonl
     |
-    +--> in-process CL infill
+    +--> in-process CL infill worker
             |
             +--> Tek9 durable projections
             +--> SWI-Prolog bounded rules
@@ -24,12 +24,12 @@ Common Lisp llm-log (Woo)
 Optional remote deployment:
 
 client/runtime ---- typed HTTP ----> llm-log-expert serve --http
-                                     Common Lisp / Tek9 / SWI
+                                     Common Lisp / Woo / Tek9 / SWI
 ```
 
-Local capture/infill never uses HTTP or a subprocess protocol. The proxy and expert live in the same Common Lisp process and call the same typed functions directly.
+Local capture/infill never uses HTTP or a subprocess protocol. The proxy and expert live in the same Common Lisp process and call the same typed functions directly. Hunchentoot owns downstream client sockets; provider streams are forwarded through Clack's server-owned streaming writer rather than by wrapping server file descriptors.
 
-The standalone HTTP expert service exists for the case where Tek9/SWI is deployed on another host. It is also Common Lisp and exposes the same closed expert protocol; it does not make HTTP the local control plane.
+The standalone HTTP expert service exists for the case where Tek9/SWI is deployed on another host. It is also Common Lisp, uses Woo for this bounded RPC surface, and exposes the same closed expert protocol; it does not make HTTP the local control plane.
 
 ## Raw corpus
 
@@ -104,7 +104,7 @@ llm-log infill \
 systemctl --user start llm-log
 ```
 
-Normal live operation performs the same infill directly in-process after each successful append to `events.jsonl`, so manual infill is primarily crash/catch-up recovery.
+Normal live operation appends the raw capture first and queues the same in-process Common Lisp projection on one serialized infill worker. Manual infill is primarily crash/catch-up recovery.
 
 ## Optional remote expert HTTP service
 
@@ -118,7 +118,7 @@ llm-log-expert serve --http \
   --data-dir /var/lib/llm-log/expert
 ```
 
-The service is implemented in Common Lisp/Woo. `/v1/expert/rpc` accepts one typed expert envelope and `/v1/expert/batch` accepts a bounded batch. Local bulk-load/infill do not go through these endpoints.
+The service is implemented in Common Lisp/Woo. `/v1/expert/rpc` accepts one typed expert envelope and `/v1/expert/batch` accepts a bounded batch. Non-loopback binds require `LLM_LOG_EXPERT_HTTP_TOKEN`. Local bulk-load/infill do not go through these endpoints.
 
 ## Analytics API
 
