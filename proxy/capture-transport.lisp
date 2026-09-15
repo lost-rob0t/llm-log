@@ -29,10 +29,6 @@
                 (infill-worker-tail worker) cell))))
   event)
 
-(defun %infill-queue-empty-p (worker)
-  (bt:with-lock-held ((infill-worker-lock worker))
-    (null (infill-worker-head worker))))
-
 (defun %run-infill-worker (worker)
   "Serialize all live Tek9/SWI projection through one in-process CL worker."
   (loop
@@ -44,8 +40,7 @@
             (error (condition)
               (format *error-output* "llm-log: expert infill failed for ~A: ~A~%"
                       (jsown:val-safe event "event_id") condition))))
-         ((infill-worker-stop worker)
-          (return))
+         ((infill-worker-stop worker) (return))
          (t (sleep 0.01)))))
 
 (defun %start-infill-worker (host)
@@ -59,8 +54,7 @@
   "Drain queued events before allowing the sole expert host to close."
   (setf (infill-worker-stop worker) t)
   (let ((thread (infill-worker-thread worker)))
-    (when thread
-      (ignore-errors (bt:join-thread thread))))
+    (when thread (ignore-errors (bt:join-thread thread))))
   worker)
 
 (defun %response-head-metadata (lines)
@@ -79,7 +73,7 @@
     (values status headers)))
 
 (defun %relay-upstream-response (client-stream stream)
-  "Tee upstream response bytes to client and raw capture without changing framing."
+  "Tee upstream response bytes to client and capture without changing framing."
   (let* ((head (%read-head-octets stream))
          (lines (loop for line in
                          (uiop:split-string
@@ -103,6 +97,7 @@
       (vector-push-extend 13 head-bytes)
       (vector-push-extend 10 head-bytes))
     (write-sequence head-bytes client-stream)
+    (force-output client-stream)
     (loop with buffer = (make-array +relay-buffer-size+
                                     :element-type '(unsigned-byte 8))
           for n = (read-sequence buffer stream)
@@ -118,35 +113,34 @@
     (values (if q (subseq uri 0 q) uri)
             (if q (subseq uri (1+ q)) ""))))
 
-(defun %capture-and-queue-infill
-    (config infill-worker provider upstream method uri headers
-     request-body response-status response-headers response-body
-     started-at start-ticks)
+(defun %build-capture-event
+    (provider upstream method uri headers request-body
+     response-status response-headers response-body started-at start-ticks)
   (multiple-value-bind (path query) (%uri-path-query uri)
     (let* ((completed-at (%utc-now))
            (elapsed (- (get-internal-real-time) start-ticks))
-           (latency-ms (round (* 1000 (/ elapsed internal-time-units-per-second))))
-           (event (make-capture-event
-                   :provider provider
-                   :upstream upstream
-                   :method (string-upcase (symbol-name method))
-                   :path path
-                   :query query
-                   :request-headers headers
-                   :request-body request-body
-                   :response-status response-status
-                   :response-headers response-headers
-                   :response-body response-body
-                   :started-at started-at
-                   :completed-at completed-at
-                   :latency-ms latency-ms)))
-      ;; Raw evidence is authoritative. Persist it before derived work is queued.
-      (append-capture-event (runtime-config-data-directory config) event)
-      (%enqueue-infill infill-worker event)
-      event)))
+           (latency-ms (round (* 1000 (/ elapsed internal-time-units-per-second)))))
+      (make-capture-event
+       :provider provider :upstream upstream
+       :method (string-upcase (symbol-name method))
+       :path path :query query
+       :request-headers headers :request-body request-body
+       :response-status response-status :response-headers response-headers
+       :response-body response-body :started-at started-at
+       :completed-at completed-at :latency-ms latency-ms))))
 
-(defun %relay-request (client-stream config infill-worker method uri headers body)
-  "Forward/capture one exchange; expert derivation is queued after raw append."
+(defun %persist-and-queue-capture (config infill-worker event)
+  (handler-case
+      (progn
+        (append-capture-event (runtime-config-data-directory config) event)
+        (%enqueue-infill infill-worker event))
+    (error (condition)
+      (format *error-output* "llm-log: capture persistence failed for ~A: ~A~%"
+              (jsown:val-safe event "event_id") condition)))
+  event)
+
+(defun %relay-request (client-stream config method uri headers body)
+  "Forward one exchange and return its completed capture event, if any."
   (let ((started-at (%utc-now))
         (start-ticks (get-internal-real-time)))
     (handler-case
@@ -155,20 +149,20 @@
           (cond
             ((or (null provider) (null upstream-url))
              (%write-raw-response client-stream 404 "Not Found"
-                                  (format nil "unknown upstream: ~A" provider)))
+                                  (format nil "unknown upstream: ~A" provider))
+             nil)
             (t
              (multiple-value-bind (stream socket) (%open-upstream upstream-url)
                (unwind-protect
                     (progn
                       (%write-upstream-request
                        stream (string-upcase (symbol-name method))
-                       upstream-target
-                       (%upstream-host-header (quri:uri upstream-url))
+                       upstream-target (%upstream-host-header (quri:uri upstream-url))
                        headers body)
                       (multiple-value-bind (status response-headers response-body)
                           (%relay-upstream-response client-stream stream)
-                        (%capture-and-queue-infill
-                         config infill-worker provider upstream-url method uri headers body
+                        (%build-capture-event
+                         provider upstream-url method uri headers body
                          status response-headers response-body started-at start-ticks)))
                  (ignore-errors (close stream))
                  (when socket (ignore-errors (usocket:socket-close socket))))))))
@@ -182,8 +176,8 @@
                 (%resolve-provider config uri)
               (declare (ignore target))
               (when (and provider upstream-url)
-                (%capture-and-queue-infill
-                 config infill-worker provider upstream-url method uri headers body
+                (%build-capture-event
+                 provider upstream-url method uri headers body
                  502 response-headers response-body started-at start-ticks)))))))))
 
 (defun %make-proxy-app (config expert-host)
@@ -192,16 +186,21 @@
       (let ((io (getf env :clack.io)))
         (bt:make-thread
          (lambda ()
-           (let ((client-stream (%make-blocking-client-stream io)))
+           (let ((client-stream (%make-blocking-client-stream io))
+                 (event nil))
              (unwind-protect
-                  (%relay-request
-                   client-stream config infill-worker
-                   (getf env :request-method)
-                   (getf env :request-uri)
-                   (getf env :headers)
-                   (%request-body-octets (getf env :raw-body)))
+                  (setf event
+                        (%relay-request
+                         client-stream config
+                         (getf env :request-method)
+                         (getf env :request-uri)
+                         (getf env :headers)
+                         (%request-body-octets (getf env :raw-body))))
+               ;; Response delivery is complete before any recorder/expert work.
                (setf (woo.ev.socket::socket-open-p io) nil)
-               (ignore-errors (close client-stream)))))
+               (ignore-errors (close client-stream)))
+             (when event
+               (%persist-and-queue-capture config infill-worker event))))
          :name "llm-log-relay")
         (lambda (respond) (declare (ignore respond)))))))
 
