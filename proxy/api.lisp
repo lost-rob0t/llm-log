@@ -20,13 +20,16 @@
 
 (defun %api-json-response (status object &optional extra-headers)
   (list status
-        (append '("content-type" "application/json; charset=utf-8"
-                  "cache-control" "no-store")
+        (append (list :content-type "application/json; charset=utf-8"
+                      :cache-control "no-store"
+                      :connection "close")
                 extra-headers)
         (list (jsown:to-json object))))
 
 (defun %api-html-response (html)
-  (list 200 '("content-type" "text/html; charset=utf-8") (list html)))
+  (list 200
+        (list :content-type "text/html; charset=utf-8" :connection "close")
+        (list html)))
 
 (defun %openapi-document ()
   (%jobj
@@ -35,10 +38,14 @@
                         (cons "version" "1.0.0")))
    (cons "paths"
          (%jobj
-          (cons "/api/v1/stats/summary" (%jobj (cons "get" (%jobj (cons "summary" "Aggregate token I/O totals")))))
-          (cons "/api/v1/stats/models" (%jobj (cons "get" (%jobj (cons "summary" "Token totals by provider/model")))))
-          (cons "/api/v1/stats/timeline" (%jobj (cons "get" (%jobj (cons "summary" "Bucketed token I/O timeline")))))
-          (cons "/api/v1/quotas" (%jobj (cons "get" (%jobj (cons "summary" "Provider-reported quota snapshot")))))))))
+          (cons "/api/v1/stats/summary"
+                (%jobj (cons "get" (%jobj (cons "summary" "Aggregate token I/O totals")))))
+          (cons "/api/v1/stats/models"
+                (%jobj (cons "get" (%jobj (cons "summary" "Token totals by provider/model")))))
+          (cons "/api/v1/stats/timeline"
+                (%jobj (cons "get" (%jobj (cons "summary" "Bucketed token I/O timeline")))))
+          (cons "/api/v1/quotas"
+                (%jobj (cons "get" (%jobj (cons "summary" "Provider-reported quota snapshot")))))))))
 
 (defun %handle-analytics-api (env expert-host)
   (let* ((uri (or (getf env :request-uri) "/"))
@@ -98,22 +105,4 @@
       (let ((uri (or (getf env :request-uri) "/")))
         (if (%api-path-p uri)
             (%handle-analytics-api env expert-host)
-            (let ((io (getf env :clack.io)))
-              (bt:make-thread
-               (lambda ()
-                 (let ((client-stream (%make-blocking-client-stream io))
-                       (event nil))
-                   (unwind-protect
-                        (setf event
-                              (%relay-request
-                               client-stream config
-                               (getf env :request-method)
-                               uri
-                               (getf env :headers)
-                               (%request-body-octets (getf env :raw-body))))
-                     (setf (woo.ev.socket::socket-open-p io) nil)
-                     (ignore-errors (close client-stream)))
-                   (when event
-                     (%persist-and-queue-capture config infill-worker event))))
-               :name "llm-log-relay")
-              (lambda (respond) (declare (ignore respond)))))))))
+            (%proxy-response-callback env config infill-worker))))))
