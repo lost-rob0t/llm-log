@@ -111,8 +111,8 @@ Wire delivery retains duplicates through the Clack plist."
 (defun %proxy-response-callback (env config infill-worker)
   "Return a Clack delayed response that streams provider bytes on this request thread.
 
-The HTTP server owns the client socket end-to-end.  llm-log never touches the
-server descriptor directly.  The upstream body is decoded from provider framing,
+The HTTP server owns the client socket end-to-end. llm-log never touches the
+server descriptor directly. The upstream body is decoded from provider framing,
 written through the Clack streaming writer, and tee'd into one capture buffer."
   (lambda (respond)
     (let* ((method (getf env :request-method))
@@ -124,58 +124,54 @@ written through the Clack streaming writer, and tee'd into one capture buffer."
       (handler-case
           (multiple-value-bind (provider upstream-target upstream-url)
               (%resolve-provider config uri)
-            (unless (and provider upstream-target upstream-url)
-              (funcall respond
-                       (%normal-error-response
-                        404 (format nil "unknown upstream: ~A" provider)))
-              (return-from %proxy-response-callback nil))
-            (multiple-value-bind (upstream-stream upstream-socket)
-                (%open-upstream upstream-url)
-              (unwind-protect
-                   (progn
-                     (%write-upstream-request
-                      upstream-stream
-                      (string-upcase (symbol-name method))
-                      upstream-target
-                      (%upstream-host-header (quri:uri upstream-url))
-                      request-headers
-                      request-body)
-                     (let ((head (%read-head-octets upstream-stream)))
-                       (multiple-value-bind (status response-headers)
-                           (%parse-response-head head)
-                         (let* ((writer
-                                  (funcall respond
-                                           (list status
-                                                 (%downstream-headers
-                                                  response-headers))))
-                                (capture-body
-                                  (make-array 65536
-                                              :element-type '(unsigned-byte 8)
-                                              :fill-pointer 0
-                                              :adjustable t)))
-                           (unwind-protect
-                                (%relay-response-body
-                                 upstream-stream response-headers
-                                 (lambda (buffer start end)
-                                   ;; Server-owned streaming writer flushes each
-                                   ;; provider body chunk on this request thread.
-                                   (funcall writer buffer :start start :end end)
-                                   (loop for i from start below end
-                                         do (vector-push-extend
-                                             (aref buffer i) capture-body))))
-                             (funcall writer nil :close t))
-                           ;; Raw evidence commits before derived expert work is
-                           ;; queued.  This is local CL function dispatch only.
-                           (%persist-and-queue-capture
-                            config infill-worker
-                            (%build-capture-event
-                             provider upstream-url method uri
-                             request-headers request-body
-                             status response-headers capture-body
-                             started-at start-ticks))))))
-                (ignore-errors (close upstream-stream))
-                (when upstream-socket
-                  (ignore-errors (usocket:socket-close upstream-socket))))))
+            (if (not (and provider upstream-target upstream-url))
+                (funcall respond
+                         (%normal-error-response
+                          404 (format nil "unknown upstream: ~A" provider)))
+                (multiple-value-bind (upstream-stream upstream-socket)
+                    (%open-upstream upstream-url)
+                  (unwind-protect
+                       (progn
+                         (%write-upstream-request
+                          upstream-stream
+                          (string-upcase (symbol-name method))
+                          upstream-target
+                          (%upstream-host-header (quri:uri upstream-url))
+                          request-headers
+                          request-body)
+                         (let ((head (%read-head-octets upstream-stream)))
+                           (multiple-value-bind (status response-headers)
+                               (%parse-response-head head)
+                             (let* ((writer
+                                      (funcall respond
+                                               (list status
+                                                     (%downstream-headers
+                                                      response-headers))))
+                                    (capture-body
+                                      (make-array 65536
+                                                  :element-type '(unsigned-byte 8)
+                                                  :fill-pointer 0
+                                                  :adjustable t)))
+                               (unwind-protect
+                                    (%relay-response-body
+                                     upstream-stream response-headers
+                                     (lambda (buffer start end)
+                                       (funcall writer buffer :start start :end end)
+                                       (loop for i from start below end
+                                             do (vector-push-extend
+                                                 (aref buffer i) capture-body))))
+                                 (funcall writer nil :close t))
+                               (%persist-and-queue-capture
+                                config infill-worker
+                                (%build-capture-event
+                                 provider upstream-url method uri
+                                 request-headers request-body
+                                 status response-headers capture-body
+                                 started-at start-ticks))))))
+                    (ignore-errors (close upstream-stream))
+                    (when upstream-socket
+                      (ignore-errors
+                        (usocket:socket-close upstream-socket)))))))
         (error (condition)
           (format *error-output* "llm-log: upstream relay failed: ~A~%" condition)
           (ignore-errors
