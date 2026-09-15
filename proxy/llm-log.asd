@@ -4,7 +4,8 @@
   :license "MIT"
   :version "0.2.0"
   :serial t
-  :depends-on (#:uiop #:clop #:woo #:usocket #:quri #:cl+ssl
+  :depends-on (#:uiop #:clop #:clack #:clack-handler-hunchentoot
+               #:hunchentoot #:usocket #:quri #:cl+ssl
                #:bordeaux-threads #:trivial-utf-8 #:jsown #:ironclad
                #:llm-log-expert)
   :components ((:file "package")
