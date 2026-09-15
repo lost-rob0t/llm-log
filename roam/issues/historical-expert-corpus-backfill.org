@@ -22,4 +22,4 @@ owner boundary.
 See [[../../research/LLM-LOG-RESEARCH-053-historical-corpus-backfill-query-export.org][LLM-LOG-RESEARCH-053]].
 
 * Resolution
-Pending verified implementation on =feature/expert-backfill-query-export=.
+Resolved by [[id:llm-log-historical-expert-corpus-replay][Replay immutable captures through the single live expert owner]]. Exact implementation verification is recorded in [[../../evidence/LLM-LOG-EVIDENCE-048-historical-corpus-backfill-green.org][LLM-LOG-EVIDENCE-048]].
