@@ -1,0 +1,63 @@
+name: Common Lisp runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  common-lisp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject Python source
+        shell: bash
+        run: |
+          set -o pipefail
+          nix build -L .#checks.x86_64-linux.source-language-contract \
+            2>&1 | tee "$RUNNER_TEMP/source-language.log"
+
+      - name: Run Common Lisp proxy/runtime contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          nix build -L .#checks.x86_64-linux.llm-log-runtime-contract \
+            2>&1 | tee "$RUNNER_TEMP/runtime.log"
+
+      - name: Run Common Lisp Tek9 + SWI-Prolog contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          nix build -L .#checks.x86_64-linux.common-lisp-expert-integration-contract \
+            2>&1 | tee "$RUNNER_TEMP/expert.log"
+
+      - name: Build delivered all-Common-Lisp package
+        shell: bash
+        run: |
+          set -o pipefail
+          nix build -L .#llm-log \
+            2>&1 | tee "$RUNNER_TEMP/package.log"
+
+      - name: Preserve failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: llm-log-cl-failure-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/source-language.log
+            ${{ runner.temp }}/runtime.log
+            ${{ runner.temp }}/expert.log
+            ${{ runner.temp }}/package.log
+          if-no-files-found: warn
+          retention-days: 7

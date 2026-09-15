@@ -11,6 +11,7 @@
                 #:fetch*
                 #:put*
                 #:register-index
+                #:select-primary-range
                 #:select-index-range
                 #:with-write-transaction)
   (:export
@@ -48,4 +49,17 @@
    #:derive-event-transport
    #:dispatch-expert-request
    #:serve-stdio
+   ;; local capture/corpus projection
+   #:ingest-capture-event
+   #:import-capture-corpus
+   ;; durable analytics derived during capture/bulk-load
+   #:project-capture-analytics
+   #:query-analytics-summary
+   #:query-analytics-models
+   #:query-analytics-timeline
+   ;; optional remote HTTP service
+   #:make-expert-http-app
+   #:start-expert-http-server
+   #:stop-expert-http-server
+   ;; packaged entrypoint
    #:main))

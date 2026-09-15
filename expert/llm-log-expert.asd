@@ -1,10 +1,11 @@
 (asdf:defsystem #:llm-log-expert
-  :description "Common Lisp llm-log runtime and expert-system host."
+  :description "Common Lisp llm-log expert, corpus ingestion, analytics, and remote service runtime."
   :author "lost-rob0t"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.2.0"
   :serial t
-  :depends-on (#:tek9 #:jsown #:uiop)
+  :depends-on (#:tek9 #:jsown #:uiop #:woo #:bordeaux-threads
+               #:trivial-utf-8 #:ironclad)
   :components ((:file "package")
                (:file "config")
                (:file "transport")
@@ -24,4 +25,11 @@
                (:file "task-dispatch")
                (:file "outcome-dispatch")
                (:file "capture-usage")
+               (:file "capture-import")
+               (:file "analytics")
+               (:file "capture-analytics-hook")
+               (:file "analytics-dispatch")
+               (:file "corpus")
+               (:file "http")
+               (:file "commands")
                (:static-file "prolog/worker.pl")))

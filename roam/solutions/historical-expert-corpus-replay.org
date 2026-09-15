@@ -1,25 +1,53 @@
 :PROPERTIES:
 :ID:       llm-log-historical-expert-corpus-replay
 :END:
-#+title: Replay immutable captures through the single live expert owner
-#+filetags: :llm-log:solution:expert:backfill:dataset:
+#+title: Stream immutable captures directly through the Common Lisp expert owner
+#+filetags: :llm-log:solution:expert:bulk-load:infill:dataset:common-lisp:
 
 * Resolves
 [[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
 
 * Solution
-Keep =events.jsonl= immutable and replay historical rows through the same finite expert operations used by live ingest. Reuse stable capture IDs, checkpoint only a contiguous successful prefix, and persist request usage independently when historical rows have no task/pricing context.
+Keep =events.jsonl= immutable and keep the full request/response bodies there.
+For local historical ingestion, Common Lisp opens the raw JSONL directly and
+projects bounded metadata, final user-message text, authoritative token counters,
+and explicitly requested evidence into the same in-process Tek9/SWI expert host
+used by live capture.
 
-Keep the proxy-owned Common Lisp child as the only live Tek9 owner. Operator query/backfill traffic goes through a literal-loopback maintenance listener; direct second-process database access is not a maintenance mechanism.
+There are two local paths:
+- =bulk-load= performs the initial/high-volume sequential scan and creates a
+  byte-offset checkpoint;
+- =infill= seeks directly to that checkpoint and consumes only appended bytes.
 
-For corpus export, keep each expert query bounded and paginate through an outcome/assertion composite index. Join request-scoped expert examples back to the exact raw capture only after expert selection, and hash both source and export in the manifest.
+Neither path uses HTTP and neither starts a second Tek9 owner. Live proxy capture
+performs the same direct CL projection immediately after appending raw evidence.
+
+HTTP remains available only for a separately deployed expert server. That server
+is itself Common Lisp/Woo and exposes the closed typed expert protocol. Binding it
+off-loopback requires an explicit bearer token.
+
+For tens-of-gigabytes corpora, bulk-load also derives durable Tek9 analytics
+aggregates during the same pass so desktop/API readers do not repeatedly scan
+raw JSONL.
+
+For dataset export/query, keep every expert query bounded and paginate through
+typed secondary indexes. Raw captures are joined by stable IDs only when an
+export actually needs them.
 
 * Invariants
+- local bulk-load/infill never use HTTP;
+- Python is not an implementation or administration layer;
+- only one CL expert host owns Tek9 at a time;
+- checkpoints are byte offsets, not line counts;
+- checkpoint advancement follows durable successful projection;
+- replay is idempotent or conflicts explicitly;
 - transport success is not task success;
 - missing usage/task/pricing facts remain unknown rather than estimated;
-- replay is idempotent or conflicts explicitly;
-- pagination must advance or fail, never silently truncate;
-- exported labels retain expert rule/evidence provenance and raw-source identity.
+- raw large blobs remain in =events.jsonl= rather than being copied into Tek9;
+- analytics are derived once during ingest rather than by repeated corpus scans.
+
+* Design authority
+[[../../research/LLM-LOG-RESEARCH-054-cl-only-runtime-bulk-infill.org][LLM-LOG-RESEARCH-054]]
 
 * Verification
-Verified by [[../../evidence/LLM-LOG-EVIDENCE-048-historical-corpus-backfill-green.org][LLM-LOG-EVIDENCE-048]].
+Exact-head GREEN evidence is recorded only after the Common Lisp/Nix gates pass.

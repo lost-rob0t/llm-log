@@ -11,7 +11,7 @@ branch head must pass its executable gates before anything merges.
 * Document map
 | Document | Title | Status |
 |---+---+---|
-| [[file:LLM-LOG-RESEARCH-001-capture-proxy-symbolic-corpus.org][001]] | Capture proxy + symbolic corpus (ARADR-001) | APPROVED (superseded where Python is assigned runtime ownership) |
+| [[file:LLM-LOG-RESEARCH-001-capture-proxy-symbolic-corpus.org][001]] | Capture proxy + symbolic corpus (ARADR-001) | SUPERSEDED where Python was assigned runtime ownership |
 | [[file:LLM-LOG-RESEARCH-004-symbolic-expert-plane.org][004]] | ARADR-004: symbolic expert plane | APPROVED |
 | [[file:LLM-LOG-RESEARCH-005-persistent-prolog-supervisor.org][005]] | Persistent SWI-Prolog supervisor | APPROVED |
 | [[file:LLM-LOG-RESEARCH-006-runtime-reconciliation.org][006]] | Runtime reconciliation | APPROVED |
@@ -19,53 +19,53 @@ branch head must pass its executable gates before anything merges.
 | [[file:LLM-LOG-RESEARCH-008-reasoner-crash-recovery.org][008]] | Reasoner crash recovery | APPROVED |
 | [[file:LLM-LOG-RESEARCH-009-reasoner-timeout.org][009]] | Bounded reasoner timeout | APPROVED |
 | [[file:LLM-LOG-RESEARCH-010-reasoner-result-validation.org][010]] | Reasoner result validation | APPROVED |
-| [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]] | Zero-Python rewrite decision | APPROVED (governs everything below) |
-| [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] | Common Lisp runtime slices 1–2 (Nix-packaged config/CLI + HTTP transport) | IN PROGRESS (slices 1–2 GREEN) |
+| [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]] | Zero-Python rewrite decision | APPROVED |
+| [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] | Common Lisp runtime migration slices | SUPERSEDED by completed architecture in 054 |
 | [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]] | Common Lisp proxy runtime architecture reference | CURRENT |
 | [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]] | Configuration and operations guide | CURRENT |
 | [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]] | Testing and verification guide | CURRENT |
+| [[file:LLM-LOG-RESEARCH-054-cl-only-runtime-bulk-infill.org][054]] | Common Lisp-only runtime + bulk-load/infill + optional remote HTTP | CURRENT / exact-head verification pending |
 
 002 and 003 are unused numbers; earlier session notes never produced numbered
-files for them and the numbers are not recycled.
+files for them and the numbers are not recycled. Documents 016–053 cover later
+expert/accounting/outcome/data-set decisions and remain authoritative where they
+do not conflict with the runtime ownership boundary in 054.
 
 * Which document answers which question
-- *Why is llm-log being rewritten in Common Lisp?* → [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]]
-- *How does the Common Lisp proxy actually work?* → [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]]
-- *How do I configure, run, package, or deploy it?* → [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]]
-- *How are the contracts tested, and what counts as evidence?* → [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]]
-- *How does the expert plane (Tek9 + SWI-Prolog) work?* → 004–010
-- *What is the migration order and what is done?* → [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]] gates + [[file:LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org][012]] evidence
+- *What owns the runtime now?* → [[file:LLM-LOG-RESEARCH-054-cl-only-runtime-bulk-infill.org][054]]
+- *Why was Python removed?* → [[file:LLM-LOG-RESEARCH-011-zero-python-rewrite.org][011]]
+- *How does the Common Lisp proxy work?* → [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]] plus 054
+- *How do large historical corpora load?* → [[file:LLM-LOG-RESEARCH-054-cl-only-runtime-bulk-infill.org][054]]
+- *How do I configure, run, package, or deploy it?* → [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]] plus 054
+- *How are contracts tested?* → [[file:LLM-LOG-RESEARCH-015-testing-and-verification.org][015]] plus the Nix gates in 054
+- *How does the expert plane work?* → 004–010 and later expert documents
 
-* Module readmes
-- =expert/README.org= — Common Lisp expert runtime boundary (Tek9 + SWI-Prolog).
-- =proxy/= — Common Lisp capture proxy runtime; architecture in [[file:LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org][013]].
-
-* Migration status snapshot
-| Migration slice (011) | Status | Contract gate |
+* Runtime status
+| Surface | Owner | Status / gate |
 |---+---+---|
-| 1. Common Lisp config + CLI | GREEN | =checks.llm-log-config-contract= (Rove, 58 assertions) |
-| 2. HTTP transparent forwarding | GREEN | same gate (21 transport assertions, 79 total) |
-| 3. Immutable capture + redaction | pending | to be defined in slice 3 |
-| 4. Recorder actor (Sento, single writer) | pending | to be defined in slice 4 |
-| 5. SSE streaming | pending | to be defined in slice 5 |
-| 6. WebSocket relay + frame journal | pending | to be defined in slice 6 |
-| 7. Provider compatibility | pending | transparent routing already covered by slice 2 contract |
-| 8. Expert integration in the CL proxy | pending | existing expert-plane contracts |
-| 9. Delete Python (source, tests, packaging, Nix deps) | pending | repository acceptance scan |
-
-Python is migration debt: =llm_log/*.py=, =pyproject.toml=, =tests/*.py= and
-the legacy =checks.package= / =checks.expert-service-contract= harnesses remain
-only until slice 9. They must not be extended.
+| Transparent HTTP forwarding | Common Lisp / Woo | =checks.llm-log-runtime-contract= |
+| Immutable =events.jsonl= capture + redaction | Common Lisp | =checks.llm-log-runtime-contract= |
+| Provider token extraction | Common Lisp | =checks.llm-log-runtime-contract= |
+| Analytics API + durable aggregates | Common Lisp + Tek9 | =checks.llm-log-runtime-contract= + expert integration |
+| z.AI/GPT quota telemetry | Common Lisp | =checks.llm-log-runtime-contract= |
+| Expert lifecycle / persistence | Common Lisp + Tek9 + SWI-Prolog | =checks.common-lisp-expert-integration-contract= |
+| Historical bulk-load | Common Lisp direct local | corpus integration contract |
+| Incremental infill | Common Lisp direct local | corpus integration contract |
+| Remote expert HTTP | Common Lisp / Woo | typed protocol; token required off-loopback |
+| Python source | forbidden | =checks.source-language-contract= |
 
 * Hard rules every contributor must know
-1. Zero Python in the accepted implementation. No shims, no Python test
-   harness, no second rule engine in Common Lisp.
-2. RED-first: the contract must be committed and proven failing before the
-   implementation is committed; GREEN is only claimed with an observed run on
-   the exact head.
-3. Every Nix-run SBCL entrypoint loads the wrapper-provided ASDF
-   (=$ASDF=) before anything else. See [[file:LLM-LOG-RESEARCH-014-configuration-and-operations.org][014]], troubleshooting.
-4. Raw capture is immutable evidence; secrets are forwarded but redacted
-   before persistence; derived assertions never overwrite history.
-5. SWI-Prolog stays the sole inference engine; Tek9 stays the canonical
-   durable KB; Common Lisp owns orchestration only.
+1. Maintained implementation is Common Lisp. Do not add Python shims, adapters,
+   CLIs, tests, services, or packaging.
+2. Local capture, bulk-load, infill, analytics, and expert calls stay in-process
+   or direct Common Lisp; HTTP is only an optional separate-server deployment
+   boundary.
+3. Raw capture is immutable evidence. Giant bodies stay in =events.jsonl=;
+   Tek9 stores bounded derived projections and provenance.
+4. Large-corpus checkpoints are byte offsets and advance only after successful
+   durable projection.
+5. SWI-Prolog remains the sole rules/inference engine; Tek9 remains canonical
+   derived storage; Common Lisp owns lifecycle, materialization, validation,
+   transport, and persistence boundaries.
+6. Missing provider usage is unknown; never estimate token counts.
+7. HTTP/provider completion alone is not task success.

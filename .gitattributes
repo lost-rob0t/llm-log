@@ -1,0 +1,9 @@
+# SWI-Prolog is an embedded rule engine inside the Common Lisp runtime, not a
+# separate implementation surface for GitHub language accounting.
+expert/prolog/** linguist-vendored
+.prolog/** linguist-vendored
+
+# Research/evidence are documentation, not implementation language samples.
+research/** linguist-documentation
+evidence/** linguist-documentation
+roam/** linguist-documentation

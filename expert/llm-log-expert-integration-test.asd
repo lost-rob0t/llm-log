@@ -1,5 +1,5 @@
 (asdf:defsystem #:llm-log-expert-integration-test
-  :description "RED-first Common Lisp/Tek9/SWI-Prolog integration contracts for llm-log expert plane."
+  :description "Common Lisp/Tek9/SWI-Prolog integration contracts for llm-log expert plane."
   :author "lost-rob0t"
   :license "MIT"
   :depends-on (#:llm-log-expert #:rove)
@@ -27,6 +27,7 @@
                              (:file "outcome-dataset-task-cost-red")
                              (:file "capture-usage-red")
                              (:file "outcome-dataset-pagination-red")
+                             (:file "corpus-ingest")
                              (:file "task-outcome-breakdown-red")
                              (:file "task-outcome-retry-economics-red"))))
   :perform (asdf:test-op (op c)

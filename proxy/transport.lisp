@@ -1,32 +1,18 @@
 (in-package #:llm-log)
 
-;; HTTP transparent forwarding core (zero-Python rewrite, slice 2).
+;; Common Lisp transparent forwarding core.
 ;;
-;; Woo owns the inbound acceptor and request framing. Each accepted request
-;; spawns one relay thread that owns the upstream connection AND the client
-;; socket until the exchange completes: the client descriptor is switched to
-;; blocking mode and wrapped in an fd-stream, the inbound octet body is
-;; forwarded with rebuilt Host and Content-Length, hop-by-hop headers are
-;; dropped per proxy semantics, and the upstream response is relayed
-;; verbatim at the octet level so the reason phrase, duplicate headers,
-;; chunked framing and streaming timing survive.
-;;
-;; Documented tradeoff (research 012): Woo's output buffers only flush from
-;; the event-loop thread, so the relay thread bypasses them with a blocking
-;; client fd-stream. Woo's read watcher is harmless under Connection: close
-;; semantics; the 15 minute idle-timeout guard is disabled per connection by
-;; marking the woo socket closed after the relay completes.
-;; See research/LLM-LOG-RESEARCH-012-cl-runtime-slice-1.org.
+;; The inbound HTTP server owns the client socket.  llm-log never wraps or
+;; closes a server-owned file descriptor.  Provider responses are streamed
+;; through Clack's delayed-response writer while the same decoded body octets
+;; are tee'd into the immutable capture record.
 
 (defparameter +hop-by-hop-headers+
   '("connection" "keep-alive" "proxy-authenticate" "proxy-authorization"
-    "te" "trailer" "trailers" "transfer-encoding" "upgrade")
-  "Hop-by-hop headers per HTTP/1.1 proxy semantics; never forwarded.")
+    "te" "trailer" "trailers" "transfer-encoding" "upgrade"))
 
 (defparameter +hop-by-hop-request-headers+
-  (append +hop-by-hop-headers+ '("host" "content-length" "expect"))
-  "Headers dropped from the inbound request head. Host is rebuilt for the
-upstream and Content-Length is recomputed from the forwarded octets.")
+  (append +hop-by-hop-headers+ '("host" "content-length" "expect")))
 
 (defparameter +relay-buffer-size+ 65536)
 
@@ -53,11 +39,7 @@ upstream and Content-Length is recomputed from the forwarded octets.")
         host)))
 
 (defun %resolve-provider (config uri)
-  "Split the inbound target URI into VALUES provider, upstream-target,
-upstream-base-url.
-
-The first path segment selects the provider; the remainder (raw, encoding
-preserved) is appended to the configured upstream base URL."
+  "Split inbound URI into provider, origin-form target, and upstream base URL."
   (let* ((path-end (or (position #\? uri) (length uri)))
          (path (subseq uri 0 path-end))
          (query (if (< path-end (length uri)) (subseq uri path-end) ""))
@@ -71,21 +53,17 @@ preserved) is appended to the configured upstream base URL."
              (base (upstream-base-url config provider)))
         (unless base
           (return-from %resolve-provider (values provider nil nil)))
-        ;; origin-form target: path and query only; the authority is
-        ;; carried separately by the Host header
         (values provider
                 (concatenate 'string (subseq rest slash) query)
                 base)))))
 
 (defun %open-upstream (upstream-url)
-  "Open one TCP/TLS connection to UPSTREAM-URL; return the octet stream."
+  "Open one blocking TCP/TLS connection to UPSTREAM-URL."
   (let* ((uri (quri:uri upstream-url))
          (host (quri:uri-host uri))
-         (port (quri:uri-port uri))
          (scheme (quri:uri-scheme uri))
-         (port (cond (port port)
-                     ((equal scheme "https") 443)
-                     (t 80)))
+         (port (or (quri:uri-port uri)
+                   (if (equal scheme "https") 443 80)))
          (socket (usocket:socket-connect host port
                                          :element-type '(unsigned-byte 8)
                                          :timeout 30)))
@@ -96,195 +74,166 @@ preserved) is appended to the configured upstream base URL."
                 socket)
         (values (usocket:socket-stream socket) socket))))
 
+(defun %request-headers-for-upstream (env)
+  "Copy Clack headers and restore Content-Type, which Clack exposes separately."
+  (let ((result (make-hash-table :test #'equalp))
+        (headers (getf env :headers)))
+    (when headers
+      (maphash (lambda (name value) (setf (gethash name result) value)) headers))
+    (let ((content-type (getf env :content-type)))
+      (when content-type (setf (gethash "content-type" result) content-type)))
+    result))
+
 (defun %write-upstream-request (stream method target host-header headers body)
-  "Serialize one HTTP/1.1 request from METHOD, TARGET, HOST-HEADER, the
-relayable inbound HEADERS and BODY."
-  (write-sequence (%utf8-octets
-                   (format nil "~A ~A HTTP/1.1~C~C"
-                           method target #\Return #\Linefeed))
-                  stream)
-  (write-sequence (%utf8-octets
-                   (format nil "Host: ~A~C~C" host-header #\Return #\Linefeed))
-                  stream)
-  (maphash (lambda (name value)
-             (unless (%header-name-p name +hop-by-hop-request-headers+)
-               (write-sequence (%utf8-octets
-                                (format nil "~A: ~A~C~C" name value
-                                        #\Return #\Linefeed))
-                               stream)))
-           headers)
-  (write-sequence (%utf8-octets
-                   (format nil "Content-Length: ~A~C~C"
-                           (length body) #\Return #\Linefeed))
-                  stream)
+  (write-sequence
+   (%utf8-octets (format nil "~A ~A HTTP/1.1~C~C"
+                          method target #\Return #\Linefeed))
+   stream)
+  (write-sequence
+   (%utf8-octets (format nil "Host: ~A~C~C" host-header #\Return #\Linefeed))
+   stream)
+  (maphash
+   (lambda (name value)
+     (unless (%header-name-p name +hop-by-hop-request-headers+)
+       (write-sequence
+        (%utf8-octets (format nil "~A: ~A~C~C"
+                              name value #\Return #\Linefeed))
+        stream)))
+   headers)
+  (write-sequence
+   (%utf8-octets (format nil "Content-Length: ~D~C~C"
+                          (length body) #\Return #\Linefeed))
+   stream)
   (write-sequence (%crlf) stream)
-  (when (plusp (length body))
-    (write-sequence body stream))
+  (when (plusp (length body)) (write-sequence body stream))
   (force-output stream))
 
 (defun %read-head-octets (stream)
-  "Read from STREAM until CRLFCRLF; return the raw head octets including
-the terminator."
   (let ((head (make-array 0 :element-type '(unsigned-byte 8)
                           :fill-pointer 0 :adjustable t)))
-    (loop
-      for byte = (read-byte stream)
-      do (vector-push-extend byte head)
-      when (and (>= (length head) 4)
-                (= (aref head (- (length head) 4)) 13)
-                (= (aref head (- (length head) 3)) 10)
-                (= (aref head (- (length head) 2)) 13)
-                (= (aref head (- (length head) 1)) 10))
-        return head)))
+    (loop for byte = (read-byte stream)
+          do (vector-push-extend byte head)
+          when (and (>= (length head) 4)
+                    (= (aref head (- (length head) 4)) 13)
+                    (= (aref head (- (length head) 3)) 10)
+                    (= (aref head (- (length head) 2)) 13)
+                    (= (aref head (- (length head) 1)) 10))
+            return head)))
 
-(defun %relay-upstream-response (client-stream stream)
-  "Relay the upstream response verbatim: patch only the Connection header in
-the head, stream all body octets unchanged."
-  (let* ((head (%read-head-octets stream))
-         (lines (loop for line in
-                         (uiop:split-string
-                          (trivial-utf-8:utf-8-bytes-to-string head)
-                          :separator (format nil "~C~C" #\Return #\Linefeed))
-                       when (plusp (length line))
-                         collect line))
-         (head-bytes
-          (make-array 0 :element-type '(unsigned-byte 8)
-                      :fill-pointer 0 :adjustable t)))
-    (flet ((push-head-line (line)
-             (loop for byte across (%utf8-octets line)
-                   do (vector-push-extend byte head-bytes))
-             (vector-push-extend 13 head-bytes)
-             (vector-push-extend 10 head-bytes)))
-      (dolist (line lines)
-        (let ((sep (position #\: line)))
-          (unless (and sep (%header-name-p (subseq line 0 sep)
-                                          '("connection")))
-            (push-head-line line))))
-      (push-head-line "Connection: close")
-      ;; blank line terminates the response head
-      (vector-push-extend 13 head-bytes)
-      (vector-push-extend 10 head-bytes))
-    (write-sequence head-bytes client-stream)
-    (loop with buffer = (make-array +relay-buffer-size+
-                                    :element-type '(unsigned-byte 8))
-          for n = (read-sequence buffer stream)
+(defun %response-lines (head)
+  (loop for line in
+          (uiop:split-string (trivial-utf-8:utf-8-bytes-to-string head)
+                             :separator (format nil "~C~C" #\Return #\Linefeed))
+        when (plusp (length line)) collect line))
+
+(defun %parse-response-head (head)
+  "Return STATUS and ordered (NAME . VALUE) response headers."
+  (let* ((lines (%response-lines head))
+         (status-parts (uiop:split-string (first lines) :separator '(#\Space)))
+         (status (parse-integer (second status-parts)))
+         (headers
+           (loop for line in (rest lines)
+                 for sep = (position #\: line)
+                 when sep
+                   collect (cons (subseq line 0 sep)
+                                 (string-trim '(#\Space #\Tab)
+                                              (subseq line (1+ sep)))))))
+    (values status headers)))
+
+(defun %response-header (headers name)
+  (cdr (find name headers :key #'car :test #'string-equal)))
+
+(defun %response-content-length (headers)
+  (let ((raw (%response-header headers "Content-Length")))
+    (and raw (parse-integer raw :junk-allowed nil))))
+
+(defun %response-chunked-p (headers)
+  (let ((raw (%response-header headers "Transfer-Encoding")))
+    (and raw (search "chunked" raw :test #'char-equal))))
+
+(defun %read-exactly-to-sink (stream count sink)
+  (let ((remaining count)
+        (buffer (make-array +relay-buffer-size+ :element-type '(unsigned-byte 8))))
+    (loop while (plusp remaining)
+          for wanted = (min remaining (length buffer))
+          for n = (read-sequence buffer stream :end wanted)
+          do (when (zerop n) (error "upstream closed before Content-Length body"))
+             (funcall sink buffer 0 n)
+             (decf remaining n))))
+
+(defun %read-until-eof-to-sink (stream sink)
+  (let ((buffer (make-array +relay-buffer-size+ :element-type '(unsigned-byte 8))))
+    (loop for n = (read-sequence buffer stream)
           until (zerop n)
-          do (write-sequence buffer client-stream :end n))
-    (force-output client-stream)))
+          do (funcall sink buffer 0 n))))
 
-(defun %write-raw-response (client-stream status reason body-text)
-  "Write one complete plain response directly to the client stream."
-  (let ((body (%utf8-octets body-text)))
-    (write-sequence
-     (%utf8-octets
-      (format nil "HTTP/1.1 ~A ~A~C~CContent-Type: text/plain; charset=utf-8~C~C~
-Connection: close~C~CContent-Length: ~A~C~C~C~C"
-              status reason #\Return #\Linefeed #\Return #\Linefeed
-              #\Return #\Linefeed (length body) #\Return #\Linefeed
-              #\Return #\Linefeed))
-     client-stream)
-    (write-sequence body client-stream)
-    (force-output client-stream)))
+(defun %read-crlf-line (stream)
+  (with-output-to-string (out)
+    (loop for byte = (read-byte stream)
+          do (cond
+               ((= byte 13)
+                (unless (= (read-byte stream) 10)
+                  (error "malformed upstream CRLF"))
+                (return))
+               (t (write-char (code-char byte) out))))))
 
-(defun %make-blocking-client-stream (io)
-  "Wrap the Woo client descriptor in a blocking octet fd-stream owned by the
-relay thread. Woo's buffers cannot flush from a foreign thread, so the relay
-bypasses them; the descriptor is closed exactly once, by this stream."
-  (let ((fd (woo.ev.socket::socket-fd io)))
-    (sb-posix:fcntl fd sb-posix:f-setfl
-                    (logandc2 (sb-posix:fcntl fd sb-posix:f-getfl)
-                              sb-posix:o-nonblock))
-    (sb-sys:make-fd-stream fd
-                           :input nil
-                           :output t
-                           :element-type '(unsigned-byte 8)
-                           :buffering :none)))
+(defun %read-chunked-to-sink (stream sink)
+  "Decode upstream chunk framing while preserving body-chunk timing."
+  (loop
+    for size-line = (%read-crlf-line stream)
+    for semi = (position #\; size-line)
+    for size = (parse-integer (if semi (subseq size-line 0 semi) size-line)
+                              :radix 16 :junk-allowed nil)
+    do (if (zerop size)
+           (progn
+             ;; consume trailers through their terminating empty line
+             (loop for trailer = (%read-crlf-line stream)
+                   until (zerop (length trailer)))
+             (return))
+           (progn
+             (%read-exactly-to-sink stream size sink)
+             (unless (and (= (read-byte stream) 13)
+                          (= (read-byte stream) 10))
+               (error "malformed upstream chunk terminator"))))))
+
+(defun %relay-response-body (stream headers sink)
+  (cond
+    ((%response-chunked-p headers)
+     (%read-chunked-to-sink stream sink))
+    ((%response-content-length headers)
+     (%read-exactly-to-sink stream (%response-content-length headers) sink))
+    (t
+     (%read-until-eof-to-sink stream sink))))
+
+(defun %clack-header-key (name)
+  (intern (string-upcase name) :keyword))
+
+(defun %downstream-headers (headers)
+  "Convert ordered upstream headers to a Clack plist and reframe downstream.
+
+Transfer-Encoding is owned by the downstream server.  Connection is always
+closed after a provider exchange, which also lets unknown-length upstream
+responses stream without inventing a Content-Length."
+  (let ((result nil))
+    (dolist (entry headers)
+      (unless (%header-name-p (car entry)
+                              (append +hop-by-hop-headers+
+                                      '("content-length")))
+        (setf result
+              (append result
+                      (list (%clack-header-key (car entry)) (cdr entry))))))
+    (append result '(:connection "close"))))
 
 (defun %request-body-octets (raw-body)
-  "Return the request body as an octet vector. Woo provides :raw-body as an
-octet vector or an input stream depending on the build."
   (etypecase raw-body
     (vector raw-body)
     (null (make-array 0 :element-type '(unsigned-byte 8)))
     (stream
      (let ((out (make-array 0 :element-type '(unsigned-byte 8)
-                            :fill-pointer 0 :adjustable t)))
-       (loop with buffer = (make-array +relay-buffer-size+
-                                       :element-type '(unsigned-byte 8))
-             for n = (read-sequence buffer raw-body)
+                            :fill-pointer 0 :adjustable t))
+           (buffer (make-array +relay-buffer-size+
+                               :element-type '(unsigned-byte 8))))
+       (loop for n = (read-sequence buffer raw-body)
              until (zerop n)
-             do (loop for i below n
-                      do (vector-push-extend (aref buffer i) out)))
+             do (loop for i below n do (vector-push-extend (aref buffer i) out)))
        out))))
-
-(defun %relay-request (client-stream config method uri headers body)
-  "Own one upstream exchange: connect, forward, relay the response."
-  (handler-case
-      (multiple-value-bind (provider upstream-target upstream-url)
-          (%resolve-provider config uri)
-        (cond
-          ((or (null provider) (null upstream-url))
-           (%write-raw-response client-stream 404 "Not Found"
-                                (format nil "unknown upstream: ~A" provider)))
-          (t
-           (multiple-value-bind (stream socket)
-               (%open-upstream upstream-url)
-             (unwind-protect
-                  (progn
-                    (%write-upstream-request
-                     stream (string-upcase (symbol-name method))
-                     upstream-target
-                     (%upstream-host-header (quri:uri upstream-url))
-                     headers body)
-                    (%relay-upstream-response client-stream stream))
-               (ignore-errors (close stream))
-               (when socket
-                 (ignore-errors (usocket:socket-close socket))))))))
-    (error (condition)
-      (ignore-errors
-       (%write-raw-response client-stream 502 "Bad Gateway"
-                            (format nil "upstream request failed: ~A"
-                                    condition))))))
-
-(defun %make-proxy-app (config)
-  (lambda (env)
-    (let ((io (getf env :clack.io)))
-      (bt:make-thread
-       (lambda ()
-         (let ((client-stream (%make-blocking-client-stream io)))
-           (unwind-protect
-                (%relay-request
-                 client-stream
-                 config
-                 (getf env :request-method)
-                 (getf env :request-uri)
-                 (getf env :headers)
-                 (%request-body-octets (getf env :raw-body)))
-             ;; disable Woo's timeout guard, then close the descriptor
-             ;; exactly once, through the fd-stream
-             (setf (woo.ev.socket::socket-open-p io) nil)
-             (ignore-errors (close client-stream)))))
-       :name "llm-log-relay")
-      (lambda (respond)
-        (declare (ignore respond))))))
-
-(defun start-proxy (config)
-  "Start the transparent capture proxy for CONFIG; return a proxy-server."
-  (let ((thread
-          (bt:make-thread
-           (lambda ()
-             (woo:run (%make-proxy-app config)
-                      :port (runtime-config-port config)
-                      :address (runtime-config-listen-address config)
-                      :worker-num nil
-                      :debug nil))
-           :name "llm-log-proxy")))
-    (make-proxy-server :thread thread :config config)))
-
-(defun stop-proxy (server)
-  "Stop a proxy started by START-PROXY. The event loop thread is destroyed;
-production deployments stop via process termination (systemd)."
-  (let ((thread (proxy-server-thread server)))
-    (when thread
-      (ignore-errors (bt:destroy-thread thread))))
-  server)
