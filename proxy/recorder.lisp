@@ -172,7 +172,7 @@
              (cons "input_tokens" input-tokens)
              (cons "output_tokens" output-tokens)
              (cons "total_tokens" (and input-tokens output-tokens
-                                        (+ input-tokens output-tokens)))))))
+                                        (+ input-tokens output-tokens))))))
       event)))
 
 (defun append-capture-event (data-directory event)
