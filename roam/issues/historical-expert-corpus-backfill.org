@@ -1,0 +1,25 @@
+:PROPERTIES:
+:ID:       4a6621dc-4d08-44ac-ad7c-d973ee12653c
+:END:
+#+title: Historical raw captures do not populate newer expert projections
+#+filetags: :llm-log:issue:expert:backfill:dataset:
+
+* Symptom
+Older =events.jsonl= records remain valid lossless evidence but are absent from expert
+projections introduced after those captures were recorded. Directly starting another
+expert process to inspect or rebuild the live database would violate the single Tek9
+owner boundary.
+
+* Required behavior
+- replay historical captures through declared expert operations using stable IDs;
+- resume incrementally without silently skipping a failed record;
+- persist provider usage without inventing task or pricing context;
+- query the live expert through a bounded read-only interface;
+- export the complete outcome dataset beyond one bounded query page while retaining
+  raw-capture and expert provenance.
+
+* Design
+See [[../../research/LLM-LOG-RESEARCH-053-historical-corpus-backfill-query-export.org][LLM-LOG-RESEARCH-053]].
+
+* Resolution
+Pending verified implementation on =feature/expert-backfill-query-export=.

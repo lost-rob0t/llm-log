@@ -6,6 +6,17 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
+READ_ONLY_EXPERT_OPERATIONS = frozenset(
+    {
+        "health",
+        "query_classification_history",
+        "query_outcome_history",
+        "query_outcome_dataset",
+        "query_task_accounting",
+    }
+)
+
+
 class ExpertAdapterError(RuntimeError):
     """The Common Lisp expert subprocess could not complete an exchange."""
 
@@ -121,6 +132,47 @@ class SubprocessExpertPlane:
             session_id=session_id,
             task_id=task_id,
         )
+
+    async def observe_usage(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "observe_usage",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def record_outcome_evidence(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "record_outcome_evidence",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def query(
+        self,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if operation not in READ_ONLY_EXPERT_OPERATIONS:
+            raise ValueError(f"operation is not a read-only expert query: {operation}")
+        return await self._request(operation, payload or {})
 
     async def _request(
         self,
