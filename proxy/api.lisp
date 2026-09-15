@@ -93,22 +93,23 @@
         (equal path "/docs"))))
 
 (defun %make-proxy-app (config expert-host)
-  (lambda (env)
-    (let ((uri (or (getf env :request-uri) "/")))
-      (if (%api-path-p uri)
-          (%handle-analytics-api env expert-host)
-          (let ((io (getf env :clack.io)))
-            (bt:make-thread
-             (lambda ()
-               (let ((client-stream (%make-blocking-client-stream io)))
-                 (unwind-protect
-                      (%relay-request
-                       client-stream config expert-host
-                       (getf env :request-method)
-                       uri
-                       (getf env :headers)
-                       (%request-body-octets (getf env :raw-body)))
-                   (setf (woo.ev.socket::socket-open-p io) nil)
-                   (ignore-errors (close client-stream)))))
-             :name "llm-log-relay")
-            (lambda (respond) (declare (ignore respond))))))))
+  (let ((infill-worker (gethash expert-host *proxy-infill-workers*)))
+    (lambda (env)
+      (let ((uri (or (getf env :request-uri) "/")))
+        (if (%api-path-p uri)
+            (%handle-analytics-api env expert-host)
+            (let ((io (getf env :clack.io)))
+              (bt:make-thread
+               (lambda ()
+                 (let ((client-stream (%make-blocking-client-stream io)))
+                   (unwind-protect
+                        (%relay-request
+                         client-stream config infill-worker
+                         (getf env :request-method)
+                         uri
+                         (getf env :headers)
+                         (%request-body-octets (getf env :raw-body)))
+                     (setf (woo.ev.socket::socket-open-p io) nil)
+                     (ignore-errors (close client-stream)))))
+               :name "llm-log-relay")
+              (lambda (respond) (declare (ignore respond)))))))))
