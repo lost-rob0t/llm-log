@@ -3,25 +3,23 @@
 
 let
   cfg = config.services.llm-log;
-  inherit (lib) concatMapStringsSep escapeShellArg mkEnableOption mkIf mkOption optionalString types;
+  inherit (lib) concatMapStringsSep escapeShellArg mkEnableOption mkIf mkOption types;
   system = pkgs.stdenv.hostPlatform.system;
   upstreamNames = builtins.sort builtins.lessThan (builtins.attrNames cfg.upstreams);
   upstreamArgs = concatMapStringsSep " "
     (name: "--upstream ${escapeShellArg "${name}=${cfg.upstreams.${name}}"}")
     upstreamNames;
   extraArgs = concatMapStringsSep " " escapeShellArg cfg.extraArgs;
-  expertDataDirArg = optionalString cfg.expert.enable
-    "--expert-data-dir ${escapeShellArg cfg.expert.dataDir}";
-  command = concatMapStringsSep " " (value: value) (builtins.filter (value: value != "") [
+  command = concatMapStringsSep " " (value: value) [
     "${cfg.package}/bin/llm-log"
     "serve"
     "--listen ${escapeShellArg cfg.listenAddress}"
     "--port ${toString cfg.port}"
     "--data-dir ${escapeShellArg cfg.dataDir}"
-    expertDataDirArg
+    "--expert-data-dir ${escapeShellArg cfg.expert.dataDir}"
     upstreamArgs
     extraArgs
-  ]);
+  ];
 in
 {
   options.services.llm-log = {
@@ -54,11 +52,11 @@ in
     };
 
     # Compatibility option retained for existing consumers. Classification is
-    # now owned by the in-process CL/Tek9/SWI expert and is not a Python toggle.
+    # always owned by the in-process CL/Tek9/SWI expert.
     enablePrologClassifier = mkOption {
       type = types.bool;
       default = true;
-      description = "Compatibility flag; the Common Lisp expert owns classification.";
+      description = "Compatibility flag; classification is an in-process Common Lisp expert feature.";
     };
 
     upstreams = mkOption {
@@ -73,16 +71,20 @@ in
     };
 
     expert = {
-      enable = mkEnableOption "in-process Common Lisp llm-log expert plane";
+      # The expert is now a mandatory in-process runtime component. Keep this
+      # option for consumer compatibility, but default it on and do not use it
+      # to fork a child process or disable the embedded expert.
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Compatibility flag; the Common Lisp expert is embedded in llm-log.";
+      };
 
-      # Retained so existing dotfiles using this option continue to evaluate.
-      # The default llm-log package already contains the expert system and does
-      # not spawn this package as a child.
       package = mkOption {
         type = types.package;
         default = self.packages.${system}.llm-log-expert;
         defaultText = lib.literalExpression "inputs.llm-log.packages.${pkgs.stdenv.hostPlatform.system}.llm-log-expert";
-        description = "Standalone CL expert package for remote/bulk administration.";
+        description = "Standalone CL expert package for bulk administration or remote deployment.";
       };
 
       dataDir = mkOption {
@@ -95,7 +97,7 @@ in
       require = mkOption {
         type = types.bool;
         default = false;
-        description = "Compatibility option retained for existing configurations.";
+        description = "Compatibility option retained for existing configurations; the embedded expert is always present.";
       };
     };
 
@@ -108,13 +110,6 @@ in
 
   config = mkIf cfg.enable {
     home.packages = [ cfg.package cfg.expert.package ];
-
-    assertions = [
-      {
-        assertion = cfg.expert.enable;
-        message = "services.llm-log.expert.enable must be true: the CL expert is now a core in-process runtime component";
-      }
-    ];
 
     systemd.user.services.llm-log = {
       Unit = {
