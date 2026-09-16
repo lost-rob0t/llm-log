@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from llm_log.proxy import build_app
 from llm_log.recorder import RecorderActor
@@ -85,7 +85,8 @@ class StreamIntegrityTest(unittest.IsolatedAsyncioTestCase):
         return response
 
     async def _post(self, path):
-        async with ClientSession() as session:
+        timeout = ClientTimeout(total=3)
+        async with ClientSession(timeout=timeout) as session:
             async with session.post(
                 f"{self.proxy_url}/test{path}",
                 json={"model": "stream-model", "messages": [{"role": "user", "content": "go"}]},
