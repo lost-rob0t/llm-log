@@ -14,6 +14,7 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:llm-log-live-expert-response-observation][Live captures lacked response and usage expert observations]]
 - [[id:llm-log-typed-transport-error-evidence][Proxy failures lacked typed transport evidence]]
 - [[id:llm-log-retry-routing-correlation-gap][Transport failures lacked router-attempt and retry-recovery correlation]]
+- [[id:llm-log-transport-alert-policy-gap][Typed transport errors lacked class-specific alert decisions]]
 
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
@@ -24,3 +25,4 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:llm-log-provenance-safe-response-observation][Provenance-safe response and usage observation]]
 - [[id:llm-log-separate-transport-error-evidence][Separate typed transport error evidence from immutable captures]]
 - [[id:llm-log-safe-router-retry-correlation][Safe router-attempt and retry-recovery correlation]]
+- [[id:llm-log-class-specific-transport-alert-policy][Class-specific transport alert decision stream]]

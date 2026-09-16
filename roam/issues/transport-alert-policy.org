@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       llm-log-transport-alert-policy-gap
+:END:
+#+title: Typed transport errors lacked class-specific alert decisions
+#+filetags: :llm-log:issue:transport:alerts:policy:
+
+* Problem
+Issue #61 requires alert severity and rate policy to differ by transport-failure class. Typed =errors.jsonl= from the earlier slice identifies the failure domain, and retry correlation identifies likely self-healing, but without an explicit policy projection every future notifier would need to reinvent whether a client disconnect, account limit, transient upstream reset, or stream-integrity failure deserves an alert.
+
+That would reintroduce the attribution mistakes the transport classifier was built to eliminate. In particular, a downstream client disconnect must never become a provider alert, while an account/gateway quota failure should not be grouped by model. A transient provider failure should be allowed to self-heal during the retry-correlation grace window before notification delivery is considered.
+
+* Constraints
+- Client disconnects are =log_only= with informational severity and no notification allowance.
+- Account/gateway failures are immediate warning-level alert decisions with a long 900-second rate window and at most one notification per window. Model attribution remains absent.
+- Provider/router transient failures are =alert_if_unrecovered= with the existing ten-second retry-recovery grace and a 60-second rate window.
+- Stream protocol/integrity failures use a distinct =protocol_integrity= rate class and a longer 300-second rate window.
+- A correlated recovery emits an explicit =suppress_recovered= decision linked to the failed event.
+- Persist only safe policy metadata; request hashes and router-attempt provider details do not belong in the alert-decision projection.
+- Policy projection failures must never block immutable capture, transport-error persistence, routing/recovery evidence, expert projection, or client forwarding.
+- This slice defines decisions only. External email, Discord, webhook, pager, or other notification delivery remains a separate concern.
+
+* Resolution
+Implemented by [[id:llm-log-class-specific-transport-alert-policy][Class-specific transport alert decision stream]].

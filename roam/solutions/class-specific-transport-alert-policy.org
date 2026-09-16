@@ -1,0 +1,30 @@
+:PROPERTIES:
+:ID:       llm-log-class-specific-transport-alert-policy
+:END:
+#+title: Class-specific transport alert decision stream
+#+filetags: :llm-log:solution:transport:alerts:policy:
+
+* Solves
+[[id:llm-log-transport-alert-policy-gap][Typed transport errors lacked class-specific alert decisions]]
+
+* Approach
+Represent alerting as a safe, append-only decision projection instead of embedding a notification transport in the proxy. =AlertPolicyRule= maps typed transport evidence to an action, severity, recovery grace, rate class, rate window, and maximum notification allowance. =AlertPolicyActor= serializes those projections into =alert-decisions.jsonl=.
+
+The policy is intentionally class-specific:
+- downstream/client disconnect: =log_only=, =info=, no notification allowance;
+- account/gateway failure: immediate =alert=, =warning=, =account_gateway=, 900-second rate window, one notification allowance;
+- transient provider/router failure: =alert_if_unrecovered=, =warning=, ten-second retry grace, 60-second rate window;
+- stream protocol/integrity failure: =alert_if_unrecovered= with the same ten-second grace but a distinct =protocol_integrity= class and 300-second rate window;
+- unknown transport failure: immediate warning-level alert policy with a bounded 60-second rate window.
+
+The existing =CorrelationActor= owns the live provider-error/recovery policy bridge. When it receives a typed error it sends the safe error projection to =AlertPolicyActor= without allowing policy failure to poison the correlation actor. When retry correlation later produces a recovery, it emits a second =suppress_recovered= decision linked to the original failed event. This gives a future dispatcher enough evidence to wait for recovery grace and cancel a pending notification without teaching the proxy how to send mail, Discord messages, webhooks, or pages.
+
+The decision projection deliberately omits =request_sha256= and routing-attempt provider details. Account/gateway errors inherit the earlier model-attribution safeguard and keep =model= absent.
+
+* Verification
+- API RED head =3c3bf00eac16655c9307d961fee00ef21ef581c3=: 127 tests ran; exactly six new alert-policy tests errored because =llm_log.alert_policy= did not exist. Every inherited #86-#89 contract stayed green.
+- Behavioral RED head =bfae8fb3e864c71e21aa5e7f063b6e77c7eff07e=: 128 tests ran; all six policy API tests passed and exactly one live test failed because =alert-decisions.jsonl= was not produced. That isolated live wiring from policy semantics.
+- Live wiring head =a9a8134cff36e4322f0bbf99d26d6fffa14c16a2=: Analytics and Quota exact-head workflows both passed, including full Python regression, adversarial analytics, and delivered package build. The live failed-request -> successful-retry fixture now persists =alert_if_unrecovered= followed by =suppress_recovered=.
+
+* Boundary
+This is a policy/decision stream, not a notification dispatcher. The fields describe when and how aggressively a future notifier may act; this code does not contact any external notification service. Model/structured-output anomaly classification remains separate from the transport domain.
