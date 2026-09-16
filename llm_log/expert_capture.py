@@ -111,6 +111,55 @@ def expert_request_payload(event: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def expert_response_payload(event: Mapping[str, Any]) -> dict[str, Any]:
+    event_id = _required_string(event, "event_id")
+    payload = expert_request_payload(event)
+
+    response_status = event.get("response_status")
+    if not isinstance(response_status, int) or isinstance(response_status, bool):
+        raise ValueError("capture event response_status must be an integer")
+
+    latency_ms = event.get("latency_ms")
+    if (
+        not isinstance(latency_ms, int)
+        or isinstance(latency_ms, bool)
+        or latency_ms < 0
+    ):
+        raise ValueError("capture event latency_ms must be a non-negative integer")
+
+    status_kind = event.get("status_kind", "upstream")
+    if not isinstance(status_kind, str) or not status_kind:
+        raise ValueError("capture event status_kind must be a non-empty string")
+
+    stream_completed = event.get("stream_completed")
+    if stream_completed is not None and not isinstance(stream_completed, bool):
+        raise ValueError("capture event stream_completed must be boolean or null")
+    stream_state = (
+        "completed"
+        if stream_completed is True
+        else "incomplete"
+        if stream_completed is False
+        else "unknown"
+    )
+
+    finish_reason = event.get("finish_reason")
+    if finish_reason is not None and (
+        not isinstance(finish_reason, str) or not finish_reason
+    ):
+        raise ValueError("capture event finish_reason must be a non-empty string or null")
+
+    return {
+        **payload,
+        "request_id": event_id,
+        "response_status": response_status,
+        "status_kind": status_kind,
+        "latency_ms": latency_ms,
+        "stream_completed": stream_completed,
+        "stream_state": stream_state,
+        "finish_reason": finish_reason,
+    }
+
+
 def expert_usage_payload(event: Mapping[str, Any]) -> dict[str, Any] | None:
     event_id = _required_string(event, "event_id")
     token_fields = {
@@ -196,6 +245,13 @@ async def replay_capture_event(
             task_id="backfill",
         )
 
+    response = await expert_plane.observe_response(
+        event_id=event_id,
+        payload=expert_response_payload(event),
+        session_id="backfill",
+        task_id="backfill",
+    )
+
     usage = None
     usage_payload = expert_usage_payload(event)
     if usage_payload is not None:
@@ -220,6 +276,7 @@ async def replay_capture_event(
         "event_id": event_id,
         "request": observed,
         "classification": classified,
+        "response": response,
         "usage": usage,
         "transport_outcome": outcome,
     }
