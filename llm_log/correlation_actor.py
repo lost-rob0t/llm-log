@@ -5,16 +5,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .alert_policy import AlertPolicyActor
 from .recovery import RecoveryCandidate, RetryRecoveryEvidence, RetryRecoveryTracker
 from .routing import RoutingObservation
 from .transport_errors import TransportErrorEvidence
 
 
 class CorrelationActor:
-    """Single owner for derived routing and retry-recovery evidence.
+    """Single owner for derived routing, recovery, and alert-decision evidence.
 
     Raw captures and typed transport errors remain owned by RecorderActor. This actor
-    only persists projections that can be rebuilt from those append-only sources.
+    persists projections that can be rebuilt from those append-only sources and sends
+    transport/recovery observations to one serialized alert-policy actor.
     """
 
     def __init__(self, root: str | Path) -> None:
@@ -29,12 +31,14 @@ class CorrelationActor:
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
         self._failure: BaseException | None = None
+        self._alert_policy = AlertPolicyActor(self.root)
 
     async def start(self) -> None:
         async with self._state_lock:
             if self._task is not None:
                 return
             self.root.mkdir(parents=True, exist_ok=True)
+            await self._alert_policy.start()
             self._task = asyncio.create_task(self._run(), name="llm-log-correlation")
 
     async def observe_routing(self, observation: RoutingObservation) -> None:
@@ -64,17 +68,20 @@ class CorrelationActor:
         future = asyncio.get_running_loop().create_future()
         await self._queue.put(("flush", None, future))
         await future
+        await self._alert_policy.flush()
 
     async def close(self) -> None:
         async with self._state_lock:
             task = self._task
             if task is None:
+                await self._alert_policy.close()
                 return
             future = asyncio.get_running_loop().create_future()
             await self._queue.put(("close", None, future))
             await future
             await task
             self._task = None
+            await self._alert_policy.close()
 
     @staticmethod
     def _write_jsonl(handle, payload: dict[str, Any]) -> None:
@@ -82,6 +89,18 @@ class CorrelationActor:
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
         )
         handle.flush()
+
+    async def _safe_alert_error(self, error: TransportErrorEvidence) -> None:
+        try:
+            await self._alert_policy.observe_error(error)
+        except Exception:
+            pass
+
+    async def _safe_alert_recovery(self, recovery: RetryRecoveryEvidence) -> None:
+        try:
+            await self._alert_policy.observe_recovery(recovery)
+        except Exception:
+            pass
 
     async def _run(self) -> None:
         tracker = RetryRecoveryTracker.load(self.root)
@@ -106,12 +125,14 @@ class CorrelationActor:
                     elif op == "error":
                         assert isinstance(payload, TransportErrorEvidence)
                         tracker.observe_error(payload)
+                        await self._safe_alert_error(payload)
                     elif op == "success":
                         assert isinstance(payload, RecoveryCandidate)
                         result = tracker.match_success(payload)
                         if result is not None:
                             self._write_jsonl(recoveries, result.as_json())
                             tracker.commit_recovery(result)
+                            await self._safe_alert_recovery(result)
                     elif op == "flush":
                         routing.flush()
                         recoveries.flush()
