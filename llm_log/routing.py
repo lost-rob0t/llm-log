@@ -126,9 +126,33 @@ def _attempt_from_mapping(value: Mapping[str, Any]) -> RouterAttempt | None:
     return RouterAttempt(provider=provider, status=status, error_code=error_code)
 
 
-def _metadata_attempts(document: Mapping[str, Any]) -> list[RouterAttempt]:
+def _openrouter_metadata(document: Mapping[str, Any]) -> Mapping[str, Any] | None:
     metadata = document.get("openrouter_metadata")
-    if not isinstance(metadata, Mapping):
+    return metadata if isinstance(metadata, Mapping) else None
+
+
+def _metadata_selected_provider(document: Mapping[str, Any]) -> str | None:
+    metadata = _openrouter_metadata(document)
+    if metadata is None:
+        return None
+    endpoints = metadata.get("endpoints")
+    if not isinstance(endpoints, Mapping):
+        return None
+    available = endpoints.get("available")
+    if not isinstance(available, list):
+        return None
+    for endpoint in available:
+        if not isinstance(endpoint, Mapping) or endpoint.get("selected") is not True:
+            continue
+        provider = _safe_label(endpoint.get("provider")) or _safe_label(endpoint.get("provider_name"))
+        if provider is not None:
+            return provider
+    return None
+
+
+def _metadata_attempts(document: Mapping[str, Any]) -> list[RouterAttempt]:
+    metadata = _openrouter_metadata(document)
+    if metadata is None:
         return []
     raw_attempts = metadata.get("attempts")
     if not isinstance(raw_attempts, list):
@@ -172,7 +196,10 @@ def observe_openrouter_routing(
     seen_attempts: set[tuple[str | None, int | None, int | str | None]] = set()
 
     for document in _documents(response_body):
-        disclosed_provider = _safe_label(document.get("provider"))
+        disclosed_provider = (
+            _safe_label(document.get("provider"))
+            or _metadata_selected_provider(document)
+        )
         if disclosed_provider is not None:
             selected_provider = disclosed_provider
 
