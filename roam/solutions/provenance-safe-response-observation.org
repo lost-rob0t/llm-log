@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID:       llm-log-provenance-safe-response-observation
+:END:
+#+title: Provenance-safe response and usage observation
+#+filetags: :llm-log:solution:expert:capture:
+
+* Solves
+[[id:llm-log-live-expert-response-observation][Live captures lacked response and usage expert observations]]
+
+* Approach
+After =RecorderActor.record= commits an immutable capture, schedule bounded expert observations from the same =CaptureEvent=. Project the request first, then independently attempt classification, response observation, and provider-reported usage observation. Every expert call is best-effort so a failed derived projection cannot block or corrupt forwarding.
+
+The response payload includes the stable event/request ID, provider/model/transport, completion timestamp, response SHA-256, HTTP status, terminal status kind, latency, normalized stream state, and provider finish reason when present. It never includes the raw response body. The Common Lisp expert host persists this as immutable =response:<event-id>= state and verifies that its response hash and source metadata match the already-projected request event.
+
+Usage is emitted only when the captured provider response contains authoritative token counters. Historical replay uses the same response and usage payload builders, keeping live and backfilled expert graphs aligned.
+
+* Verification
+- RED head =186f74a0374219d92c523afaf61150c20a4c8faa=: 103 tests ran; exactly the four new live/adapter/service response contracts failed.
+- Implementation head =7aaf3ddc22e8fe3157f11878125869aaf776f098=: expert-plane contracts and quota/package workflow passed; full Python and adversarial analytics tests passed.
+- =tests/test_expert_response_ingest.py= verifies safe live response/usage delivery and missing-usage behavior.
+- =tests/test_expert_response_contract.py= verifies the subprocess adapter and durable Common Lisp response projection.
+- =tests/test_expert_backfill.py= verifies live/backfill response projection parity.
