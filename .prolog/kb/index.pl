@@ -4,3 +4,4 @@
 :- ensure_loaded('expert-maintenance.pl').
 :- ensure_loaded('expert-observation.pl').
 :- ensure_loaded('transport-errors.pl').
+:- ensure_loaded('retry-routing-correlation.pl').
