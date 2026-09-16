@@ -110,6 +110,11 @@ class RetryRecoveryTrackerTest(unittest.TestCase):
         self.assertEqual(recovery.failed_selected_provider, "ProviderA")
         self.assertEqual(recovery.retry_selected_provider, "ProviderB")
         self.assertIs(recovery.provider_changed, True)
+        self.assertEqual(
+            recovery.correlation_basis,
+            "byte_identical_request_sha256_within_window",
+        )
+        self.assertEqual(recovery.confidence, "heuristic")
 
         tracker.commit_recovery(recovery)
         second = tracker.match_success(candidate(event_id="retry-2"))
