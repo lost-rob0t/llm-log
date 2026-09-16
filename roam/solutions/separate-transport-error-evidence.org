@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       llm-log-separate-transport-error-evidence
+:END:
+#+title: Separate typed transport error evidence from immutable captures
+#+filetags: :llm-log:solution:transport:errors:
+
+* Solves
+[[id:llm-log-typed-transport-error-evidence][Proxy failures lacked typed transport evidence]]
+
+* Approach
+Persist transport failures as append-only =errors.jsonl= records linked by =event_id= and request SHA, while keeping raw =events.jsonl= semantics unchanged. The classifier emits a closed transport-domain taxonomy for downstream client disconnects, upstream connection resets, upstream HTTP failures, router/in-stream failures, silent stream truncation, and unknown transport failures.
+
+Downstream disconnects are detected at the response write boundary. They produce client-attributed transport evidence but intentionally do not create a completed CaptureEvent, preventing the disconnect from polluting provider failure statistics. Completed captures are classified only after the immutable event is recorded.
+
+For HTTP/SSE responses the classifier parses bounded JSON structure only to retain safe error codes and detect router metadata; raw error messages and bodies are never copied into =errors.jsonl=. HTTP 401/403/429 evidence uses =gateway_or_account= attribution rather than pretending the selected model/provider endpoint owns the quota failure. Silent SSE EOF uses =stream_completed=false= from the terminal-integrity contract.
+
+* Verification
+- RED head =e3aed841e0cc41c48180de2938ff7f4832d65534=: 110 tests ran; exactly five new transport-error cases failed while the no-error control passed. The client-disconnect fixture reproduced aiohttp =ClientConnectionResetError: Cannot write to closing transport=.
+- Implementation head =2af15cea6cb6a0fd0aa553ac8d5aa1be6c565038=: full Python regression and adversarial analytics contracts passed; quota exact-head workflow passed and built the delivered package.
+- =tests/test_transport_error_evidence.py= covers client attribution, upstream reset, HTTP/account failure, OpenRouter in-stream error under 200, silent SSE truncation, metadata redaction, and success/no-error behavior.
+
+* Boundary
+This is the core event taxonomy and durable sink for #61. Provider-attempt correlation, alert policy, retry-chain reasoning, and model anomaly detection remain separate follow-up work; this solution does not claim the entire issue is closed.
