@@ -1,0 +1,20 @@
+:PROPERTIES:
+:ID:       16deebed-a87e-4070-913f-dc9015ad5ca7
+:END:
+#+title: Streaming captures need terminal integrity evidence
+#+filetags: :llm-log:issue:capture:streaming:
+
+* Problem
+HTTP streaming capture only retained the upstream connect-time status. If an upstream SSE response died after the downstream response had already been prepared, the proxy attempted to construct a second =502= response, which is not a valid aiohttp response lifecycle. The journal could therefore retain =response_status= 200 while giving consumers no evidence that the stream was truncated.
+
+GitHub issue: https://github.com/lost-rob0t/llm-log/issues/67
+
+* Constraints
+- Never replace an already-prepared downstream response with a second response.
+- Preserve the actual upstream status, headers, and bytes already relayed.
+- Treat SSE completion as unknown until protocol-level terminal evidence is observed; clean transport EOF alone is not completion.
+- Keep non-SSE completion unknown rather than inventing a boolean.
+- Preserve existing provider-reported token accounting semantics.
+
+* Resolution
+Implemented by [[id:e8a2e27e-f63b-482c-bfbd-097c0926ad15][SSE terminal integrity capture]].

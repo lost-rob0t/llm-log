@@ -1,0 +1,20 @@
+:PROPERTIES:
+:ID:       e8a2e27e-f63b-482c-bfbd-097c0926ad15
+:END:
+#+title: SSE terminal integrity capture
+#+filetags: :llm-log:solution:capture:streaming:
+
+* Solves
+[[id:16deebed-a87e-4070-913f-dc9015ad5ca7][Streaming captures need terminal integrity evidence]]
+
+* Approach
+Capture response integrity separately from the HTTP status. =status_kind= distinguishes normal upstream responses from connection failures and failures that occur after the downstream response is already prepared. A mid-stream upstream failure preserves the original status, headers, and relayed bytes, records =upstream_midstream_error=, and terminates the existing downstream stream instead of constructing a second HTTP response.
+
+For =text/event-stream= responses, persist =stream_completed= only from protocol evidence. OpenAI-compatible =[DONE]= frames, provider finish/stop-reason fields, and known terminal SSE event types mark terminal completion. A clean transport EOF without terminal evidence records =stream_completed=false=. Non-SSE responses keep =stream_completed=null=. Provider finish reasons are retained in =finish_reason= without synthesizing missing values.
+
+* Verification
+- RED head =74623584b1accf48993ac3fe0c885514d82d46fa=: the full Python suite ran 99 tests and only the three new stream-integrity contracts failed; the abrupt-stream contract reproduced the bounded hang.
+- GREEN code head =5fa75afa40f15747fdf0a5f1fe8bd0d8f57e9e54=: both exact-head GitHub Actions workflows passed.
+- =Analytics API= run 21 passed the complete Python regression suite.
+- =Quota telemetry exact-head contract= run 26 passed the complete Python regression suite and =Build delivered Python capture package=.
+- Regression coverage lives in =tests/test_stream_integrity.py=.

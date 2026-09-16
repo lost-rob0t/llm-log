@@ -99,6 +99,18 @@ _OUTPUT_TOKEN_KEYS = (
     "outputTokens",
     "eval_count",
 )
+_FINISH_REASON_KEYS = (
+    "finish_reason",
+    "finishReason",
+    "stop_reason",
+    "stopReason",
+)
+_TERMINAL_SSE_TYPES = {
+    "message_stop",
+    "response.completed",
+    "response.failed",
+    "response.incomplete",
+}
 
 
 def _nonnegative_int(value: Any) -> int | None:
@@ -176,6 +188,60 @@ def token_usage(response_body: bytes) -> tuple[int | None, int | None]:
     return (max(incoming) if incoming else None, max(outgoing) if outgoing else None)
 
 
+def _find_finish_reason(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key in _FINISH_REASON_KEYS:
+            reason = value.get(key)
+            if isinstance(reason, str) and reason:
+                return reason
+        for child in value.values():
+            reason = _find_finish_reason(child)
+            if reason is not None:
+                return reason
+    elif isinstance(value, list):
+        for child in value:
+            reason = _find_finish_reason(child)
+            if reason is not None:
+                return reason
+    return None
+
+
+def _stream_state(
+    response_headers: Mapping[str, str],
+    response_body: bytes,
+) -> tuple[bool | None, str | None]:
+    content_type = next(
+        (
+            value
+            for name, value in response_headers.items()
+            if name.lower() == "content-type"
+        ),
+        "",
+    )
+    if "text/event-stream" not in content_type.lower():
+        return None, None
+
+    try:
+        decoded = response_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, None
+
+    completed = any(
+        line.strip().removeprefix("data:").strip() == "[DONE]"
+        for line in decoded.splitlines()
+        if line.strip().startswith("data:")
+    )
+    finish_reason = None
+    for document in _json_documents(response_body):
+        reason = _find_finish_reason(document)
+        if reason is not None:
+            finish_reason = reason
+            completed = True
+        if isinstance(document, dict) and document.get("type") in _TERMINAL_SSE_TYPES:
+            completed = True
+    return completed, finish_reason
+
+
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -244,6 +310,9 @@ class CaptureEvent:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    status_kind: str = "upstream"
+    stream_completed: bool | None = None
+    finish_reason: str | None = None
 
     @classmethod
     def from_bytes(
@@ -265,6 +334,7 @@ class CaptureEvent:
         latency_ms: int,
         intents: Sequence[str] = (),
         transport: str = "http",
+        status_kind: str = "upstream",
     ) -> "CaptureEvent":
         input_tokens, output_tokens = token_usage(response_body)
         total_tokens = (
@@ -272,6 +342,7 @@ class CaptureEvent:
             if input_tokens is not None and output_tokens is not None
             else None
         )
+        stream_completed, finish_reason = _stream_state(response_headers, response_body)
         return cls(
             event_id=event_id,
             provider=provider,
@@ -295,6 +366,9 @@ class CaptureEvent:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            status_kind=status_kind,
+            stream_completed=stream_completed,
+            finish_reason=finish_reason,
         )
 
     def as_json(self) -> dict[str, Any]:
