@@ -109,6 +109,21 @@ def _tool_call_fragments(document: Mapping[str, Any]) -> list[tuple[int, Mapping
     return fragments
 
 
+def _merge_tool_name(current: str, fragment: str) -> str:
+    """Merge provider name fragments without duplicating cumulative repeats."""
+    if not current:
+        return fragment[:_MAX_TOOL_NAME_LENGTH]
+    if fragment == current or current.endswith(fragment):
+        return current
+    if fragment.startswith(current):
+        return fragment[:_MAX_TOOL_NAME_LENGTH]
+    if current.startswith(fragment):
+        return current
+    if len(current) + len(fragment) > _MAX_TOOL_NAME_LENGTH:
+        return current
+    return current + fragment
+
+
 def reconstruct_tool_calls(response_body: bytes) -> list[ReconstructedToolCall]:
     accumulators: dict[int, dict[str, Any]] = {}
 
@@ -116,7 +131,7 @@ def reconstruct_tool_calls(response_body: bytes) -> list[ReconstructedToolCall]:
         for index, fragment in _tool_call_fragments(document):
             state = accumulators.setdefault(
                 index,
-                {"tool_call_id": None, "name_parts": [], "argument_parts": []},
+                {"tool_call_id": None, "name": "", "argument_parts": []},
             )
 
             tool_call_id = _safe_string(fragment.get("id"), limit=512)
@@ -129,9 +144,7 @@ def reconstruct_tool_calls(response_body: bytes) -> list[ReconstructedToolCall]:
 
             name = function.get("name")
             if isinstance(name, str) and name:
-                current_length = sum(len(part) for part in state["name_parts"])
-                if current_length + len(name) <= _MAX_TOOL_NAME_LENGTH:
-                    state["name_parts"].append(name)
+                state["name"] = _merge_tool_name(state["name"], name)
 
             arguments = function.get("arguments")
             if isinstance(arguments, str):
@@ -140,7 +153,7 @@ def reconstruct_tool_calls(response_body: bytes) -> list[ReconstructedToolCall]:
     calls: list[ReconstructedToolCall] = []
     for index in sorted(accumulators):
         state = accumulators[index]
-        name_text = "".join(state["name_parts"])
+        name_text = state["name"]
         calls.append(
             ReconstructedToolCall(
                 index=index,
