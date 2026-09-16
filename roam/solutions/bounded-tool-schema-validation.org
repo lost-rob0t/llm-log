@@ -1,0 +1,28 @@
+:PROPERTIES:
+:ID:       llm-log-bounded-tool-schema-validation
+:END:
+#+title: Bounded supplied-schema validation for tool arguments
+#+filetags: :llm-log:solution:model:anomaly:tools:schema:
+
+* Solves
+[[id:llm-log-tool-argument-schema-conformance-gap][Valid tool-call JSON lacked supplied schema conformance evidence]]
+
+* Approach
+Extend the observe-only tool-call detector after complete reconstruction and JSON decoding. Request parsing builds two bounded structures: the declared tool-name set and a matching name -> =parameters= schema map. A reconstructed call is schema-validated only when its name exactly matches the request declaration and its arguments already decoded successfully.
+
+=llm_log.schema_validation= wraps the upstream =jsonschema= validator behind a deliberately narrow result type: =valid=, =violation=, or =unusable=. Before invoking the validator, schema traversal is bounded to 64 levels and 4096 nodes and rejects every =$ref= that does not begin with =#=. =validator_for= selects the declared JSON Schema dialect, =check_schema= rejects invalid request contracts, and local references are resolved by the validator's normal referencing implementation. Invalid or unresolvable schemas return =unusable= and cannot create model-blame evidence.
+
+The first deterministic validation error is selected by instance path and validator keyword. The anomaly projection records only the validator keyword and an escaped JSON Pointer instance path, plus the existing tool-call index/name/argument-length metadata. It never copies =ValidationError.message=, the failing instance value, validator value, schema body, request prompt, or tool description.
+
+=tool_arguments_schema_violation= uses detector version =tool-call-schema/1=, score 0.95, high severity, and the same model-behavior/quantization boundaries as the earlier detector family. Quantization remains =unknown= unless separately grounded and does not affect the schema score.
+
+The implementation declares =jsonschema= and =referencing= directly in =pyproject.toml=, the Nix development/test Python closures, and =nix/package.nix=. This prevents CI-only dependency success and proves the delivered executable carries the same validator path.
+
+* Verification
+- RED head =8a811224f765e220a07584230a44279c8cea7adb=: 144 tests ran; exactly three schema-conformance cases failed (missing required property, nested type mismatch, local reference validation). The five new safety/blame cases already passed and every inherited contract stayed green.
+- Implementation/dependency head =7083f696d70de5c128ec8f89334b14daf432a537=: Analytics, Expert-plane, and Quota exact-head workflows all passed, including full Python regression, adversarial analytics, Common Lisp expert integration, and delivered Python package build.
+- Safety head =c19318e9609fb8e0550392d127384dc295328ef6=: all three exact-head workflows passed after adding broken-local-ref, external-ref, over-depth, and JSON Pointer escaping regressions.
+- Final dependency hygiene declares =referencing= explicitly because the implementation imports its public =Unresolvable= exception rather than relying on an undeclared transitive dependency.
+
+* Boundary
+This slice validates tool arguments only. It does not validate requested assistant response formats, infer task failure, detect repetition/length/encoding pathologies, or fetch remote schemas. Those remain separate bounded #58 detector slices.

@@ -9,7 +9,11 @@ description = "Transparent LLM request/response capture with a Prolog sidecar KB
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-dependencies = ["aiohttp>=3.10,<4"]
+dependencies = [
+  "aiohttp>=3.10,<4",
+  "jsonschema>=4.18,<5",
+  "referencing>=0.28,<1",
+]
 
 [project.scripts]
 llm-log = "llm_log.cli:main"

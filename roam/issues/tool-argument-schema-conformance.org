@@ -1,0 +1,24 @@
+:PROPERTIES:
+:ID:       llm-log-tool-argument-schema-conformance-gap
+:END:
+#+title: Valid tool-call JSON lacked supplied schema conformance evidence
+#+filetags: :llm-log:issue:model:anomaly:tools:schema:
+
+* Problem
+The first #58 tool-call detector slice distinguishes malformed JSON and undeclared tool names, but syntactically valid arguments can still violate the tool's request-supplied JSON Schema: required properties can be absent, nested values can have the wrong type, enums can be violated, or forbidden extra properties can appear.
+
+This detector boundary must preserve blame correctly. A malformed, oversized, or unresolvable request schema is a broken request contract, not evidence that the model misbehaved. Likewise, a response that names an undeclared tool must not be validated against some other tool's schema.
+
+* Constraints
+- Decode complete reconstructed argument JSON before schema validation. Invalid JSON is reported only by the existing integrity detector and is not double-counted as a schema violation.
+- Validate only against the schema belonging to the exact declared tool/function name.
+- Use a real JSON Schema implementation rather than a hand-written subset.
+- Invalid request schemas are unusable contracts and emit no model anomaly.
+- Remote =$ref= values are rejected without network resolution. Local document references beginning with =#= remain supported.
+- Bound schema traversal to 64 levels and 4096 nodes before invoking the validator.
+- Persist only structural violation evidence: validator keyword and escaped instance JSON Pointer path. Do not persist the failing instance value, validator message, validator value, schema body, prompt text, or tool description.
+- The JSON Schema and referencing libraries must exist in the development shell, CI/test closure, and shipped Nix package.
+- Schema validation remains observe-only model-behavior evidence and does not infer task failure or serving precision.
+
+* Resolution
+Implemented by [[id:llm-log-bounded-tool-schema-validation][Bounded supplied-schema validation for tool arguments]].
