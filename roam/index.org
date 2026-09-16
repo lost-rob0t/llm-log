@@ -16,6 +16,7 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:llm-log-retry-routing-correlation-gap][Transport failures lacked router-attempt and retry-recovery correlation]]
 - [[id:llm-log-transport-alert-policy-gap][Typed transport errors lacked class-specific alert decisions]]
 - [[id:llm-log-tool-call-model-anomaly-gap][Tool-call pathologies lacked safe model-behavior evidence]]
+- [[id:llm-log-tool-argument-schema-conformance-gap][Valid tool-call JSON lacked supplied schema conformance evidence]]
 
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
@@ -28,3 +29,4 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:llm-log-safe-router-retry-correlation][Safe router-attempt and retry-recovery correlation]]
 - [[id:llm-log-class-specific-transport-alert-policy][Class-specific transport alert decision stream]]
 - [[id:llm-log-observe-only-tool-call-anomaly-detectors][Observe-only streamed tool-call anomaly detectors]]
+- [[id:llm-log-bounded-tool-schema-validation][Bounded supplied-schema validation for tool arguments]]
