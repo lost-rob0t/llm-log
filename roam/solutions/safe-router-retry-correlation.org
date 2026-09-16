@@ -1,0 +1,32 @@
+:PROPERTIES:
+:ID:       llm-log-safe-router-retry-correlation
+:END:
+#+title: Safe router-attempt and retry-recovery correlation
+#+filetags: :llm-log:solution:transport:routing:retry:
+
+* Solves
+[[id:llm-log-retry-routing-correlation-gap][Transport failures lacked router-attempt and retry-recovery correlation]]
+
+* Approach
+Opt OpenRouter requests into its documented =X-OpenRouter-Metadata: enabled= response metadata at the real upstream forwarding boundary. Non-OpenRouter upstreams have any client-supplied copy of that header stripped instead of forwarding an OpenRouter-specific control accidentally.
+
+Decode =openrouter_metadata= permissively but project only a bounded allowlist into append-only =routing.jsonl=: selected provider and per-attempt provider/status/error code. Selected provider may come from the response's provider field or the documented =openrouter_metadata.endpoints.available[].selected= endpoint. Pipeline stages, endpoint blobs, error messages, model labels inside attempt metadata, and quantization detail are intentionally not persisted by this projection.
+
+A separate =CorrelationActor= owns derived =routing.jsonl= and =recoveries.jsonl= projections while =RecorderActor= remains the owner of raw captures and typed transport errors. Completed processing orders evidence as immutable capture -> routing projection -> typed error/recovery correlation -> expert projection. An error links to =routing:<event-id>= only when the routing projection was successfully persisted first.
+
+Retry recovery is observational. =RetryRecoveryTracker= keeps bounded pending failures by request SHA and matches the nearest later clean success with the same SHA inside ten seconds. The resulting recovery record links both event IDs and routing IDs, records disclosed provider change, and labels itself with =correlation_basis= =byte_identical_request_sha256_within_window= and =confidence= =heuristic=. Client disconnects, hash mismatches, expired windows, and already-consumed failures cannot match.
+
+On restart the correlation actor rebuilds bounded state from =routing.jsonl=, =recoveries.jsonl=, and =errors.jsonl=. A recovery is appended before its failed event is marked consumed in memory, so restart after a crash cannot silently re-emit the same recovery.
+
+OpenRouter API reference used to verify the metadata opt-in contract:
+- https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request
+- https://openrouter.ai/docs/api/api-reference/responses/create-responses
+
+* Verification
+- RED head =5e7a697137f52bd51f92bda08cf5e994c579872f=: 115 tests ran; exactly five new correlation tests failed while all existing #86/#87/#88 contracts stayed green.
+- Implementation head =4fb8d76120426f33827682ca81c335661ba2159b=: full Analytics workflow passed after all five RED cases flipped green.
+- Added false-positive contracts reject different request hashes, retries outside the window, and client disconnects, and prove nearest-unconsumed failure selection plus consume-once behavior.
+- Added a current OpenRouter metadata-shape contract for selected endpoint parsing while proving pipeline/model detail is not projected.
+
+* Boundary
+This slice observes routing and likely retry recovery; it does not perform retries. The retry relation remains an explicit heuristic rather than a causal assertion. Alert severity/rate policy and model/structured-output anomaly detection remain separate #61/#58 follow-up work.
