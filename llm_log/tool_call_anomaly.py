@@ -4,8 +4,12 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
+from .schema_validation import validate_instance
+
 _DETECTOR_VERSION = "tool-call-integrity/1"
+_SCHEMA_DETECTOR_VERSION = "tool-call-schema/1"
 _MAX_TOOL_CALLS = 128
+_MAX_REQUESTED_TOOLS = 128
 _MAX_TOOL_NAME_LENGTH = 256
 _MAX_QUANTIZATION_LENGTH = 64
 
@@ -173,33 +177,50 @@ def _request_json(request_body: bytes) -> Mapping[str, Any] | None:
     return parsed if isinstance(parsed, Mapping) else None
 
 
-def requested_tool_names(request_body: bytes) -> set[str] | None:
+def _requested_tools(
+    request_body: bytes,
+) -> tuple[set[str] | None, dict[str, Mapping[str, Any]]]:
     request = _request_json(request_body)
     if request is None:
-        return None
+        return None, {}
 
     names: set[str] = set()
+    schemas: dict[str, Mapping[str, Any]] = {}
+
     tools = request.get("tools")
     if isinstance(tools, list):
-        for tool in tools:
+        for tool in tools[:_MAX_REQUESTED_TOOLS]:
             if not isinstance(tool, Mapping):
                 continue
             function = tool.get("function")
             if not isinstance(function, Mapping):
                 continue
             name = _safe_string(function.get("name"), limit=_MAX_TOOL_NAME_LENGTH)
-            if name is not None:
-                names.add(name)
+            if name is None:
+                continue
+            names.add(name)
+            parameters = function.get("parameters")
+            if isinstance(parameters, Mapping):
+                schemas.setdefault(name, parameters)
 
     functions = request.get("functions")
     if isinstance(functions, list):
-        for function in functions:
+        for function in functions[:_MAX_REQUESTED_TOOLS]:
             if not isinstance(function, Mapping):
                 continue
             name = _safe_string(function.get("name"), limit=_MAX_TOOL_NAME_LENGTH)
-            if name is not None:
-                names.add(name)
+            if name is None:
+                continue
+            names.add(name)
+            parameters = function.get("parameters")
+            if isinstance(parameters, Mapping):
+                schemas.setdefault(name, parameters)
 
+    return names, schemas
+
+
+def requested_tool_names(request_body: bytes) -> set[str] | None:
+    names, _ = _requested_tools(request_body)
     return names
 
 
@@ -220,6 +241,7 @@ def _anomaly(
     severity: str,
     quantization: str,
     call: ReconstructedToolCall,
+    detector_version: str = _DETECTOR_VERSION,
     extra_evidence: Mapping[str, Any] | None = None,
 ) -> ToolCallAnomaly:
     evidence: dict[str, Any] = {
@@ -237,7 +259,7 @@ def _anomaly(
         provider=provider,
         model=model,
         detector_id=detector_id,
-        detector_version=_DETECTOR_VERSION,
+        detector_version=detector_version,
         domain="model_behavior",
         score=score,
         severity=severity,
@@ -259,14 +281,17 @@ def analyze_tool_calls(
     if not calls:
         return []
 
-    requested = requested_tool_names(request_body)
+    requested, schemas = _requested_tools(request_body)
     quantization = _quantization(observed_quantization)
     anomalies: list[ToolCallAnomaly] = []
 
     for call in calls:
+        parsed_arguments: Any = None
+        arguments_valid_json = True
         try:
-            json.loads(call.arguments_text)
+            parsed_arguments = json.loads(call.arguments_text)
         except json.JSONDecodeError:
+            arguments_valid_json = False
             anomalies.append(
                 _anomaly(
                     event_id=event_id,
@@ -281,7 +306,8 @@ def analyze_tool_calls(
                 )
             )
 
-        if requested is not None and (call.name is None or call.name not in requested):
+        tool_requested = requested is not None and call.name is not None and call.name in requested
+        if requested is not None and not tool_requested:
             anomalies.append(
                 _anomaly(
                     event_id=event_id,
@@ -295,5 +321,32 @@ def analyze_tool_calls(
                     extra_evidence={"validation": "tool_name_not_declared"},
                 )
             )
+
+        if not arguments_valid_json or not tool_requested or call.name is None:
+            continue
+        schema = schemas.get(call.name)
+        if schema is None:
+            continue
+
+        validation = validate_instance(schema, parsed_arguments)
+        if validation.state != "violation" or validation.violation is None:
+            continue
+        anomalies.append(
+            _anomaly(
+                event_id=event_id,
+                provider=provider,
+                model=model,
+                detector_id="tool_arguments_schema_violation",
+                detector_version=_SCHEMA_DETECTOR_VERSION,
+                score=0.95,
+                severity="high",
+                quantization=quantization,
+                call=call,
+                extra_evidence={
+                    "validator": validation.violation.validator,
+                    "instance_path": validation.violation.instance_path,
+                },
+            )
+        )
 
     return anomalies
