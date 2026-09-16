@@ -117,6 +117,22 @@ class SubprocessExpertPlane:
             task_id=task_id,
         )
 
+    async def observe_response(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "observe_response",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
     async def classify_request(
         self,
         *,
