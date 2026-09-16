@@ -13,6 +13,8 @@ from .transport_errors import TransportErrorEvidence
 _DEFAULT_WINDOW_SECONDS = 10.0
 _MAX_PENDING_FAILURES = 4096
 _MAX_ROUTING_OBSERVATIONS = 8192
+_CORRELATION_BASIS = "byte_identical_request_sha256_within_window"
+_CORRELATION_CONFIDENCE = "heuristic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,8 @@ class RetryRecoveryEvidence:
     request_sha256: str
     failed_error_class: str
     retry_delay_ms: int
+    correlation_basis: str = _CORRELATION_BASIS
+    confidence: str = _CORRELATION_CONFIDENCE
     failed_routing_observation_id: str | None = None
     retry_routing_observation_id: str | None = None
     failed_selected_provider: str | None = None
@@ -102,7 +106,12 @@ class RetryRecoveryTracker:
         self._consumed_failure_ids: set[str] = set()
 
     @classmethod
-    def load(cls, root: str | Path, *, window_seconds: float = _DEFAULT_WINDOW_SECONDS) -> "RetryRecoveryTracker":
+    def load(
+        cls,
+        root: str | Path,
+        *,
+        window_seconds: float = _DEFAULT_WINDOW_SECONDS,
+    ) -> "RetryRecoveryTracker":
         tracker = cls(window_seconds=window_seconds)
         root = Path(root)
 
@@ -130,7 +139,10 @@ class RetryRecoveryTracker:
         event_id = raw.get("event_id")
         observed_at = raw.get("observed_at")
         router = raw.get("router")
-        if not all(isinstance(value, str) and value for value in (routing_id, event_id, observed_at, router)):
+        if not all(
+            isinstance(value, str) and value
+            for value in (routing_id, event_id, observed_at, router)
+        ):
             return None
         selected_provider = raw.get("selected_provider")
         if not isinstance(selected_provider, str):
@@ -170,10 +182,26 @@ class RetryRecoveryTracker:
             provider=raw.get("provider") if isinstance(raw.get("provider"), str) else None,
             model=raw.get("model") if isinstance(raw.get("model"), str) else None,
             transport=required["transport"],
-            response_status=raw.get("response_status") if isinstance(raw.get("response_status"), int) else None,
-            status_kind=raw.get("status_kind") if isinstance(raw.get("status_kind"), str) else None,
-            error_code=raw.get("error_code") if isinstance(raw.get("error_code"), (int, str)) else None,
-            request_sha256=raw.get("request_sha256") if isinstance(raw.get("request_sha256"), str) else None,
+            response_status=(
+                raw.get("response_status")
+                if isinstance(raw.get("response_status"), int)
+                else None
+            ),
+            status_kind=(
+                raw.get("status_kind")
+                if isinstance(raw.get("status_kind"), str)
+                else None
+            ),
+            error_code=(
+                raw.get("error_code")
+                if isinstance(raw.get("error_code"), (int, str))
+                else None
+            ),
+            request_sha256=(
+                raw.get("request_sha256")
+                if isinstance(raw.get("request_sha256"), str)
+                else None
+            ),
             routing_observation_id=(
                 raw.get("routing_observation_id")
                 if isinstance(raw.get("routing_observation_id"), str)
