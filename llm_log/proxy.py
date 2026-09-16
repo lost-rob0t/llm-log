@@ -11,6 +11,7 @@ from typing import Mapping, Protocol
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 from .analytics import install_analytics_routes
+from .anomaly_actor import AnomalyActor, CompletedModelObservation
 from .correlation_actor import CorrelationActor
 from .expert_adapter import SubprocessExpertPlane
 from .expert_capture import expert_response_payload, expert_usage_payload
@@ -338,10 +339,32 @@ async def _record_completed_transport_error(
     return error
 
 
+async def _record_model_anomalies(
+    anomalies: AnomalyActor,
+    event: CaptureEvent,
+    request_body: bytes,
+    response_body: bytes,
+) -> None:
+    try:
+        await anomalies.observe(
+            CompletedModelObservation(
+                event_id=event.event_id,
+                provider=event.provider,
+                model=event.model or "unknown",
+                request_body=request_body,
+                response_body=response_body,
+            )
+        )
+    except Exception:
+        pass
+
+
 async def _record_completed_derived(
     recorder: RecorderActor,
     correlation: CorrelationActor,
+    anomalies: AnomalyActor,
     event: CaptureEvent,
+    request_body: bytes,
     response_body: bytes,
     *,
     terminal_exception: BaseException | None = None,
@@ -359,6 +382,8 @@ async def _record_completed_derived(
         return
     if event.status_kind != "upstream" or not (200 <= event.response_status < 400):
         return
+
+    await _record_model_anomalies(anomalies, event, request_body, response_body)
 
     candidate = RecoveryCandidate(
         event_id=event.event_id,
@@ -425,6 +450,7 @@ async def _proxy_websocket(
     tail: str,
     recorder: RecorderActor,
     correlation: CorrelationActor,
+    anomalies: AnomalyActor,
     classifier: Classifier | None,
     session: ClientSession,
     expert_plane: ExpertPlane | None,
@@ -468,7 +494,9 @@ async def _proxy_websocket(
         await _record_completed_derived(
             recorder,
             correlation,
+            anomalies,
             event,
+            b"",
             failure,
             terminal_exception=exc,
         )
@@ -548,7 +576,14 @@ async def _proxy_websocket(
         transport="websocket",
     )
     await recorder.record(event)
-    await _record_completed_derived(recorder, correlation, event, response_body)
+    await _record_completed_derived(
+        recorder,
+        correlation,
+        anomalies,
+        event,
+        request_body,
+        response_body,
+    )
     _schedule_expert_ingest(request.app, expert_plane, event, bytes(client_frames))
     return downstream
 
@@ -564,11 +599,13 @@ def build_app(
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
     correlation = CorrelationActor(recorder.root)
+    anomalies = AnomalyActor(recorder.root)
     app = web.Application(client_max_size=1024**3)
 
     async def startup(application: web.Application) -> None:
         await recorder.start()
         await correlation.start()
+        await anomalies.start()
         application[_SESSION_KEY] = ClientSession(
             timeout=ClientTimeout(total=timeout_seconds),
             auto_decompress=False,
@@ -589,6 +626,7 @@ def build_app(
         session = application.get(_SESSION_KEY)
         if session is not None:
             await session.close()
+        await anomalies.close()
         await correlation.close()
         await recorder.close()
 
@@ -619,6 +657,7 @@ def build_app(
                 tail=tail,
                 recorder=recorder,
                 correlation=correlation,
+                anomalies=anomalies,
                 classifier=classifier,
                 session=session,
             )
@@ -746,7 +785,9 @@ def build_app(
         await _record_completed_derived(
             recorder,
             correlation,
+            anomalies,
             event,
+            request_body,
             raw_response_body,
             terminal_exception=terminal_exception,
         )
