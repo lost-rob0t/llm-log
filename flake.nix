@@ -105,7 +105,7 @@
       devShells = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ps.jsonschema ]);
+          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ps.jsonschema ps.referencing ]);
         in
         {
           default = pkgs.mkShell {
@@ -124,7 +124,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           cl = pkgs.sbcl.pkgs;
-          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ps.jsonschema ]);
+          python = pkgs.python312.withPackages (ps: [ ps.aiohttp ps.jsonschema ps.referencing ]);
           expertLib = self.packages.${system}.llm-log-expert-lib;
           expertService = self.packages.${system}.llm-log-expert;
           transportTestSbcl = pkgs.sbcl.withPackages (_: [ expertLib cl.rove ]);
