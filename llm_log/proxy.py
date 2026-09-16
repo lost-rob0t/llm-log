@@ -11,6 +11,7 @@ from typing import Mapping, Protocol
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 from .analytics import install_analytics_routes
+from .correlation_actor import CorrelationActor
 from .expert_adapter import SubprocessExpertPlane
 from .expert_capture import expert_response_payload, expert_usage_payload
 from .recorder import (
@@ -20,7 +21,10 @@ from .recorder import (
     request_model,
     sha256_bytes,
 )
+from .recovery import RecoveryCandidate
+from .routing import RoutingObservation, observe_openrouter_routing
 from .transport_errors import (
+    TransportErrorEvidence,
     classify_completed_capture,
     classify_downstream_disconnect,
 )
@@ -44,6 +48,7 @@ _WS_REQUEST_DROP = _REQUEST_DROP | {
     "sec-websocket-protocol",
 }
 _SESSION_KEY = web.AppKey("session", ClientSession)
+_OPENROUTER_METADATA_HEADER = "x-openrouter-metadata"
 
 
 class Classifier(Protocol):
@@ -58,16 +63,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _request_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    return {name: value for name, value in headers.items() if name.lower() not in _REQUEST_DROP}
-
-
-def _websocket_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    return {
+def _provider_headers(
+    headers: Mapping[str, str],
+    *,
+    provider: str,
+    drop: set[str],
+) -> dict[str, str]:
+    forwarded = {
         name: value
         for name, value in headers.items()
-        if name.lower() not in _WS_REQUEST_DROP
+        if name.lower() not in drop and name.lower() != _OPENROUTER_METADATA_HEADER
     }
+    if provider.casefold() == "openrouter":
+        forwarded["X-OpenRouter-Metadata"] = "enabled"
+    return forwarded
+
+
+def _request_headers(headers: Mapping[str, str], provider: str) -> dict[str, str]:
+    return _provider_headers(headers, provider=provider, drop=_REQUEST_DROP)
+
+
+def _websocket_request_headers(headers: Mapping[str, str], provider: str) -> dict[str, str]:
+    return _provider_headers(headers, provider=provider, drop=_WS_REQUEST_DROP)
 
 
 def _response_headers(headers: Mapping[str, str]) -> list[tuple[str, str]]:
@@ -150,11 +167,6 @@ def _user_message_from_api_body(body: dict) -> str:
 
 
 def _extract_user_message(request_body: bytes) -> str:
-    """Extract the last user message from one captured request body.
-
-    Handles JSON API bodies and newline-delimited WebSocket frame envelopes;
-    returns "" when no user text can be found.
-    """
     text = request_body.decode("utf-8", errors="replace")
     try:
         body = json.loads(text)
@@ -272,13 +284,35 @@ def _schedule_expert_ingest(
     task.add_done_callback(tasks.discard)
 
 
+async def _record_routing(
+    correlation: CorrelationActor,
+    event: CaptureEvent,
+    response_body: bytes,
+) -> RoutingObservation | None:
+    observation = observe_openrouter_routing(
+        event_id=event.event_id,
+        observed_at=event.completed_at,
+        provider=event.provider,
+        response_body=response_body,
+    )
+    if observation is None:
+        return None
+    try:
+        await correlation.observe_routing(observation)
+    except Exception:
+        return None
+    return observation
+
+
 async def _record_completed_transport_error(
     recorder: RecorderActor,
+    correlation: CorrelationActor,
     event: CaptureEvent,
     response_body: bytes,
     *,
     terminal_exception: BaseException | None = None,
-) -> None:
+    routing: RoutingObservation | None = None,
+) -> TransportErrorEvidence | None:
     error = classify_completed_capture(
         event_id=event.event_id,
         observed_at=event.completed_at,
@@ -292,9 +326,52 @@ async def _record_completed_transport_error(
         request_sha256=event.request_sha256,
         response_body=response_body,
         terminal_exception=terminal_exception,
+        routing_observation_id=(routing.routing_id if routing is not None else None),
+    )
+    if error is None:
+        return None
+    await recorder.record_error(error)
+    try:
+        await correlation.observe_error(error)
+    except Exception:
+        pass
+    return error
+
+
+async def _record_completed_derived(
+    recorder: RecorderActor,
+    correlation: CorrelationActor,
+    event: CaptureEvent,
+    response_body: bytes,
+    *,
+    terminal_exception: BaseException | None = None,
+) -> None:
+    routing = await _record_routing(correlation, event, response_body)
+    error = await _record_completed_transport_error(
+        recorder,
+        correlation,
+        event,
+        response_body,
+        terminal_exception=terminal_exception,
+        routing=routing,
     )
     if error is not None:
-        await recorder.record_error(error)
+        return
+    if event.status_kind != "upstream" or not (200 <= event.response_status < 400):
+        return
+
+    candidate = RecoveryCandidate(
+        event_id=event.event_id,
+        started_at=event.started_at,
+        completed_at=event.completed_at,
+        request_sha256=event.request_sha256,
+        routing_observation_id=(routing.routing_id if routing is not None else None),
+        selected_provider=(routing.selected_provider if routing is not None else None),
+    )
+    try:
+        await correlation.observe_success(candidate)
+    except Exception:
+        pass
 
 
 async def _relay_websocket(
@@ -347,6 +424,7 @@ async def _proxy_websocket(
     upstream_url: str,
     tail: str,
     recorder: RecorderActor,
+    correlation: CorrelationActor,
     classifier: Classifier | None,
     session: ClientSession,
     expert_plane: ExpertPlane | None,
@@ -361,7 +439,7 @@ async def _proxy_websocket(
     try:
         upstream_socket = await session.ws_connect(
             _websocket_url(upstream_url),
-            headers=_websocket_request_headers(request.headers),
+            headers=_websocket_request_headers(request.headers, provider),
             protocols=protocols,
             autoping=True,
         )
@@ -387,8 +465,9 @@ async def _proxy_websocket(
             status_kind="upstream_connect_error",
         )
         await recorder.record(event)
-        await _record_completed_transport_error(
+        await _record_completed_derived(
             recorder,
+            correlation,
             event,
             failure,
             terminal_exception=exc,
@@ -469,7 +548,7 @@ async def _proxy_websocket(
         transport="websocket",
     )
     await recorder.record(event)
-    await _record_completed_transport_error(recorder, event, response_body)
+    await _record_completed_derived(recorder, correlation, event, response_body)
     _schedule_expert_ingest(request.app, expert_plane, event, bytes(client_frames))
     return downstream
 
@@ -484,10 +563,12 @@ def build_app(
     require_expert_plane: bool = False,
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
+    correlation = CorrelationActor(recorder.root)
     app = web.Application(client_max_size=1024**3)
 
     async def startup(application: web.Application) -> None:
         await recorder.start()
+        await correlation.start()
         application[_SESSION_KEY] = ClientSession(
             timeout=ClientTimeout(total=timeout_seconds),
             auto_decompress=False,
@@ -508,6 +589,7 @@ def build_app(
         session = application.get(_SESSION_KEY)
         if session is not None:
             await session.close()
+        await correlation.close()
         await recorder.close()
 
     async def proxy(request: web.Request) -> web.StreamResponse:
@@ -536,6 +618,7 @@ def build_app(
                 upstream_url=upstream_url,
                 tail=tail,
                 recorder=recorder,
+                correlation=correlation,
                 classifier=classifier,
                 session=session,
             )
@@ -558,7 +641,7 @@ def build_app(
             async with session.request(
                 request.method,
                 upstream_url,
-                headers=_request_headers(request.headers),
+                headers=_request_headers(request.headers, provider),
                 data=request_body,
                 allow_redirects=False,
             ) as upstream_response:
@@ -660,8 +743,9 @@ def build_app(
             status_kind=status_kind,
         )
         await recorder.record(event)
-        await _record_completed_transport_error(
+        await _record_completed_derived(
             recorder,
+            correlation,
             event,
             raw_response_body,
             terminal_exception=terminal_exception,
