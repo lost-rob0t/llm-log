@@ -87,6 +87,7 @@ class LiveToolCallAnomalyTest(unittest.IsolatedAsyncioTestCase):
 
         upstream = web.Application()
         upstream.router.add_post("/v1/tool-bad", self.tool_bad)
+        upstream.router.add_post("/v1/tool-truncated", self.tool_truncated)
         self.upstream_runner = web.AppRunner(upstream)
         await self.upstream_runner.setup()
         upstream_site = web.TCPSite(self.upstream_runner, "127.0.0.1", 0)
@@ -128,8 +129,22 @@ class LiveToolCallAnomalyTest(unittest.IsolatedAsyncioTestCase):
         await response.write_eof()
         return response
 
-    async def test_live_invalid_tool_call_persists_safe_model_behavior_evidence(self):
-        payload = {
+    async def tool_truncated(self, request):
+        await request.read()
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream"},
+        )
+        await response.prepare(request)
+        await response.write(
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-truncated","type":"function","function":{"name":"weather","arguments":"{\\"city\\":"}}]}}]}\n\n'
+        )
+        await response.write_eof()
+        return response
+
+    @staticmethod
+    def request_payload():
+        return {
             "model": "fixture/model",
             "messages": [{"role": "user", "content": "private prompt text"}],
             "tools": [
@@ -145,14 +160,19 @@ class LiveToolCallAnomalyTest(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         }
+
+    async def post(self, path):
         timeout = ClientTimeout(total=3)
         async with ClientSession(timeout=timeout) as session:
             async with session.post(
-                f"{self.proxy_url}/openrouter/v1/tool-bad",
-                json=payload,
+                f"{self.proxy_url}/openrouter{path}",
+                json=self.request_payload(),
             ) as response:
-                self.assertEqual(response.status, 200)
-                await response.read()
+                return response.status, await response.read()
+
+    async def test_live_invalid_tool_call_persists_safe_model_behavior_evidence(self):
+        status, _ = await self.post("/v1/tool-bad")
+        self.assertEqual(status, 200)
 
         await self.recorder.flush()
         anomalies_path = self.root / "anomalies.jsonl"
@@ -176,6 +196,24 @@ class LiveToolCallAnomalyTest(unittest.IsolatedAsyncioTestCase):
         errors_path = self.root / "errors.jsonl"
         errors = errors_path.read_text().splitlines() if errors_path.exists() else []
         self.assertEqual(errors, [])
+
+    async def test_transport_truncation_never_becomes_model_behavior_anomaly(self):
+        status, _ = await self.post("/v1/tool-truncated")
+        self.assertEqual(status, 200)
+
+        await self.recorder.flush()
+        anomalies_path = self.root / "anomalies.jsonl"
+        anomalies = anomalies_path.read_text().splitlines() if anomalies_path.exists() else []
+        self.assertEqual(anomalies, [])
+
+        errors = [
+            json.loads(line)
+            for line in (self.root / "errors.jsonl").read_text().splitlines()
+            if line
+        ]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["error_class"], "stream_protocol_error")
+        self.assertEqual(errors[0]["domain"], "transport")
 
 
 if __name__ == "__main__":
