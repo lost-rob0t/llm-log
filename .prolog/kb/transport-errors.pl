@@ -1,0 +1,16 @@
+transport_error_source('errors.jsonl').
+
+transport_error_invariant(client_disconnect_not_provider_failure).
+transport_error_invariant(account_gateway_status_not_model_attributed).
+transport_error_invariant(raw_error_message_not_persisted).
+transport_error_invariant(stream_truncation_uses_terminal_integrity).
+transport_error_invariant(transport_domain_separate_from_model_anomaly).
+transport_error_invariant(completed_capture_precedes_completed_error_projection).
+
+transport_error_class(downstream_client_disconnect, client).
+transport_error_class(upstream_connection_reset, provider_or_network).
+transport_error_class(upstream_http_error, provider_or_gateway).
+transport_error_class(router_error, gateway).
+transport_error_class(upstream_stream_error, provider_or_gateway).
+transport_error_class(stream_protocol_error, provider_or_gateway).
+transport_error_class(unknown_transport_failure, transport).
