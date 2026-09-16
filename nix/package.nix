@@ -14,7 +14,10 @@ python312Packages.buildPythonApplication {
   pyproject = true;
 
   build-system = [ python312Packages.setuptools ];
-  dependencies = [ python312Packages.aiohttp ];
+  dependencies = [
+    python312Packages.aiohttp
+    python312Packages.jsonschema
+  ];
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [ swiProlog ];
 
