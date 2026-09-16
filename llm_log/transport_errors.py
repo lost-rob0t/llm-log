@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 _RESET_ERRNOS = {54, 104}
 _ACCOUNT_OR_GATEWAY_STATUSES = {401, 403, 429}
+_SAFE_ERROR_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _MAX_ERROR_CODE_LENGTH = 128
 
 
@@ -81,8 +83,8 @@ def _safe_error_code(error: Mapping[str, Any] | None) -> int | str | None:
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value:
-        return value[:_MAX_ERROR_CODE_LENGTH]
+    if isinstance(value, str) and _SAFE_ERROR_CODE.fullmatch(value):
+        return value
     return None
 
 
@@ -221,7 +223,7 @@ def classify_completed_capture(
             error_class="upstream_http_error",
             attribution_scope="gateway_or_account",
             provider=provider,
-            model=model,
+            model=None,
             transport=transport,
             response_status=response_status,
             status_kind=status_kind,
