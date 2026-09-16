@@ -148,16 +148,19 @@ def expert_response_payload(event: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("capture event finish_reason must be a non-empty string or null")
 
-    return {
+    response = {
         **payload,
         "request_id": event_id,
         "response_status": response_status,
         "status_kind": status_kind,
         "latency_ms": latency_ms,
-        "stream_completed": stream_completed,
         "stream_state": stream_state,
-        "finish_reason": finish_reason,
     }
+    if stream_completed is not None:
+        response["stream_completed"] = stream_completed
+    if finish_reason is not None:
+        response["finish_reason"] = finish_reason
+    return response
 
 
 def expert_usage_payload(event: Mapping[str, Any]) -> dict[str, Any] | None:
