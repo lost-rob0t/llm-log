@@ -1,0 +1,35 @@
+model_anomaly_source('anomalies.jsonl').
+model_anomaly_domain(model_behavior).
+model_anomaly_mode(observe_only).
+
+model_anomaly_detector(tool_arguments_invalid_json, 'tool-call-integrity/1').
+model_anomaly_detector(tool_name_not_requested, 'tool-call-integrity/1').
+
+model_anomaly_invariant(transport_clean_before_model_analysis).
+model_anomaly_invariant(streamed_tool_calls_reconstruct_by_index_before_validation).
+model_anomaly_invariant(interleaved_tool_calls_keep_distinct_indexes).
+model_anomaly_invariant(cumulative_tool_name_fragments_do_not_duplicate).
+model_anomaly_invariant(raw_prompt_not_persisted_in_anomaly_projection).
+model_anomaly_invariant(raw_tool_arguments_not_persisted_in_anomaly_projection).
+model_anomaly_invariant(anomaly_not_task_failure).
+model_anomaly_invariant(anomaly_domain_separate_from_transport_error).
+model_anomaly_invariant(detector_failure_never_blocks_forwarding).
+model_anomaly_invariant(transport_truncation_never_reclassified_as_model_anomaly).
+model_anomaly_invariant(behavior_score_independent_of_quantization_annotation).
+
+model_anomaly_quantization_default(unknown).
+model_anomaly_quantization_rule(grounded_metadata_only).
+model_anomaly_forbidden_claim(int4_detected_from_behavior_only).
+model_anomaly_forbidden_claim(int8_detected_from_behavior_only).
+
+model_anomaly_field(anomaly_id).
+model_anomaly_field(event_id).
+model_anomaly_field(provider).
+model_anomaly_field(model).
+model_anomaly_field(detector_id).
+model_anomaly_field(detector_version).
+model_anomaly_field(domain).
+model_anomaly_field(score).
+model_anomaly_field(severity).
+model_anomaly_field(quantization).
+model_anomaly_field(evidence).

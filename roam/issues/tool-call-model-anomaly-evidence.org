@@ -1,0 +1,28 @@
+:PROPERTIES:
+:ID:       llm-log-tool-call-model-anomaly-gap
+:END:
+#+title: Tool-call pathologies lacked safe model-behavior evidence
+#+filetags: :llm-log:issue:model:anomaly:tools:
+
+* Problem
+Issue #58 needs deterministic observations for output pathologies without inventing serving bit-width claims. Tool calling is the first bounded detector family because malformed tool calls can be validated mechanically, but streamed tool calls arrive as indexed fragments and can be interleaved across chunks.
+
+A naive detector can produce two serious false attributions:
+1. validating each SSE fragment separately mislabels valid fragmented arguments as invalid JSON;
+2. validating a response after transport truncation mistakes incomplete bytes for a model-behavior failure.
+
+Behavioral anomalies are evidence only. They are not automatically task failure and they do not imply INT4, INT8, FP8, or another serving precision unless separate endpoint metadata grounds that annotation.
+
+* Constraints
+- Reconstruct tool calls by tool-call index across the complete response before validation.
+- Preserve interleaved calls independently.
+- Normalize cumulative/repeated streamed function-name fragments without duplicating the name.
+- Detect invalid complete argument JSON and tool names absent from the request's declared tool set as separate detector IDs.
+- Run live model analysis only after transport classification returns clean completion.
+- A truncated SSE remains transport evidence only, even when its partial tool arguments are invalid JSON.
+- Persist anomaly evidence without prompt text or raw tool argument contents.
+- Default quantization annotation to =unknown=; an explicit grounded metadata value may annotate the observation but must not change the behavioral score.
+- Detector or projection failure must never block forwarding or immutable capture.
+
+* Resolution
+Implemented by [[id:llm-log-observe-only-tool-call-anomaly-detectors][Observe-only streamed tool-call anomaly detectors]].
