@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       llm-log-retry-routing-correlation-gap
+:END:
+#+title: Transport failures lacked router-attempt and retry-recovery correlation
+#+filetags: :llm-log:issue:transport:routing:retry:
+
+* Problem
+Typed transport failures identify what failed, but issue #61 also needs enough routing context to tell whether OpenRouter tried another provider and whether an identical near-term retry recovered. Without that link, a self-healed provider failure and a persistent failure look the same to later alert policy.
+
+The 2026-09-06 full-day census found 24 byte-identical request chains within seven seconds that recovered on another provider. That is strong operational evidence for a bounded retry-correlation heuristic, but request-body identity plus time proximity is not causal proof that two calls belong to one retry chain.
+
+* Constraints
+- Use OpenRouter's documented =X-OpenRouter-Metadata: enabled= opt-in only for the OpenRouter upstream; never inject it into unrelated providers.
+- Persist only allowlisted routing metadata: selected provider plus per-attempt provider/status/error code. Raw messages, pipeline detail, endpoint blobs, and quantization metadata stay out of this transport evidence.
+- Typed errors may link to a routing observation only after that observation is durably appended.
+- Recovery correlation requires byte-identical =request_sha256= and a later clean success inside a bounded ten-second window.
+- Correlation confidence is explicitly =heuristic=; it must not be presented as causal identity.
+- Client disconnects never become retry-recovery candidates or provider failures.
+- Pending failed requests must survive process restart by rebuilding from append-only evidence.
+- This layer observes retries; it never performs retries itself.
+
+* Resolution
+Implemented by [[id:llm-log-safe-router-retry-correlation][Safe router-attempt and retry-recovery correlation]].

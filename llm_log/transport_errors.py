@@ -27,6 +27,7 @@ class TransportErrorEvidence:
     status_kind: str | None
     error_code: int | str | None
     request_sha256: str | None
+    routing_observation_id: str | None = None
     source: str = "proxy"
 
     def as_json(self) -> dict[str, Any]:
@@ -133,6 +134,7 @@ def _evidence(
     status_kind: str | None,
     error_code: int | str | None,
     request_sha256: str | None,
+    routing_observation_id: str | None = None,
 ) -> TransportErrorEvidence:
     return TransportErrorEvidence(
         error_id=f"transport:{event_id}:{error_class}",
@@ -149,6 +151,7 @@ def _evidence(
         status_kind=status_kind,
         error_code=error_code,
         request_sha256=request_sha256,
+        routing_observation_id=routing_observation_id,
     )
 
 
@@ -193,6 +196,7 @@ def classify_completed_capture(
     request_sha256: str | None,
     response_body: bytes,
     terminal_exception: BaseException | None = None,
+    routing_observation_id: str | None = None,
 ) -> TransportErrorEvidence | None:
     documents = _documents(response_body)
     error = next(
@@ -214,6 +218,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=_exception_code(terminal_exception),
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if response_status in _ACCOUNT_OR_GATEWAY_STATUSES:
@@ -229,6 +234,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=error_code,
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if error is not None and (
@@ -247,6 +253,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=error_code,
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if response_status >= 400:
@@ -262,6 +269,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=error_code,
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if error is not None or finish_reason == "error":
@@ -277,6 +285,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=error_code,
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if stream_completed is False:
@@ -292,6 +301,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=None,
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     if terminal_exception is not None:
@@ -307,6 +317,7 @@ def classify_completed_capture(
             status_kind=status_kind,
             error_code=_exception_code(terminal_exception),
             request_sha256=request_sha256,
+            routing_observation_id=routing_observation_id,
         )
 
     return None
