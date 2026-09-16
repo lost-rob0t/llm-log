@@ -9,7 +9,7 @@ This graph records reusable engineering problems and their verified solutions.
 * Issues
 - [[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
 - [[id:llm-log-subscription-quota-observation][Subscription quota observation is not token accounting]]
-- [[id:4a6621dc-4d08-44ac-ad7c973ee12653c][Historical raw captures do not populate newer expert projections]]
+- [[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
 - [[id:16deebed-a87e-4070-913f-dc9015ad5ca7][Streaming captures need terminal integrity evidence]]
 - [[id:llm-log-live-expert-response-observation][Live captures lacked response and usage expert observations]]
 - [[id:llm-log-typed-transport-error-evidence][Proxy failures lacked typed transport evidence]]
