@@ -1,0 +1,11 @@
+expert_observation_invariant(response_after_immutable_capture).
+expert_observation_invariant(response_payload_excludes_raw_body).
+expert_observation_invariant(response_hash_binds_projection_to_capture).
+expert_observation_invariant(usage_only_when_provider_counter_present).
+expert_observation_invariant(expert_failure_does_not_block_forwarding).
+expert_observation_invariant(live_and_backfill_share_response_contract).
+
+expert_observation_projection(response, 'response:<event-id>').
+expert_observation_source(response, event_id).
+expert_observation_source(response, response_sha256).
+expert_observation_source(usage, provider_reported_token_counters).

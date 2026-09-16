@@ -12,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
+from .expert_capture import expert_response_payload, expert_usage_payload
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
@@ -181,31 +182,67 @@ def _expert_base_payload(event: CaptureEvent) -> dict:
     }
 
 
-async def _expert_ingest(expert_plane, event: CaptureEvent, request_body: bytes) -> None:
+async def _best_effort_expert_call(method, **kwargs):
     try:
-        payload = _expert_base_payload(event)
-        await expert_plane.observe_request(
+        return await method(**kwargs)
+    except Exception:
+        return None
+
+
+async def _expert_ingest(expert_plane, event: CaptureEvent, request_body: bytes) -> None:
+    payload = _expert_base_payload(event)
+    await _best_effort_expert_call(
+        expert_plane.observe_request,
+        event_id=event.event_id,
+        payload=payload,
+        session_id="proxy",
+        task_id="proxy",
+    )
+
+    message = _extract_user_message(request_body)
+    if message and hasattr(expert_plane, "classify_request"):
+        await _best_effort_expert_call(
+            expert_plane.classify_request,
             event_id=event.event_id,
-            payload=payload,
+            payload={
+                **payload,
+                "message": message,
+                "user_message_id": "um-" + event.event_id[:8],
+                "request_id": event.event_id,
+                "client": "proxy",
+            },
             session_id="proxy",
             task_id="proxy",
         )
-        message = _extract_user_message(request_body)
-        if message:
-            await expert_plane.classify_request(
+
+    captured = event.as_json()
+    if hasattr(expert_plane, "observe_response"):
+        try:
+            response_payload = expert_response_payload(captured)
+        except (TypeError, ValueError):
+            response_payload = None
+        if response_payload is not None:
+            await _best_effort_expert_call(
+                expert_plane.observe_response,
                 event_id=event.event_id,
-                payload={
-                    **payload,
-                    "message": message,
-                    "user_message_id": "um-" + event.event_id[:8],
-                    "request_id": event.event_id,
-                    "client": "proxy",
-                },
+                payload=response_payload,
                 session_id="proxy",
                 task_id="proxy",
             )
-    except Exception:
-        return
+
+    if hasattr(expert_plane, "observe_usage"):
+        try:
+            usage_payload = expert_usage_payload(captured)
+        except (TypeError, ValueError):
+            usage_payload = None
+        if usage_payload is not None:
+            await _best_effort_expert_call(
+                expert_plane.observe_usage,
+                event_id=event.event_id,
+                payload=usage_payload,
+                session_id="proxy",
+                task_id="proxy",
+            )
 
 
 def _schedule_expert_ingest(

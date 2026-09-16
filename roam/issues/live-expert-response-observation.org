@@ -1,0 +1,21 @@
+:PROPERTIES:
+:ID:       llm-log-live-expert-response-observation
+:END:
+#+title: Live captures lacked response and usage expert observations
+#+filetags: :llm-log:issue:expert:capture:
+
+* Problem
+The declared expert protocol included =observe_response= and =observe_usage=, but the live proxy only projected request-side evidence. Completed HTTP and WebSocket captures therefore reached Tek9 without a durable response projection, and live provider-reported usage was not forwarded to the expert host.
+
+This is tracked by GitHub issue #68.
+
+* Constraints
+- Raw =events.jsonl= remains immutable source evidence.
+- Response observation must happen only after the capture has been recorded.
+- Expert payloads contain hashes and bounded terminal metadata, never raw response bodies.
+- Missing token counters remain unknown; do not synthesize usage.
+- Expert failures remain fail-open for normal forwarding.
+- Live capture and historical replay must use the same projection contract.
+
+* Resolution
+Implemented by [[id:llm-log-provenance-safe-response-observation][Provenance-safe response and usage observation]].

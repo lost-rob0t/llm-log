@@ -24,4 +24,5 @@
                (:file "task-dispatch")
                (:file "outcome-dispatch")
                (:file "capture-usage")
+               (:file "capture-response")
                (:static-file "prolog/worker.pl")))

@@ -6,6 +6,7 @@ import unittest
 
 from llm_log.expert_capture import (
     decode_captured_body,
+    expert_response_payload,
     expert_usage_payload,
     replay_capture_event,
 )
@@ -22,6 +23,10 @@ class RecordingPlane:
     async def classify_request(self, *, event_id, payload, **_kwargs):
         self.calls.append(("classify_request", event_id, dict(payload)))
         return {"assertions": []}
+
+    async def observe_response(self, *, event_id, payload, **_kwargs):
+        self.calls.append(("observe_response", event_id, dict(payload)))
+        return {"projection_state": "created", "response_id": event_id}
 
     async def observe_usage(self, *, event_id, payload, **_kwargs):
         self.calls.append(("observe_usage", event_id, dict(payload)))
@@ -47,8 +52,12 @@ def capture_event() -> dict:
         "response_status": 200,
         "started_at": "2026-09-14T01:00:00Z",
         "completed_at": "2026-09-14T01:00:01Z",
+        "latency_ms": 1000,
         "model": "fixture/model",
         "transport": "http",
+        "status_kind": "upstream",
+        "stream_completed": None,
+        "finish_reason": None,
         "request_sha256": "a" * 64,
         "response_sha256": "b" * 64,
         "input_tokens": 120,
@@ -66,6 +75,14 @@ class CaptureDecodeTests(unittest.TestCase):
             b"bytes",
         )
 
+    def test_response_payload_is_safe_and_preserves_stream_state(self):
+        event = capture_event()
+        event["stream_completed"] = False
+        response = expert_response_payload(event)
+        self.assertEqual(response["request_id"], event["event_id"])
+        self.assertEqual(response["stream_state"], "incomplete")
+        self.assertNotIn("response_body", response)
+
     def test_usage_keeps_raw_request_identity_without_inventing_task(self):
         usage = expert_usage_payload(capture_event())
         assert usage is not None
@@ -75,18 +92,21 @@ class CaptureDecodeTests(unittest.TestCase):
 
 
 class ReplayTests(unittest.IsolatedAsyncioTestCase):
-    async def test_replays_request_classification_and_usage_with_stable_ids(self):
+    async def test_replays_request_classification_response_and_usage_with_stable_ids(self):
         plane = RecordingPlane()
         event = capture_event()
         result = await replay_capture_event(plane, event)
 
         self.assertEqual(
             [call[0] for call in plane.calls],
-            ["observe_request", "classify_request", "observe_usage"],
+            ["observe_request", "classify_request", "observe_response", "observe_usage"],
         )
         classification = plane.calls[1][2]
         self.assertEqual(classification["request_id"], event["event_id"])
         self.assertEqual(classification["user_message_id"], "um-12345678")
+        response = plane.calls[2][2]
+        self.assertEqual(response["request_id"], event["event_id"])
+        self.assertEqual(response["response_sha256"], event["response_sha256"])
         self.assertEqual(result["event_id"], event["event_id"])
         self.assertIsNone(result["transport_outcome"])
 
