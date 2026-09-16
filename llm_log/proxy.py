@@ -13,7 +13,17 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
 from .expert_capture import expert_response_payload, expert_usage_payload
-from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
+from .recorder import (
+    CaptureEvent,
+    RecorderActor,
+    WebSocketFrame,
+    request_model,
+    sha256_bytes,
+)
+from .transport_errors import (
+    classify_completed_capture,
+    classify_downstream_disconnect,
+)
 
 _HOP_BY_HOP = {
     "connection",
@@ -262,6 +272,31 @@ def _schedule_expert_ingest(
     task.add_done_callback(tasks.discard)
 
 
+async def _record_completed_transport_error(
+    recorder: RecorderActor,
+    event: CaptureEvent,
+    response_body: bytes,
+    *,
+    terminal_exception: BaseException | None = None,
+) -> None:
+    error = classify_completed_capture(
+        event_id=event.event_id,
+        observed_at=event.completed_at,
+        provider=event.provider,
+        model=event.model,
+        transport=event.transport,
+        response_status=event.response_status,
+        status_kind=event.status_kind,
+        stream_completed=event.stream_completed,
+        finish_reason=event.finish_reason,
+        request_sha256=event.request_sha256,
+        response_body=response_body,
+        terminal_exception=terminal_exception,
+    )
+    if error is not None:
+        await recorder.record_error(error)
+
+
 async def _relay_websocket(
     source,
     target,
@@ -352,6 +387,12 @@ async def _proxy_websocket(
             status_kind="upstream_connect_error",
         )
         await recorder.record(event)
+        await _record_completed_transport_error(
+            recorder,
+            event,
+            failure,
+            terminal_exception=exc,
+        )
         _schedule_expert_ingest(request.app, expert_plane, event, b"")
         return web.Response(status=502, text="upstream websocket connection failed")
 
@@ -428,6 +469,7 @@ async def _proxy_websocket(
         transport="websocket",
     )
     await recorder.record(event)
+    await _record_completed_transport_error(recorder, event, response_body)
     _schedule_expert_ingest(request.app, expert_plane, event, bytes(client_frames))
     return downstream
 
@@ -499,6 +541,9 @@ def build_app(
             )
 
         request_body = await request.read()
+        event_id = str(uuid.uuid4())
+        request_model_name = request_model(request_body)
+        request_sha256 = sha256_bytes(request_body)
         started_at = _now()
         started = time.perf_counter()
         classify_task = asyncio.create_task(_classify(classifier, request_body))
@@ -507,6 +552,7 @@ def build_app(
         response_headers: Mapping[str, str] = {}
         downstream: web.StreamResponse | None = None
         status_kind = "upstream"
+        terminal_exception: BaseException | None = None
 
         try:
             async with session.request(
@@ -526,11 +572,58 @@ def build_app(
                 await downstream.prepare(request)
                 async for chunk in upstream_response.content.iter_chunked(64 * 1024):
                     response_body.extend(chunk)
-                    await downstream.write(chunk)
-                await downstream.write_eof()
+                    try:
+                        await downstream.write(chunk)
+                    except Exception as exc:
+                        transport = request.protocol.transport
+                        if (
+                            transport is None
+                            or transport.is_closing()
+                            or type(exc).__name__ == "ClientConnectionResetError"
+                        ):
+                            error = classify_downstream_disconnect(
+                                event_id=event_id,
+                                observed_at=_now(),
+                                provider=provider,
+                                model=request_model_name,
+                                transport="http",
+                                response_status=response_status,
+                                status_kind="downstream_client_disconnect",
+                                request_sha256=request_sha256,
+                                exc=exc,
+                            )
+                            await recorder.record_error(error)
+                            classify_task.cancel()
+                            await asyncio.gather(classify_task, return_exceptions=True)
+                            return downstream
+                        raise
+                try:
+                    await downstream.write_eof()
+                except Exception as exc:
+                    transport = request.protocol.transport
+                    if (
+                        transport is None
+                        or transport.is_closing()
+                        or type(exc).__name__ == "ClientConnectionResetError"
+                    ):
+                        error = classify_downstream_disconnect(
+                            event_id=event_id,
+                            observed_at=_now(),
+                            provider=provider,
+                            model=request_model_name,
+                            transport="http",
+                            response_status=response_status,
+                            status_kind="downstream_client_disconnect",
+                            request_sha256=request_sha256,
+                            exc=exc,
+                        )
+                        await recorder.record_error(error)
+                        classify_task.cancel()
+                        await asyncio.gather(classify_task, return_exceptions=True)
+                        return downstream
+                    raise
         except Exception as exc:
-            if not request.protocol.transport or request.protocol.transport.is_closing():
-                raise
+            terminal_exception = exc
             if downstream is not None and downstream.prepared:
                 status_kind = "upstream_midstream_error"
                 try:
@@ -547,8 +640,9 @@ def build_app(
         intents = await classify_task
         completed_at = _now()
         latency_ms = round((time.perf_counter() - started) * 1000)
+        raw_response_body = bytes(response_body)
         event = CaptureEvent.from_bytes(
-            event_id=str(uuid.uuid4()),
+            event_id=event_id,
             provider=provider,
             upstream=upstream,
             method=request.method,
@@ -558,7 +652,7 @@ def build_app(
             request_body=request_body,
             response_status=response_status,
             response_headers=response_headers,
-            response_body=bytes(response_body),
+            response_body=raw_response_body,
             started_at=started_at,
             completed_at=completed_at,
             latency_ms=latency_ms,
@@ -566,6 +660,12 @@ def build_app(
             status_kind=status_kind,
         )
         await recorder.record(event)
+        await _record_completed_transport_error(
+            recorder,
+            event,
+            raw_response_body,
+            terminal_exception=terminal_exception,
+        )
         _schedule_expert_ingest(request.app, expert_plane, event, request_body)
         assert downstream is not None
         return downstream
