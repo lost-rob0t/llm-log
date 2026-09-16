@@ -9,11 +9,12 @@ This graph records reusable engineering problems and their verified solutions.
 * Issues
 - [[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
 - [[id:llm-log-subscription-quota-observation][Subscription quota observation is not token accounting]]
-- [[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
+- [[id:4a6621dc-4d08-44ac-ad7c973ee12653c][Historical raw captures do not populate newer expert projections]]
 - [[id:16deebed-a87e-4070-913f-dc9015ad5ca7][Streaming captures need terminal integrity evidence]]
 - [[id:llm-log-live-expert-response-observation][Live captures lacked response and usage expert observations]]
 - [[id:llm-log-typed-transport-error-evidence][Proxy failures lacked typed transport evidence]]
 - [[id:llm-log-retry-routing-correlation-gap][Transport failures lacked router-attempt and retry-recovery correlation]]
+- [[id:llm-log-transport-alert-policy-gap][Typed transport errors lacked class-specific alert decisions]]
 
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
@@ -24,3 +25,4 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:llm-log-provenance-safe-response-observation][Provenance-safe response and usage observation]]
 - [[id:llm-log-separate-transport-error-evidence][Separate typed transport error evidence from immutable captures]]
 - [[id:llm-log-safe-router-retry-correlation][Safe router-attempt and retry-recovery correlation]]
+- [[id:llm-log-class-specific-transport-alert-policy][Class-specific transport alert decision stream]]
