@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .transport_errors import TransportErrorEvidence
+
 _SECRET_HEADERS = {
     "authorization",
     "proxy-authorization",
@@ -53,7 +55,7 @@ def _find_model(value: Any) -> str | None:
     return None
 
 
-def _model(request_body: bytes) -> str | None:
+def request_model(request_body: bytes) -> str | None:
     try:
         parsed = json.loads(request_body)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -63,8 +65,6 @@ def _model(request_body: bytes) -> str | None:
     if found is not None:
         return found
 
-    # WebSocket captures are newline-delimited frame envelopes. Text frames may
-    # themselves contain JSON request objects with the selected model.
     for raw_line in request_body.splitlines():
         try:
             frame = json.loads(raw_line)
@@ -242,7 +242,7 @@ def _stream_state(
     return completed, finish_reason
 
 
-def _sha256(raw: bytes) -> str:
+def sha256_bytes(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -279,7 +279,7 @@ class WebSocketFrame:
             direction=direction,
             frame_type=frame_type,
             payload=_body(payload),
-            payload_sha256=_sha256(payload),
+            payload_sha256=sha256_bytes(payload),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -358,9 +358,9 @@ class CaptureEvent:
             started_at=started_at,
             completed_at=completed_at,
             latency_ms=latency_ms,
-            model=_model(request_body),
-            request_sha256=_sha256(request_body),
-            response_sha256=_sha256(response_body),
+            model=request_model(request_body),
+            request_sha256=sha256_bytes(request_body),
+            response_sha256=sha256_bytes(response_body),
             intents=sorted(set(intents)),
             transport=transport,
             input_tokens=input_tokens,
@@ -412,7 +412,11 @@ class RecorderActor:
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self._queue: asyncio.Queue[
-            tuple[str, CaptureEvent | WebSocketFrame | None, asyncio.Future[None] | None]
+            tuple[
+                str,
+                CaptureEvent | WebSocketFrame | TransportErrorEvidence | None,
+                asyncio.Future[None] | None,
+            ]
         ] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
@@ -435,6 +439,12 @@ class RecorderActor:
         await self.start()
         await self._queue.put(("frame", frame, None))
 
+    async def record_error(self, error: TransportErrorEvidence) -> None:
+        await self.start()
+        future = asyncio.get_running_loop().create_future()
+        await self._queue.put(("error", error, future))
+        await future
+
     async def flush(self) -> None:
         if self._task is None:
             return
@@ -456,10 +466,12 @@ class RecorderActor:
     async def _run(self) -> None:
         jsonl_path = self.root / "events.jsonl"
         frames_path = self.root / "frames.jsonl"
+        errors_path = self.root / "errors.jsonl"
         prolog_path = self.root / "events.pl"
         with (
             jsonl_path.open("a", encoding="utf-8", buffering=1) as jsonl,
             frames_path.open("a", encoding="utf-8", buffering=1) as frames,
+            errors_path.open("a", encoding="utf-8", buffering=1) as errors,
             prolog_path.open("a", encoding="utf-8", buffering=1) as prolog,
         ):
             while True:
@@ -491,13 +503,26 @@ class RecorderActor:
                             + "\n"
                         )
                         frames.flush()
+                    elif op == "error":
+                        assert isinstance(payload, TransportErrorEvidence)
+                        errors.write(
+                            json.dumps(
+                                payload.as_json(),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                        errors.flush()
                     elif op == "flush":
                         jsonl.flush()
                         frames.flush()
+                        errors.flush()
                         prolog.flush()
                     elif op == "close":
                         jsonl.flush()
                         frames.flush()
+                        errors.flush()
                         prolog.flush()
                         if future is not None:
                             future.set_result(None)
