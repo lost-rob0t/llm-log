@@ -1,0 +1,21 @@
+:PROPERTIES:
+:ID:       llm-log-typed-transport-error-evidence
+:END:
+#+title: Proxy failures lacked typed transport evidence
+#+filetags: :llm-log:issue:transport:errors:
+
+* Problem
+Transport failures were either stored only as generic response bodies or escaped as noisy aiohttp tracebacks. Downstream client disconnects were especially dangerous because they produced no CaptureEvent yet looked like proxy/provider failures in logs.
+
+GitHub issue #61 tracks the broader transport error classifier.
+
+* Constraints
+- Client disconnects must never enter provider failure rates.
+- Account/gateway failures such as 401/403/429 must not be falsely attributed to the selected model endpoint.
+- OpenRouter in-stream error frames can occur under HTTP 200 and require body-structure inspection.
+- Silent SSE truncation must use the terminal integrity metadata from issue #67.
+- Error evidence must contain safe metadata only; raw provider error messages and response bodies stay out of =errors.jsonl=.
+- Transport evidence is a separate domain from model/quantization anomaly evidence.
+
+* Resolution
+Implemented by [[id:llm-log-separate-transport-error-evidence][Separate typed transport error evidence from immutable captures]].
