@@ -312,6 +312,7 @@ async def _proxy_websocket(
             completed_at=completed_at,
             latency_ms=round((time.perf_counter() - started) * 1000),
             transport="websocket",
+            status_kind="upstream_connect_error",
         )
         await recorder.record(event)
         _schedule_expert_ingest(request.app, expert_plane, event, b"")
@@ -467,6 +468,8 @@ def build_app(
         response_body = bytearray()
         response_status = 502
         response_headers: Mapping[str, str] = {}
+        downstream: web.StreamResponse | None = None
+        status_kind = "upstream"
 
         try:
             async with session.request(
@@ -489,11 +492,20 @@ def build_app(
                     await downstream.write(chunk)
                 await downstream.write_eof()
         except Exception as exc:
-            if not response_body:
-                response_body.extend(str(exc).encode("utf-8", errors="replace"))
             if not request.protocol.transport or request.protocol.transport.is_closing():
                 raise
-            downstream = web.Response(status=502, text="upstream request failed")
+            if downstream is not None and downstream.prepared:
+                status_kind = "upstream_midstream_error"
+                try:
+                    await downstream.write_eof()
+                except (ConnectionError, RuntimeError):
+                    pass
+            else:
+                status_kind = "upstream_connect_error"
+                response_status = 502
+                response_headers = {}
+                response_body.extend(str(exc).encode("utf-8", errors="replace"))
+                downstream = web.Response(status=502, text="upstream request failed")
 
         intents = await classify_task
         completed_at = _now()
@@ -514,9 +526,11 @@ def build_app(
             completed_at=completed_at,
             latency_ms=latency_ms,
             intents=intents,
+            status_kind=status_kind,
         )
         await recorder.record(event)
         _schedule_expert_ingest(request.app, expert_plane, event, request_body)
+        assert downstream is not None
         return downstream
 
     app.on_startup.append(startup)
