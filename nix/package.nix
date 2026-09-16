@@ -17,6 +17,7 @@ python312Packages.buildPythonApplication {
   dependencies = [
     python312Packages.aiohttp
     python312Packages.jsonschema
+    python312Packages.referencing
   ];
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [ swiProlog ];
