@@ -135,6 +135,7 @@ class TransportErrorEvidenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["attribution_scope"], "gateway_or_account")
         self.assertEqual(error["response_status"], 403)
         self.assertEqual(error["error_code"], "budget_exhausted")
+        self.assertIsNone(error["model"])
         self.assertNotIn("do-not-copy-this-message", json.dumps(error))
 
     async def test_openrouter_in_stream_error_is_router_error_even_under_http_200(self):
