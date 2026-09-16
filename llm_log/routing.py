@@ -193,6 +193,9 @@ def observe_openrouter_routing(
         if len(attempts) >= _MAX_ATTEMPTS:
             break
 
+    if selected_provider is None and not attempts:
+        return None
+
     return RoutingObservation(
         routing_id=f"routing:{event_id}",
         event_id=event_id,
