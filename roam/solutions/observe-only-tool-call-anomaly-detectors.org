@@ -1,0 +1,30 @@
+:PROPERTIES:
+:ID:       llm-log-observe-only-tool-call-anomaly-detectors
+:END:
+#+title: Observe-only streamed tool-call anomaly detectors
+#+filetags: :llm-log:solution:model:anomaly:tools:
+
+* Solves
+[[id:llm-log-tool-call-model-anomaly-gap][Tool-call pathologies lacked safe model-behavior evidence]]
+
+* Approach
+Implement one bounded detector family for #58 before expanding to schema, structured-output, repetition, or baseline detectors. =tool-call-integrity/1= reconstructs OpenAI-compatible tool calls from either normal JSON responses or SSE deltas. Tool-call index is the stable reconstruction key, so interleaved calls remain independent. Function names support both true fragments and providers that repeat/cumulatively resend the full name; arguments are concatenated only after call-index reconstruction.
+
+Two deterministic detectors currently emit =model_behavior= observations:
+- =tool_arguments_invalid_json=: complete reconstructed tool arguments fail JSON decoding, score 1.0 / high severity;
+- =tool_name_not_requested=: reconstructed function name is absent from the request's declared =tools= or legacy =functions= set, score 0.9 / high severity.
+
+=AnomalyActor= is the single writer for append-only =anomalies.jsonl=. It receives only completed model observations after the transport classifier has accepted the capture as clean. Transport failures return from derived processing before anomaly analysis, so a truncated SSE with half a JSON object remains =stream_protocol_error= and never becomes a model anomaly.
+
+The anomaly projection includes detector/version, provider/model/event identity, score/severity, quantization annotation, and bounded structural evidence such as tool-call index/name and argument length. It deliberately excludes prompt text and raw argument contents. Quantization defaults to =unknown=. Supplying separately grounded quantization metadata changes only the annotation; detector ID and score are unchanged.
+
+Detector/persistence exceptions are swallowed at the proxy integration boundary. Raw =events.jsonl= remains authoritative; anomaly evidence is a derived projection and cannot block forwarding or immutable capture.
+
+* Verification
+- Initial RED head =d9660780546156ad14391815192f5713d1318f7f=: 134 tests ran; exactly six new tool-call contracts errored because =llm_log.tool_call_anomaly= did not exist. All inherited #61 stack tests stayed green.
+- Initial implementation head =528c6e5cc4494ffccbc55260f7b3819f3bc51725=: both Analytics and Quota exact-head workflows passed, including delivered-package build.
+- Hardening RED head =ef16bf098f35c8e0f437aba2f1ac5804bb5cf0d5=: 136 tests ran; exactly two failures exposed cumulative-name duplication and missing live =anomalies.jsonl= persistence. Everything else stayed green.
+- Hardening implementation head =c9a61232b8eceebc8475b1141ed7e8efc67ccbba= plus cross-domain regression head =a9ce4d44f9c0d234d8eafc110cc6984a419009de=: full Python/adversarial analytics and quota/package workflows passed. The live clean malformed-tool fixture emits one model anomaly, while the transport-truncated malformed-tool fixture emits only =stream_protocol_error=.
+
+* Boundary
+This slice does not validate tool arguments against JSON Schema, validate requested response-format schemas, detect repetition/looping, establish output-length baselines, classify Unicode corruption, infer task failure, or infer serving bit-width from behavior. Those remain separate bounded #58 slices.
