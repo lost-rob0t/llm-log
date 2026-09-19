@@ -24,7 +24,17 @@ _HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
-_REQUEST_DROP = _HOP_BY_HOP | {"host", "content-length"}
+_INTERNAL_ATTRIBUTION_HEADERS = {
+    "x-llm-log-company",
+    "x-llm-log-worker",
+    "x-llm-log-agent",
+    "x-llm-log-session",
+    "x-llm-log-task",
+    "x-llm-log-correlation-id",
+    "x-llm-log-causation-id",
+    "x-llm-log-plan",
+}
+_REQUEST_DROP = _HOP_BY_HOP | {"host", "content-length"} | _INTERNAL_ATTRIBUTION_HEADERS
 _RESPONSE_DROP = _HOP_BY_HOP
 _WS_REQUEST_DROP = _REQUEST_DROP | {
     "sec-websocket-key",
