@@ -16,6 +16,10 @@ _DEFAULT_UPSTREAMS = {
     "openai": "https://api.openai.com",
     "openrouter": "https://openrouter.ai",
     "anthropic": "https://api.anthropic.com",
+    # Subscription-backed routes. Credentials are still supplied by the
+    # client/provider auth flow; llm-log only proxies and records them.
+    "chatgpt": "https://chatgpt.com",
+    "zai-coding": "https://api.z.ai",
 }
 
 _DEFAULT_EXPERT_DATA_DIR = Path.home() / ".llm-proxy" / "expert"
@@ -72,7 +76,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _serve(args: argparse.Namespace) -> None:
-    upstreams = dict(args.upstream) if args.upstream else _DEFAULT_UPSTREAMS
+    # Explicit upstreams override/add to defaults; they do not silently
+    # remove subscription and standard provider routes.
+    upstreams = {**_DEFAULT_UPSTREAMS, **dict(args.upstream)}
     recorder = RecorderActor(args.log_dir)
     classifier = None if args.no_prolog_classifier else PrologClassifier()
     expert_plane = None
