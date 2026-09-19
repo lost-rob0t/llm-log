@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -20,6 +20,25 @@ _SECRET_HEADERS = {
     "anthropic-api-key",
 }
 _SAFE_ATOM = re.compile(r"^[a-z][a-z0-9_]*$")
+_ATTRIBUTION_HEADERS = {
+    "x-llm-log-company": "company",
+    "x-llm-log-worker": "worker",
+    "x-llm-log-agent": "agent",
+    "x-llm-log-session": "session",
+    "x-llm-log-task": "task",
+    "x-llm-log-correlation-id": "correlation_id",
+    "x-llm-log-causation-id": "causation_id",
+    "x-llm-log-plan": "plan",
+}
+
+
+def _attribution(headers: Mapping[str, str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for name, value in headers.items():
+        key = _ATTRIBUTION_HEADERS.get(name.lower())
+        if key is not None and value:
+            result[key] = value
+    return result
 
 
 def redact_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -244,6 +263,7 @@ class CaptureEvent:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    attribution: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_bytes(
@@ -295,6 +315,7 @@ class CaptureEvent:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            attribution=_attribution(request_headers),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -331,7 +352,11 @@ class CaptureEvent:
                 f"token_usage({_prolog_atom(self.event_id)}, {input_tokens}, "
                 f"{output_tokens}).\n"
             )
-        return fact + transport + usage + intents
+        attribution = "".join(
+            f"llm_attribution({_prolog_atom(self.event_id)}, {_intent_atom(key)}, {_prolog_atom(value)}).\n"
+            for key, value in sorted(self.attribution.items())
+        )
+        return fact + transport + usage + attribution + intents
 
 
 class RecorderActor:
