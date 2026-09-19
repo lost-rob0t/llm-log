@@ -23,10 +23,24 @@
     "te" "trailer" "trailers" "transfer-encoding" "upgrade")
   "Hop-by-hop headers per HTTP/1.1 proxy semantics; never forwarded.")
 
+(defparameter +internal-request-headers+
+  '("x-llm-log-company"
+    "x-llm-log-worker"
+    "x-llm-log-agent"
+    "x-llm-log-session"
+    "x-llm-log-task"
+    "x-llm-log-correlation-id"
+    "x-llm-log-causation-id"
+    "x-llm-log-plan")
+  "Local attribution metadata captured by llm-log but never forwarded upstream.")
+
 (defparameter +hop-by-hop-request-headers+
-  (append +hop-by-hop-headers+ '("host" "content-length" "expect"))
+  (append +hop-by-hop-headers+
+          +internal-request-headers+
+          '("host" "content-length" "expect"))
   "Headers dropped from the inbound request head. Host is rebuilt for the
-upstream and Content-Length is recomputed from the forwarded octets.")
+upstream and Content-Length is recomputed from the forwarded octets. Internal
+llm-log attribution headers are consumed locally and never leak to providers.")
 
 (defparameter +relay-buffer-size+ 65536)
 
