@@ -1,0 +1,17 @@
+#+title: llm-log Ideas
+#+startup: overview
+#+todo: IDEA | DONE CANCELED
+
+* Routing and provider resilience
+
+** IDEA OpenRouter exhaustion fallback for depleted sub-provider proxies
+:PROPERTIES:
+:CREATED: [2026-09-19 Sat]
+:ISSUE: #95
+:PARENT: #94
+:END:
+When a configured direct/sub-provider proxy exhausts quota, credits, rate capacity,
+or an explicitly classified provider capacity bucket before downstream response
+commit, route the logical request through OpenRouter. Preserve strict credential
+separation, explicit model mapping, quantization/provider policy, cost attribution,
+attempt provenance, circuit breaking, and no replay after streaming begins.
