@@ -15,3 +15,14 @@ or an explicitly classified provider capacity bucket before downstream response
 commit, route the logical request through OpenRouter. Preserve strict credential
 separation, explicit model mapping, quantization/provider policy, cost attribution,
 attempt provenance, circuit breaking, and no replay after streaming begins.
+
+** IDEA Subscription-backed proxy adapters with worker/subagent token attribution
+:PROPERTIES:
+:CREATED: [2026-09-19 Sat]
+:ISSUE: #96
+:PARENT: #94
+:END:
+Proxy and record ChatGPT Plus/Pro Codex and GLM Coding Plan traffic as first-class
+llm-log upstreams. Consume StarIntel worker/session/task correlation metadata
+locally, strip it before provider egress, preserve credential redaction, and
+normalize authoritative token I/O for Biz economics and fallback attribution.
