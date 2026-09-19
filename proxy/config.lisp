@@ -27,7 +27,9 @@
 (defparameter +default-upstreams+
   '(("openai" . "https://api.openai.com")
     ("openrouter" . "https://openrouter.ai")
-    ("anthropic" . "https://api.anthropic.com"))
+    ("anthropic" . "https://api.anthropic.com")
+    ("chatgpt" . "https://chatgpt.com")
+    ("zai-coding" . "https://api.z.ai"))
   "Built-in provider-prefix to upstream base-url registry.
 
 The reusable default never hardcodes a consumer's personal data path;
