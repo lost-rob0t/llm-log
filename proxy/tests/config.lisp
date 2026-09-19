@@ -23,7 +23,9 @@
   (let ((config (resolve-config :config-file nil)))
     (ok (equal (upstream-base-url config "openai") "https://api.openai.com"))
     (ok (equal (upstream-base-url config "openrouter") "https://openrouter.ai"))
-    (ok (equal (upstream-base-url config "anthropic") "https://api.anthropic.com"))))
+    (ok (equal (upstream-base-url config "anthropic") "https://api.anthropic.com"))
+    (ok (equal (upstream-base-url config "chatgpt") "https://chatgpt.com"))
+    (ok (equal (upstream-base-url config "zai-coding") "https://api.z.ai"))))
 
 (deftest defaults-are-home-localhost-8787
   (let ((config (resolve-config :config-file nil)))
