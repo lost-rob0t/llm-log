@@ -442,6 +442,7 @@ def build_app(
     require_expert_plane: bool = False,
     admission_policy: AdmissionPolicy | None = None,
     outbound_profiles: Mapping[str, str] | None = None,
+    opencode_version: str | None = None,
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
     configured_profiles = dict(outbound_profiles or {})
@@ -449,6 +450,9 @@ def build_app(
         if provider not in normalized:
             raise ValueError(f"outbound profile references unknown provider: {provider}")
         resolve_profile(profile_name)
+        # Validate dynamic profile requirements once at construction time,
+        # not after a downstream client has already submitted a request.
+        apply_profile({}, profile_name, opencode_version=opencode_version)
     admission_scheduler = (
         AdmissionScheduler(admission_policy) if admission_policy is not None else None
     )
@@ -502,6 +506,7 @@ def build_app(
                 outbound_headers, outbound_profile = apply_profile(
                     _websocket_request_headers(request.headers),
                     profile_name,
+                    opencode_version=opencode_version,
                 )
                 return await _proxy_websocket(
                     request,
@@ -520,6 +525,7 @@ def build_app(
             outbound_headers, outbound_profile = apply_profile(
                 _request_headers(request.headers),
                 profile_name,
+                opencode_version=opencode_version,
             )
             request_body = await request.read()
             started_at = _now()
