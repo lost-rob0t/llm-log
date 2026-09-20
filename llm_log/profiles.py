@@ -135,6 +135,7 @@ def apply_profile(
                 del result[existing]
         result[name] = value
 
+    identity = profile.identity
     if profile.opencode_user_agent:
         if opencode_version is None or not _VERSION.fullmatch(opencode_version):
             raise ValueError(
@@ -144,5 +145,6 @@ def apply_profile(
             if existing.lower() == "user-agent":
                 del result[existing]
         result["User-Agent"] = f"opencode/{opencode_version}"
+        identity = f"{identity};opencode={opencode_version}"
 
-    return result, profile.identity
+    return result, identity
