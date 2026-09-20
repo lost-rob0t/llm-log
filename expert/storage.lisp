@@ -59,10 +59,15 @@
         :upstream (%projection-field payload "upstream")
         :model (%projection-field payload "model")
         :transport (%projection-field payload "transport")
+        :method (%projection-field payload "method")
+        :path (%projection-field payload "path")
+        :query (%projection-field payload "query")
         :started-at (%projection-field payload "started_at")
         :completed-at (%projection-field payload "completed_at")
+        :latency-ms (%projection-field payload "latency_ms")
         :request-sha256 (%projection-field payload "request_sha256")
-        :response-sha256 (%projection-field payload "response_sha256")))
+        :response-sha256 (%projection-field payload "response_sha256")
+        :attribution (%projection-field payload "attribution")))
 
 (defun project-request-event (host event-id payload)
   "Project one request event into Tek9 with create/existing/conflict semantics."
