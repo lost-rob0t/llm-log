@@ -24,9 +24,29 @@ class RecordingExpertPlane:
         self.calls.append(("observe_request", event_id, dict(payload), session_id, task_id))
         return {"projection_state": "created", "kb_revision": 2}
 
+    async def observe_user_message(self, *, event_id, payload, session_id, task_id) -> dict:
+        self.calls.append(("observe_user_message", event_id, dict(payload), session_id, task_id))
+        return {"projection_state": "created"}
+
     async def classify_request(self, *, event_id, payload, session_id, task_id) -> dict:
         self.calls.append(("classify_request", event_id, dict(payload), session_id, task_id))
         return {"expert": "request.classifier", "assertions": []}
+
+    async def observe_response(self, *, event_id, payload, session_id, task_id) -> dict:
+        self.calls.append(("observe_response", event_id, dict(payload), session_id, task_id))
+        return {"projection_state": "created"}
+
+    async def assess_response(self, *, event_id, payload, session_id, task_id) -> dict:
+        self.calls.append(("assess_response", event_id, dict(payload), session_id, task_id))
+        return {"assertions": []}
+
+    async def observe_usage(self, *, event_id, payload, session_id, task_id) -> dict:
+        self.calls.append(("observe_usage", event_id, dict(payload), session_id, task_id))
+        return {"projection_state": "created"}
+
+    async def record_outcome_evidence(self, *, event_id, payload, session_id, task_id) -> dict:
+        self.calls.append(("record_outcome_evidence", event_id, dict(payload), session_id, task_id))
+        return {"outcome": "unknown"}
 
 
 class BoomExpertPlane:
@@ -115,7 +135,17 @@ class ExpertIngestTest(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(0.02)
 
-        self.assertEqual([c[0] for c in plane.calls], ["observe_request", "classify_request"])
+        self.assertEqual(
+            [c[0] for c in plane.calls],
+            [
+                "observe_request",
+                "observe_user_message",
+                "classify_request",
+                "observe_response",
+                "assess_response",
+                "record_outcome_evidence",
+            ],
+        )
         operation, event_id, payload, session_id, task_id = plane.calls[0]
         self.assertEqual(operation, "observe_request")
         self.assertEqual(session_id, "proxy")
@@ -126,7 +156,11 @@ class ExpertIngestTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(payload["request_sha256"]), 64)
         self.assertEqual(len(payload["response_sha256"]), 64)
 
-        operation, event_id, payload, _, _ = plane.calls[1]
+        operation, message_event_id, message_payload, _, _ = plane.calls[1]
+        self.assertEqual(operation, "observe_user_message")
+        self.assertEqual(message_payload["request_id"], event_id)
+
+        operation, event_id, payload, _, _ = plane.calls[2]
         self.assertEqual(operation, "classify_request")
         self.assertEqual(event_id, plane.calls[0][1], "classify must reuse the capture event id")
         self.assertEqual(payload["message"], "fix the classifier")
@@ -160,7 +194,15 @@ class ExpertIngestTest(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(0.02)
         await asyncio.sleep(0.05)
-        self.assertEqual([c[0] for c in plane.calls], ["observe_request"])
+        self.assertEqual(
+            [c[0] for c in plane.calls],
+            [
+                "observe_request",
+                "observe_response",
+                "assess_response",
+                "record_outcome_evidence",
+            ],
+        )
 
 
 if __name__ == "__main__":
