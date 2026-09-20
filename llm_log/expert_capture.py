@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 from typing import Any, Mapping
 
@@ -55,7 +56,7 @@ def _user_message_from_api_body(body: Mapping[str, Any]) -> str:
     return ""
 
 
-def extract_user_message(request_body: bytes) -> str:
+def _extract_full_user_message(request_body: bytes) -> str:
     text = request_body.decode("utf-8", errors="replace")
     try:
         body = json.loads(text)
@@ -64,7 +65,7 @@ def extract_user_message(request_body: bytes) -> str:
     if isinstance(body, Mapping):
         message = _user_message_from_api_body(body)
         if message:
-            return message[:_USER_MESSAGE_LIMIT]
+            return message
     for line in text.splitlines():
         try:
             frame = json.loads(line)
@@ -82,8 +83,25 @@ def extract_user_message(request_body: bytes) -> str:
         if isinstance(parsed, Mapping):
             message = _user_message_from_api_body(parsed)
             if message:
-                return message[:_USER_MESSAGE_LIMIT]
+                return message
     return ""
+
+
+def extract_user_message_record(request_body: bytes) -> tuple[str, bool, str]:
+    message = _extract_full_user_message(request_body)
+    if not message:
+        return "", False, hashlib.sha256(b"").hexdigest()
+    encoded = message.encode("utf-8")
+    return (
+        message[:_USER_MESSAGE_LIMIT],
+        len(message) > _USER_MESSAGE_LIMIT,
+        hashlib.sha256(encoded).hexdigest(),
+    )
+
+
+def extract_user_message(request_body: bytes) -> str:
+    message, _truncated, _sha256 = extract_user_message_record(request_body)
+    return message
 
 
 def validate_capture_event(event: Mapping[str, Any]) -> None:
@@ -96,18 +114,147 @@ def validate_capture_event(event: Mapping[str, Any]) -> None:
     decode_captured_body(event.get("request_body"))
 
 
+def _attribution(event: Mapping[str, Any]) -> dict[str, str]:
+    value = event.get("attribution")
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): str(item)
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str) and item
+    }
+
+
+def _optional_string(event: Mapping[str, Any], field: str) -> str | None:
+    value = event.get(field)
+    return value if isinstance(value, str) and value else None
+
+
 def expert_request_payload(event: Mapping[str, Any]) -> dict[str, Any]:
     validate_capture_event(event)
     model = event.get("model")
     transport = event.get("transport")
+    payload: dict[str, Any] = {
+        "provider": event["provider"],
+        "upstream": _optional_string(event, "upstream"),
+        "model": model if isinstance(model, str) and model else "unknown",
+        "transport": transport if isinstance(transport, str) and transport else "http",
+        "method": _optional_string(event, "method"),
+        "path": _optional_string(event, "path"),
+        "query": event.get("query") if isinstance(event.get("query"), str) else "",
+        "started_at": event["started_at"],
+        "completed_at": event["completed_at"],
+        "latency_ms": event.get("latency_ms"),
+        "request_sha256": event["request_sha256"],
+        "response_sha256": event["response_sha256"],
+        "attribution": _attribution(event),
+    }
+    return payload
+
+
+def expert_user_message_payload(
+    event: Mapping[str, Any], request_body: bytes
+) -> dict[str, Any] | None:
+    event_id = _required_string(event, "event_id")
+    message, truncated, message_sha256 = extract_user_message_record(request_body)
+    if not message:
+        return None
+    attribution = _attribution(event)
+    model = event.get("model")
     return {
+        "message_id": f"capture-user-message:{event_id}",
+        "request_id": event_id,
+        "message": message,
+        "message_truncated": truncated,
+        "message_sha256": message_sha256,
+        "provider": event["provider"],
+        "model": model if isinstance(model, str) and model else "unknown",
+        "client": attribution.get("agent")
+        or attribution.get("worker")
+        or "proxy",
+        "attribution": attribution,
+    }
+
+
+def _response_json_documents(raw: bytes) -> list[Any]:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    documents: list[Any] = []
+    try:
+        documents.append(json.loads(text))
+    except json.JSONDecodeError:
+        pass
+    for line in text.splitlines():
+        item = line.strip()
+        if item.startswith("data:"):
+            item = item[5:].strip()
+        if not item or item == "[DONE]":
+            continue
+        try:
+            documents.append(json.loads(item))
+        except json.JSONDecodeError:
+            continue
+    return documents
+
+
+def _find_finish_reason(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        for key in ("finish_reason", "stop_reason"):
+            reason = value.get(key)
+            if isinstance(reason, str) and reason:
+                return reason
+        for child in value.values():
+            reason = _find_finish_reason(child)
+            if reason is not None:
+                return reason
+    elif isinstance(value, list):
+        for child in value:
+            reason = _find_finish_reason(child)
+            if reason is not None:
+                return reason
+    return None
+
+
+def expert_response_payload(event: Mapping[str, Any]) -> dict[str, Any]:
+    event_id = _required_string(event, "event_id")
+    status = event.get("response_status")
+    if not isinstance(status, int) or isinstance(status, bool):
+        raise ValueError("capture event response_status must be an integer")
+    response_body = decode_captured_body(event.get("response_body"))
+    reasons = [
+        reason
+        for document in _response_json_documents(response_body)
+        if (reason := _find_finish_reason(document)) is not None
+    ]
+    model = event.get("model")
+    transport = event.get("transport")
+    return {
+        "response_id": f"capture-response:{event_id}",
+        "request_id": event_id,
         "provider": event["provider"],
         "model": model if isinstance(model, str) and model else "unknown",
         "transport": transport if isinstance(transport, str) and transport else "http",
-        "started_at": event["started_at"],
+        "response_status": status,
         "completed_at": event["completed_at"],
-        "request_sha256": event["request_sha256"],
+        "latency_ms": event.get("latency_ms"),
         "response_sha256": event["response_sha256"],
+        "finish_reason": reasons[-1] if reasons else None,
+        "attribution": _attribution(event),
+    }
+
+
+def response_assessment_payload(event: Mapping[str, Any]) -> dict[str, Any]:
+    response = expert_response_payload(event)
+    return {
+        "request_id": response["request_id"],
+        "response_id": response["response_id"],
+        "response_status": response["response_status"],
+        "latency_ms": response["latency_ms"],
+        "transport": response["transport"],
+        "finish_reason": response["finish_reason"],
+        "usage_observed": expert_usage_payload(event) is not None,
     }
 
 
@@ -168,33 +315,63 @@ async def replay_capture_event(
     event: Mapping[str, Any],
     *,
     record_transport_evidence: bool = False,
+    default_session_id: str = "backfill",
+    default_task_id: str = "backfill",
 ) -> dict[str, Any]:
     payload = expert_request_payload(event)
     event_id = _required_string(event, "event_id")
     request_body = decode_captured_body(event.get("request_body"))
+    attribution = _attribution(event)
+    session_id = attribution.get("session") or default_session_id
+    task_id = attribution.get("task") or default_task_id
 
     observed = await expert_plane.observe_request(
         event_id=event_id,
         payload=payload,
-        session_id="backfill",
-        task_id="backfill",
+        session_id=session_id,
+        task_id=task_id,
     )
 
+    user_message = None
     classified = None
-    message = extract_user_message(request_body)
-    if message:
+    message_payload = expert_user_message_payload(event, request_body)
+    if message_payload is not None:
+        user_message = await expert_plane.observe_user_message(
+            event_id=message_payload["message_id"],
+            payload=message_payload,
+            session_id=session_id,
+            task_id=task_id,
+        )
         classified = await expert_plane.classify_request(
             event_id=event_id,
             payload={
                 **payload,
-                "message": message,
-                "user_message_id": "um-" + event_id[:8],
+                "message": message_payload["message"],
+                "message_truncated": message_payload["message_truncated"],
+                "message_sha256": message_payload["message_sha256"],
+                "user_message_id": message_payload["message_id"],
                 "request_id": event_id,
-                "client": "proxy",
+                "client": message_payload["client"],
+                "session_id": session_id,
+                "task_id": task_id,
             },
-            session_id="backfill",
-            task_id="backfill",
+            session_id=session_id,
+            task_id=task_id,
         )
+
+    response_payload = expert_response_payload(event)
+    response = await expert_plane.observe_response(
+        event_id=response_payload["response_id"],
+        payload=response_payload,
+        session_id=session_id,
+        task_id=task_id,
+    )
+    assessment = await expert_plane.assess_response(
+        event_id=event_id,
+        payload=response_assessment_payload(event),
+        session_id=session_id,
+        task_id=task_id,
+    )
 
     usage = None
     usage_payload = expert_usage_payload(event)
@@ -202,8 +379,8 @@ async def replay_capture_event(
         usage = await expert_plane.observe_usage(
             event_id=event_id,
             payload=usage_payload,
-            session_id="backfill",
-            task_id="backfill",
+            session_id=session_id,
+            task_id=task_id,
         )
 
     outcome = None
@@ -212,14 +389,17 @@ async def replay_capture_event(
         outcome = await expert_plane.record_outcome_evidence(
             event_id=outcome_event_id,
             payload=outcome_payload,
-            session_id="backfill",
-            task_id="backfill",
+            session_id=session_id,
+            task_id=task_id,
         )
 
     return {
         "event_id": event_id,
         "request": observed,
+        "user_message": user_message,
         "classification": classified,
+        "response": response,
+        "response_assessment": assessment,
         "usage": usage,
         "transport_outcome": outcome,
     }
