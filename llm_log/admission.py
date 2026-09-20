@@ -43,7 +43,7 @@ class AdmissionRejected(RuntimeError):
         self.retry_after = max(1, int(retry_after))
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class _Waiter:
     deadline: float
 
@@ -97,7 +97,10 @@ class AdmissionScheduler:
         self._states: dict[str, _AdmissionState] = {}
 
     def _key(self, provider: str) -> str:
-        return self.policy.provider_groups.get(provider, provider)
+        group = self.policy.provider_groups.get(provider)
+        if group is not None:
+            return f"group:{group}"
+        return f"provider:{provider}"
 
     def _state(self, key: str) -> _AdmissionState:
         state = self._states.get(key)
