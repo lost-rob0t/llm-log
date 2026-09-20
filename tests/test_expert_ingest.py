@@ -131,7 +131,7 @@ class ExpertIngestTest(unittest.IsolatedAsyncioTestCase):
             ) as response:
                 self.assertEqual(response.status, 200)
         for _ in range(100):
-            if len(plane.calls) >= 2:
+            if len(plane.calls) >= 6:
                 break
             await asyncio.sleep(0.02)
 
