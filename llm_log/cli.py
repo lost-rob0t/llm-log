@@ -10,6 +10,7 @@ from .classifier import PrologClassifier
 from .expert_adapter import SubprocessExpertPlane
 from .expert_admin import install_expert_admin_listener
 from .expert_cli import add_expert_subcommands, run as run_expert_command
+from .profiles import resolve_profile
 from .proxy import build_app
 from .recorder import RecorderActor
 
@@ -38,6 +39,17 @@ def _provider_group(value: str) -> tuple[str, str]:
     if not sep or not provider or not group:
         raise argparse.ArgumentTypeError("admission provider group must be PROVIDER=GROUP")
     return provider, group
+
+
+def _outbound_profile(value: str) -> tuple[str, str]:
+    provider, sep, profile = value.partition("=")
+    if not sep or not provider or not profile:
+        raise argparse.ArgumentTypeError("outbound profile must be PROVIDER=PROFILE")
+    try:
+        resolve_profile(profile)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return provider, profile
 
 
 def _positive_int(value: str) -> int:
@@ -123,6 +135,19 @@ def parser() -> argparse.ArgumentParser:
         help="map provider aliases sharing one credential/quota into one admission group",
     )
     serve.add_argument(
+        "--outbound-profile",
+        action="append",
+        type=_outbound_profile,
+        default=[],
+        metavar="PROVIDER=PROFILE",
+        help="apply an operator-selected versioned outbound privacy/compatibility profile",
+    )
+    serve.add_argument(
+        "--opencode-version",
+        default=None,
+        help="exact installed OpenCode version required by OpenCode identity profiles",
+    )
+    serve.add_argument(
         "--expert-service-bin",
         type=Path,
         default=None,
@@ -183,6 +208,8 @@ def _serve(args: argparse.Namespace) -> None:
         expert_plane=expert_plane,
         require_expert_plane=args.require_expert_plane,
         admission_policy=admission_policy,
+        outbound_profiles=dict(args.outbound_profile),
+        opencode_version=args.opencode_version,
     )
     if expert_plane is not None:
         install_expert_admin_listener(
