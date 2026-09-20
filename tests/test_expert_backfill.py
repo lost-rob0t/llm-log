@@ -19,8 +19,20 @@ class RecordingPlane:
         self.calls.append(("observe_request", event_id, dict(payload)))
         return {"projection_state": "created"}
 
+    async def observe_user_message(self, *, event_id, payload, **_kwargs):
+        self.calls.append(("observe_user_message", event_id, dict(payload)))
+        return {"projection_state": "created"}
+
     async def classify_request(self, *, event_id, payload, **_kwargs):
         self.calls.append(("classify_request", event_id, dict(payload)))
+        return {"assertions": []}
+
+    async def observe_response(self, *, event_id, payload, **_kwargs):
+        self.calls.append(("observe_response", event_id, dict(payload)))
+        return {"projection_state": "created"}
+
+    async def assess_response(self, *, event_id, payload, **_kwargs):
+        self.calls.append(("assess_response", event_id, dict(payload)))
         return {"assertions": []}
 
     async def observe_usage(self, *, event_id, payload, **_kwargs):
@@ -82,9 +94,16 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [call[0] for call in plane.calls],
-            ["observe_request", "classify_request", "observe_usage"],
+            [
+                "observe_request",
+                "observe_user_message",
+                "classify_request",
+                "observe_response",
+                "assess_response",
+                "observe_usage",
+            ],
         )
-        classification = plane.calls[1][2]
+        classification = plane.calls[2][2]
         self.assertEqual(classification["request_id"], event["event_id"])
         self.assertEqual(classification["user_message_id"], "um-12345678")
         self.assertEqual(result["event_id"], event["event_id"])
