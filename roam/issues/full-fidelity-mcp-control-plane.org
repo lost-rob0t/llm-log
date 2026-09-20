@@ -1,0 +1,23 @@
+:PROPERTIES:
+:ID:       llm-log-full-fidelity-mcp-control-plane
+:END:
+#+title: Capture evidence is richer than the expert KB and downstream control plane
+#+filetags: :llm-log:expert:mcp:issue:
+
+* Problem
+=events.jsonl= already preserves raw proxied request/response evidence, but the durable
+Tek9 expert projection only receives a thin request record, optional classifier source,
+and usage.  Declared protocol operations such as =observe_user_message= and
+=observe_response= are not implemented by the live Common Lisp service.
+
+Downstream clients also have no typed MCP surface for analytics/expert queries, so they
+must know llm-log's private HTTP endpoints or bypass the expert boundary.
+
+* Required invariant
+Every proxied LLM exchange remains append-only raw evidence and is projected into bounded
+typed expert metadata without copying raw bodies wholesale into Tek9.  Every MCP tool
+invocation is itself append-only audit evidence and is projected into the same expert
+authority.  MCP exposes finite typed operations only; arbitrary Prolog goals and arbitrary
+proxying stay forbidden.
+
+GitHub: lost-rob0t/llm-log#108
