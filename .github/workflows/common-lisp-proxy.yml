@@ -1,0 +1,39 @@
+name: Common Lisp proxy contracts
+
+on:
+  pull_request:
+    paths:
+      - "proxy/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/common-lisp-proxy.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "proxy/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/common-lisp-proxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Common Lisp proxy contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build -L .#checks.x86_64-linux.llm-log-config-contract
