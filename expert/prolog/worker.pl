@@ -5,6 +5,7 @@ worker_protocol_version(1).
 classifier_rule_version("request.classifier/v1").
 task_cost_rule_version("task.cost/v1").
 outcome_rule_version("outcome.decision/v1").
+response_rule_version("response.assessment/v1").
 
 main :-
     set_stream(user_output, buffer(line)),
@@ -55,6 +56,15 @@ dispatch_operation("request_classification", RequestId, Data, Reply) :-
         Reply = _{status:ok,request_id:RequestId,operation:"request_classification",rule_version:RuleVersion,result:_{assertions:Assertions}}
     ;   Reply = _{status:error,request_id:RequestId,operation:"request_classification",error:_{code:invalid_data}}
     ).
+dispatch_operation("response_assessment", RequestId, Data, Reply) :-
+    !,
+    (   valid_response_assessment_data(Data, SourceRequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved)
+    ->  response_assessment(SourceRequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved, Assertions),
+        response_rule_version(RuleVersion),
+        Reply = _{status:ok,request_id:RequestId,operation:"response_assessment",rule_version:RuleVersion,
+                  result:_{assertions:Assertions}}
+    ;   Reply = _{status:error,request_id:RequestId,operation:"response_assessment",error:_{code:invalid_data}}
+    ).
 dispatch_operation("task_cost", RequestId, Data, Reply) :-
     !,
     (   valid_task_cost_data(Data, State, Amount)
@@ -73,6 +83,72 @@ dispatch_operation("outcome_decision", RequestId, Data, Reply) :-
     ).
 dispatch_operation(Operation, RequestId, _Data, Reply) :-
     Reply = _{status:error,request_id:RequestId,operation:Operation,error:_{code:unknown_operation}}.
+
+optional_latency(Data, LatencyMs) :-
+    (   get_dict(latency_ms, Data, Value)
+    ->  number(Value), Value >= 0, LatencyMs = Value
+    ;   LatencyMs = none
+    ).
+
+optional_finish_reason(Data, FinishReason) :-
+    (   get_dict(finish_reason, Data, Value), string(Value), Value \= ""
+    ->  FinishReason = Value
+    ;   FinishReason = none
+    ).
+
+valid_response_assessment_data(Data, RequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved) :-
+    get_dict(request_id, Data, RequestId), string(RequestId), RequestId \= "",
+    get_dict(response_id, Data, ResponseId), string(ResponseId), ResponseId \= "",
+    get_dict(response_status, Data, Status), integer(Status), Status >= 100, Status =< 599,
+    get_dict(usage_observed, Data, UsageObserved), memberchk(UsageObserved, [true, false]),
+    optional_latency(Data, LatencyMs),
+    optional_finish_reason(Data, FinishReason).
+
+response_fact(Status, _LatencyMs, _FinishReason, _UsageObserved,
+              "transport_result", "accepted", "response.http.accepted", "asserted", "high") :-
+    Status >= 200, Status < 400.
+response_fact(Status, _LatencyMs, _FinishReason, _UsageObserved,
+              "transport_result", "client_error", "response.http.client_error", "asserted", "high") :-
+    Status >= 400, Status < 500.
+response_fact(Status, _LatencyMs, _FinishReason, _UsageObserved,
+              "transport_result", "server_error", "response.http.server_error", "asserted", "high") :-
+    Status >= 500.
+response_fact(Status, _LatencyMs, _FinishReason, _UsageObserved,
+              "transport_result", "informational", "response.http.informational", "asserted", "high") :-
+    Status >= 100, Status < 200.
+response_fact(_Status, LatencyMs, _FinishReason, _UsageObserved,
+              "latency_class", "fast", "response.latency.fast", "asserted", "medium") :-
+    number(LatencyMs), LatencyMs < 1000.
+response_fact(_Status, LatencyMs, _FinishReason, _UsageObserved,
+              "latency_class", "moderate", "response.latency.moderate", "asserted", "medium") :-
+    number(LatencyMs), LatencyMs >= 1000, LatencyMs < 10000.
+response_fact(_Status, LatencyMs, _FinishReason, _UsageObserved,
+              "latency_class", "slow", "response.latency.slow", "asserted", "medium") :-
+    number(LatencyMs), LatencyMs >= 10000.
+response_fact(_Status, _LatencyMs, _FinishReason, true,
+              "usage_visibility", "observed", "response.usage.observed", "asserted", "high").
+response_fact(_Status, _LatencyMs, _FinishReason, false,
+              "usage_visibility", "missing", "response.usage.missing", "asserted", "high").
+response_fact(_Status, _LatencyMs, FinishReason, _UsageObserved,
+              "finish_reason", FinishReason, "response.finish_reason", "asserted", "high") :-
+    string(FinishReason), FinishReason \= "".
+
+response_assertion(RequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved, Assertion) :-
+    response_fact(Status, LatencyMs, FinishReason, UsageObserved,
+                  Dimension, Value, RuleId, State, Confidence),
+    response_rule_version(RuleVersion),
+    Assertion = _{dimension:Dimension,value:Value,state:State,confidence:Confidence,
+                  rule_id:RuleId,rule_version:RuleVersion,
+                  evidence_ids:[RequestId,ResponseId],expert_version:"response-assessment/1"}.
+
+response_assessment(RequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved, Assertions) :-
+    findall(Assertion,
+            response_assertion(RequestId, ResponseId, Status, LatencyMs, FinishReason, UsageObserved, Assertion),
+            Found),
+    sort(Found, Assertions),
+    length(Assertions, Count),
+    Count >= 2,
+    Count =< 16.
 
 valid_task_cost_data(Data, "unknown", 0) :-
     get_dict(pricing_state, Data, "unknown"), !.
