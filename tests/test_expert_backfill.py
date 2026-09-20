@@ -57,12 +57,22 @@ def capture_event() -> dict:
         "upstream": "https://openrouter.ai",
         "request_body": {"encoding": "utf-8", "text": request},
         "response_status": 200,
+        "response_body": {
+            "encoding": "utf-8",
+            "text": json.dumps(
+                {
+                    "choices": [{"finish_reason": "stop"}],
+                    "usage": {"input_tokens": 120, "output_tokens": 30},
+                }
+            ),
+        },
         "started_at": "2026-09-14T01:00:00Z",
         "completed_at": "2026-09-14T01:00:01Z",
         "model": "fixture/model",
         "transport": "http",
         "request_sha256": "a" * 64,
         "response_sha256": "b" * 64,
+        "latency_ms": 1000,
         "input_tokens": 120,
         "output_tokens": 30,
     }
