@@ -10,6 +10,8 @@ READ_ONLY_EXPERT_OPERATIONS = frozenset(
     {
         "health",
         "query_classification_history",
+        "query_capture_context",
+        "query_expert_catalog",
         "query_outcome_history",
         "query_outcome_dataset",
         "query_task_accounting",
@@ -127,6 +129,54 @@ class SubprocessExpertPlane:
     ) -> dict[str, Any]:
         return await self._request(
             "query_classification",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def observe_user_message(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "observe_user_message",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def observe_response(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "observe_response",
+            payload,
+            event_id=event_id,
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    async def assess_response(
+        self,
+        *,
+        event_id: str,
+        payload: dict[str, Any],
+        session_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "query_response_assessment",
             payload,
             event_id=event_id,
             session_id=session_id,
