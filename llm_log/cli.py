@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from .admission import AdmissionPolicy
 from .classifier import PrologClassifier
 from .expert_adapter import SubprocessExpertPlane
 from .expert_admin import install_expert_admin_listener
@@ -32,6 +33,41 @@ def _upstream(value: str) -> tuple[str, str]:
     return name, url
 
 
+def _provider_group(value: str) -> tuple[str, str]:
+    provider, sep, group = value.partition("=")
+    if not sep or not provider or not group:
+        raise argparse.ArgumentTypeError("admission provider group must be PROVIDER=GROUP")
+    return provider, group
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="llm-log")
     sub = root.add_subparsers(dest="command", required=True)
@@ -42,6 +78,50 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument("--log-dir", type=Path, default=Path("data"))
     serve.add_argument("--upstream", action="append", type=_upstream, default=[])
     serve.add_argument("--no-prolog-classifier", action="store_true")
+    serve.add_argument(
+        "--admission-max-active",
+        type=_positive_int,
+        default=4,
+        help="maximum active upstream requests per admission group",
+    )
+    serve.add_argument(
+        "--admission-max-queue-depth",
+        type=_nonnegative_int,
+        default=32,
+        help="maximum queued requests per admission group",
+    )
+    serve.add_argument(
+        "--admission-queue-timeout-seconds",
+        type=_positive_float,
+        default=10.0,
+        help="maximum queue wait before a local 429",
+    )
+    serve.add_argument(
+        "--admission-requests-per-minute",
+        type=_nonnegative_float,
+        default=60.0,
+        help="process-local request-start rate; 0 disables the rate bucket",
+    )
+    serve.add_argument(
+        "--admission-burst",
+        type=_positive_int,
+        default=4,
+        help="initial and maximum request-start token burst",
+    )
+    serve.add_argument(
+        "--admission-retry-after-seconds",
+        type=_positive_int,
+        default=1,
+        help="minimum Retry-After for local admission 429 responses",
+    )
+    serve.add_argument(
+        "--admission-provider-group",
+        action="append",
+        type=_provider_group,
+        default=[],
+        metavar="PROVIDER=GROUP",
+        help="map provider aliases sharing one credential/quota into one admission group",
+    )
     serve.add_argument(
         "--expert-service-bin",
         type=Path,
@@ -87,12 +167,22 @@ def _serve(args: argparse.Namespace) -> None:
             [str(args.expert_service_bin)],
             data_dir=args.expert_data_dir,
         )
+    admission_policy = AdmissionPolicy(
+        max_active=args.admission_max_active,
+        max_queue_depth=args.admission_max_queue_depth,
+        queue_timeout_seconds=args.admission_queue_timeout_seconds,
+        requests_per_minute=args.admission_requests_per_minute,
+        burst=args.admission_burst,
+        retry_after_seconds=args.admission_retry_after_seconds,
+        provider_groups=dict(args.admission_provider_group),
+    )
     app = build_app(
         upstreams,
         recorder,
         classifier,
         expert_plane=expert_plane,
         require_expert_plane=args.require_expert_plane,
+        admission_policy=admission_policy,
     )
     if expert_plane is not None:
         install_expert_admin_listener(
