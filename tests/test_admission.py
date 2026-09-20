@@ -6,8 +6,33 @@ from pathlib import Path
 from aiohttp import ClientSession, web
 
 from llm_log.admission import AdmissionPolicy, AdmissionRejected, AdmissionScheduler
+from llm_log.cli import parser
 from llm_log.proxy import build_app
 from llm_log.recorder import RecorderActor
+
+
+class AdmissionCliTest(unittest.TestCase):
+    def test_safe_defaults_and_shared_group_parser(self):
+        args = parser().parse_args(["serve"])
+        self.assertEqual(args.admission_max_active, 4)
+        self.assertEqual(args.admission_max_queue_depth, 32)
+        self.assertEqual(args.admission_queue_timeout_seconds, 10.0)
+        self.assertEqual(args.admission_requests_per_minute, 60.0)
+        self.assertEqual(args.admission_burst, 4)
+
+        args = parser().parse_args(
+            [
+                "serve",
+                "--admission-provider-group",
+                "opencode-zai=zai",
+                "--admission-provider-group",
+                "zai-coding=zai",
+            ]
+        )
+        self.assertEqual(
+            dict(args.admission_provider_group),
+            {"opencode-zai": "zai", "zai-coding": "zai"},
+        )
 
 
 class AdmissionSchedulerTest(unittest.IsolatedAsyncioTestCase):
@@ -192,7 +217,7 @@ class ProxyAdmissionTest(unittest.IsolatedAsyncioTestCase):
             second = asyncio.create_task(
                 session.post(f"{self.proxy_url}/test/stream", data=b"second")
             )
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.01)
 
             async with session.post(
                 f"{self.proxy_url}/test/stream", data=b"third"
@@ -217,7 +242,8 @@ class ProxyAdmissionTest(unittest.IsolatedAsyncioTestCase):
         # Give the queued request enough time to be admitted after the active
         # request releases, proving ordinary SSE can wait without pre-committing
         # a queue-status response.
-        self.proxy_runner and await self.proxy_runner.cleanup()
+        if self.proxy_runner is not None:
+            await self.proxy_runner.cleanup()
 
         recorder = RecorderActor(self.root / "sse")
         policy = AdmissionPolicy(
