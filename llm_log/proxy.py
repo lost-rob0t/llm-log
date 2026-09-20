@@ -13,6 +13,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 from .admission import AdmissionPolicy, AdmissionRejected, AdmissionScheduler
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
+from .profiles import apply_profile, resolve_profile
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
@@ -181,7 +182,7 @@ def _extract_user_message(request_body: bytes) -> str:
 
 
 def _expert_base_payload(event: CaptureEvent) -> dict:
-    return {
+    payload = {
         "provider": event.provider,
         "model": event.model or "unknown",
         "transport": event.transport,
@@ -190,6 +191,9 @@ def _expert_base_payload(event: CaptureEvent) -> dict:
         "request_sha256": event.request_sha256,
         "response_sha256": event.response_sha256,
     }
+    if event.outbound_profile is not None:
+        payload["outbound_profile"] = event.outbound_profile
+    return payload
 
 
 async def _expert_ingest(expert_plane, event: CaptureEvent, request_body: bytes) -> None:
@@ -289,6 +293,8 @@ async def _proxy_websocket(
     classifier: Classifier | None,
     session: ClientSession,
     expert_plane: ExpertPlane | None,
+    outbound_headers: Mapping[str, str],
+    outbound_profile: str | None,
 ) -> web.StreamResponse:
     event_id = str(uuid.uuid4())
     started_at = _now()
@@ -300,7 +306,7 @@ async def _proxy_websocket(
     try:
         upstream_socket = await session.ws_connect(
             _websocket_url(upstream_url),
-            headers=_websocket_request_headers(request.headers),
+            headers=outbound_headers,
             protocols=protocols,
             autoping=True,
         )
@@ -323,6 +329,7 @@ async def _proxy_websocket(
             completed_at=completed_at,
             latency_ms=round((time.perf_counter() - started) * 1000),
             transport="websocket",
+            outbound_profile=outbound_profile,
         )
         await recorder.record(event)
         _schedule_expert_ingest(request.app, expert_plane, event, b"")
@@ -399,6 +406,7 @@ async def _proxy_websocket(
         latency_ms=round((time.perf_counter() - started) * 1000),
         intents=intents,
         transport="websocket",
+        outbound_profile=outbound_profile,
     )
     await recorder.record(event)
     _schedule_expert_ingest(request.app, expert_plane, event, bytes(client_frames))
@@ -433,8 +441,14 @@ def build_app(
     expert_plane: ExpertPlane | None = None,
     require_expert_plane: bool = False,
     admission_policy: AdmissionPolicy | None = None,
+    outbound_profiles: Mapping[str, str] | None = None,
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
+    configured_profiles = dict(outbound_profiles or {})
+    for provider, profile_name in configured_profiles.items():
+        if provider not in normalized:
+            raise ValueError(f"outbound profile references unknown provider: {provider}")
+        resolve_profile(profile_name)
     admission_scheduler = (
         AdmissionScheduler(admission_policy) if admission_policy is not None else None
     )
@@ -483,7 +497,12 @@ def build_app(
         lease = await _acquire_admission(admission_scheduler, provider)
         try:
             session = request.app[_SESSION_KEY]
+            profile_name = configured_profiles.get(provider)
             if request.headers.get("Upgrade", "").lower() == "websocket":
+                outbound_headers, outbound_profile = apply_profile(
+                    _websocket_request_headers(request.headers),
+                    profile_name,
+                )
                 return await _proxy_websocket(
                     request,
                     expert_plane=expert_plane,
@@ -494,8 +513,14 @@ def build_app(
                     recorder=recorder,
                     classifier=classifier,
                     session=session,
+                    outbound_headers=outbound_headers,
+                    outbound_profile=outbound_profile,
                 )
 
+            outbound_headers, outbound_profile = apply_profile(
+                _request_headers(request.headers),
+                profile_name,
+            )
             request_body = await request.read()
             started_at = _now()
             started = time.perf_counter()
@@ -508,7 +533,7 @@ def build_app(
                 async with session.request(
                     request.method,
                     upstream_url,
-                    headers=_request_headers(request.headers),
+                    headers=outbound_headers,
                     data=request_body,
                     allow_redirects=False,
                 ) as upstream_response:
@@ -550,6 +575,7 @@ def build_app(
                 completed_at=completed_at,
                 latency_ms=latency_ms,
                 intents=intents,
+                outbound_profile=outbound_profile,
             )
             await recorder.record(event)
             _schedule_expert_ingest(request.app, expert_plane, event, request_body)
