@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
+from .admission import AdmissionPolicy, AdmissionRejected, AdmissionScheduler
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
@@ -404,6 +405,25 @@ async def _proxy_websocket(
     return downstream
 
 
+async def _acquire_admission(
+    scheduler: AdmissionScheduler | None,
+    provider: str,
+):
+    if scheduler is None:
+        return None
+    try:
+        return await scheduler.acquire(provider)
+    except AdmissionRejected as exc:
+        raise web.HTTPTooManyRequests(
+            text=f"llm-log admission rejected: {exc.reason}",
+            headers={
+                "Retry-After": str(exc.retry_after),
+                "Cache-Control": "no-store",
+                "X-LLM-Log-Admission-Reason": exc.reason,
+            },
+        ) from None
+
+
 def build_app(
     upstreams: Mapping[str, str],
     recorder: RecorderActor,
@@ -412,8 +432,12 @@ def build_app(
     timeout_seconds: float = 600.0,
     expert_plane: ExpertPlane | None = None,
     require_expert_plane: bool = False,
+    admission_policy: AdmissionPolicy | None = None,
 ) -> web.Application:
     normalized = {name: url.rstrip("/") for name, url in upstreams.items()}
+    admission_scheduler = (
+        AdmissionScheduler(admission_policy) if admission_policy is not None else None
+    )
     app = web.Application(client_max_size=1024**3)
 
     async def startup(application: web.Application) -> None:
@@ -456,78 +480,83 @@ def build_app(
             require_expert_plane=require_expert_plane,
         )
 
-        session = request.app[_SESSION_KEY]
-        if request.headers.get("Upgrade", "").lower() == "websocket":
-            return await _proxy_websocket(
-                request,
-                expert_plane=expert_plane,
+        lease = await _acquire_admission(admission_scheduler, provider)
+        try:
+            session = request.app[_SESSION_KEY]
+            if request.headers.get("Upgrade", "").lower() == "websocket":
+                return await _proxy_websocket(
+                    request,
+                    expert_plane=expert_plane,
+                    provider=provider,
+                    upstream=upstream,
+                    upstream_url=upstream_url,
+                    tail=tail,
+                    recorder=recorder,
+                    classifier=classifier,
+                    session=session,
+                )
+
+            request_body = await request.read()
+            started_at = _now()
+            started = time.perf_counter()
+            classify_task = asyncio.create_task(_classify(classifier, request_body))
+            response_body = bytearray()
+            response_status = 502
+            response_headers: Mapping[str, str] = {}
+
+            try:
+                async with session.request(
+                    request.method,
+                    upstream_url,
+                    headers=_request_headers(request.headers),
+                    data=request_body,
+                    allow_redirects=False,
+                ) as upstream_response:
+                    response_status = upstream_response.status
+                    response_headers = upstream_response.headers
+                    downstream = web.StreamResponse(
+                        status=upstream_response.status,
+                        reason=upstream_response.reason,
+                        headers=_response_headers(upstream_response.headers),
+                    )
+                    await downstream.prepare(request)
+                    async for chunk in upstream_response.content.iter_chunked(64 * 1024):
+                        response_body.extend(chunk)
+                        await downstream.write(chunk)
+                    await downstream.write_eof()
+            except Exception as exc:
+                if not response_body:
+                    response_body.extend(str(exc).encode("utf-8", errors="replace"))
+                if not request.protocol.transport or request.protocol.transport.is_closing():
+                    raise
+                downstream = web.Response(status=502, text="upstream request failed")
+
+            intents = await classify_task
+            completed_at = _now()
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            event = CaptureEvent.from_bytes(
+                event_id=str(uuid.uuid4()),
                 provider=provider,
                 upstream=upstream,
-                upstream_url=upstream_url,
-                tail=tail,
-                recorder=recorder,
-                classifier=classifier,
-                session=session,
+                method=request.method,
+                path="/" + tail,
+                query=request.query_string,
+                request_headers=request.headers,
+                request_body=request_body,
+                response_status=response_status,
+                response_headers=response_headers,
+                response_body=bytes(response_body),
+                started_at=started_at,
+                completed_at=completed_at,
+                latency_ms=latency_ms,
+                intents=intents,
             )
-
-        request_body = await request.read()
-        started_at = _now()
-        started = time.perf_counter()
-        classify_task = asyncio.create_task(_classify(classifier, request_body))
-        response_body = bytearray()
-        response_status = 502
-        response_headers: Mapping[str, str] = {}
-
-        try:
-            async with session.request(
-                request.method,
-                upstream_url,
-                headers=_request_headers(request.headers),
-                data=request_body,
-                allow_redirects=False,
-            ) as upstream_response:
-                response_status = upstream_response.status
-                response_headers = upstream_response.headers
-                downstream = web.StreamResponse(
-                    status=upstream_response.status,
-                    reason=upstream_response.reason,
-                    headers=_response_headers(upstream_response.headers),
-                )
-                await downstream.prepare(request)
-                async for chunk in upstream_response.content.iter_chunked(64 * 1024):
-                    response_body.extend(chunk)
-                    await downstream.write(chunk)
-                await downstream.write_eof()
-        except Exception as exc:
-            if not response_body:
-                response_body.extend(str(exc).encode("utf-8", errors="replace"))
-            if not request.protocol.transport or request.protocol.transport.is_closing():
-                raise
-            downstream = web.Response(status=502, text="upstream request failed")
-
-        intents = await classify_task
-        completed_at = _now()
-        latency_ms = round((time.perf_counter() - started) * 1000)
-        event = CaptureEvent.from_bytes(
-            event_id=str(uuid.uuid4()),
-            provider=provider,
-            upstream=upstream,
-            method=request.method,
-            path="/" + tail,
-            query=request.query_string,
-            request_headers=request.headers,
-            request_body=request_body,
-            response_status=response_status,
-            response_headers=response_headers,
-            response_body=bytes(response_body),
-            started_at=started_at,
-            completed_at=completed_at,
-            latency_ms=latency_ms,
-            intents=intents,
-        )
-        await recorder.record(event)
-        _schedule_expert_ingest(request.app, expert_plane, event, request_body)
-        return downstream
+            await recorder.record(event)
+            _schedule_expert_ingest(request.app, expert_plane, event, request_body)
+            return downstream
+        finally:
+            if lease is not None:
+                await lease.release()
 
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)

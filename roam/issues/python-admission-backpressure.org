@@ -1,0 +1,36 @@
+:PROPERTIES:
+:ID:       llm-log-python-admission-backpressure
+:END:
+#+title: Python transport lacked provider-wide admission and bounded queue backpressure
+#+filetags: :llm-log:issue:proxy:rate-limit:queue:sse:
+
+* Symptom
+The current Python HTTP/SSE/WebSocket proxy opened upstream work immediately for
+every accepted downstream request.  Provider quota telemetry existed, but the
+transport itself had no provider-wide active cap, request-start rate budget,
+bounded FIFO wait queue, or local queue deadline.
+
+The older scheduler work in PRs #74/#76/#77 targeted the superseded Common Lisp
+transport path and therefore could not be treated as current production
+coverage.
+
+* Requirement
+GitHub issue: https://github.com/lost-rob0t/llm-log/issues/104
+
+The Python transport needs one process-local admission owner per configured
+provider/quota group.  It must gate HTTP, ordinary SSE, and WebSocket connection
+establishment before upstream contact.
+
+The default transparent queue deadline is 10 seconds.  Queue-full or deadline
+expiry returns local HTTP 429 with Retry-After and Cache-Control: no-store.  A
+timed-out/cancelled waiter must never start upstream work or spend a rate token.
+
+Provider aliases may share a configured admission group.  Client presentation,
+including OpenCode-style compatibility profiles, must not create independent
+capacity for the same credential/quota.
+
+* Streaming boundary
+Ordinary SSE remains transparent: wait before downstream response commitment,
+then relay the actual upstream status/headers/body after admission.  Queue
+heartbeats require the explicit opt-in protocol tracked in #105 and must not be
+smuggled into the transparent path.

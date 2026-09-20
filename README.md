@@ -62,6 +62,46 @@ llm-log serve \
 
 Then point the client at `http://127.0.0.1:8787/ollama/...` or `http://127.0.0.1:8787/vllm/...`.
 
+## Admission, rate limiting, and queue deadlines
+
+The Python `llm-log serve` path admits requests before opening an upstream HTTP,
+SSE, or WebSocket connection. Defaults are process-local policy, not a claim
+about any provider's actual entitlement:
+
+- maximum active requests per admission group: `4`;
+- bounded FIFO queue depth: `32`;
+- maximum transparent queue wait: **10 seconds**;
+- request-start token bucket: `60` requests/minute with burst `4`;
+- local overload response: HTTP `429` with `Retry-After`,
+  `Cache-Control: no-store`, and `X-LLM-Log-Admission-Reason`.
+
+A request that cannot be admitted before its queue deadline never opens an
+upstream connection. Releasing a completed/failed active request does not refund
+its request-start token. Cancellation removes a queued waiter without consuming
+rate capacity.
+
+Transparent SSE requests wait before response commitment and then relay the real
+upstream stream after admission. Queue-status heartbeats are intentionally a
+separate opt-in protocol tracked in #105 because emitting SSE while queued would
+commit the downstream status before the upstream response exists.
+
+Configure the policy with:
+
+```sh
+llm-log serve \
+  --admission-max-active 4 \
+  --admission-max-queue-depth 32 \
+  --admission-queue-timeout-seconds 10 \
+  --admission-requests-per-minute 60 \
+  --admission-burst 4 \
+  --admission-provider-group opencode-zai=zai \
+  --admission-provider-group zai-coding=zai
+```
+
+Provider-group aliases share active, queue, and request-rate capacity. Changing
+client presentation or an eventual OpenCode compatibility profile must not mint
+a fresh quota bucket.
+
 ## Captured event
 
 Each JSONL row includes event/timing IDs, provider/upstream, method/path/query, redacted headers, complete request bytes, complete response bytes, response status, model when discoverable, latency, SHA-256 hashes, and Prolog classifier labels. Non-UTF-8 bodies are stored as base64.

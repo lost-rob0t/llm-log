@@ -9,6 +9,10 @@ let
   upstreamArgs = concatMapStringsSep " "
     (name: "--upstream ${escapeShellArg "${name}=${cfg.upstreams.${name}}"}")
     upstreamNames;
+  admissionGroupNames = builtins.sort builtins.lessThan (builtins.attrNames cfg.admission.providerGroups);
+  admissionGroupArgs = concatMapStringsSep " "
+    (name: "--admission-provider-group ${escapeShellArg "${name}=${cfg.admission.providerGroups.${name}}"}")
+    admissionGroupNames;
   extraArgs = concatMapStringsSep " " escapeShellArg cfg.extraArgs;
   classifierArg = optionalString (!cfg.enablePrologClassifier) "--no-prolog-classifier";
   expertServiceArg = optionalString cfg.expert.enable
@@ -24,6 +28,13 @@ let
     "--port ${toString cfg.port}"
     "--log-dir ${escapeShellArg cfg.dataDir}"
     upstreamArgs
+    "--admission-max-active ${toString cfg.admission.maxActive}"
+    "--admission-max-queue-depth ${toString cfg.admission.maxQueueDepth}"
+    "--admission-queue-timeout-seconds ${toString cfg.admission.queueTimeoutSeconds}"
+    "--admission-requests-per-minute ${toString cfg.admission.requestsPerMinute}"
+    "--admission-burst ${toString cfg.admission.burst}"
+    "--admission-retry-after-seconds ${toString cfg.admission.retryAfterSeconds}"
+    admissionGroupArgs
     classifierArg
     expertServiceArg
     expertDataDirArg
@@ -65,6 +76,50 @@ in
       type = types.bool;
       default = true;
       description = "Classify captured requests with the bundled SWI-Prolog classifier.";
+    };
+
+    admission = {
+      maxActive = mkOption {
+        type = types.ints.positive;
+        default = 4;
+        description = "Maximum active upstream requests per admission group.";
+      };
+
+      maxQueueDepth = mkOption {
+        type = types.ints.unsigned;
+        default = 32;
+        description = "Maximum FIFO waiters per admission group.";
+      };
+
+      queueTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 10;
+        description = "Maximum transparent queue wait before a local HTTP 429.";
+      };
+
+      requestsPerMinute = mkOption {
+        type = types.ints.unsigned;
+        default = 60;
+        description = "Process-local request-start token rate; 0 disables the rate bucket.";
+      };
+
+      burst = mkOption {
+        type = types.ints.positive;
+        default = 4;
+        description = "Maximum request-start token burst per admission group.";
+      };
+
+      retryAfterSeconds = mkOption {
+        type = types.ints.positive;
+        default = 1;
+        description = "Minimum Retry-After value for local admission 429 responses.";
+      };
+
+      providerGroups = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = "Trusted provider-prefix aliases that share one admission/quota group.";
+      };
     };
 
     upstreams = mkOption {

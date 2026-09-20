@@ -10,6 +10,7 @@ This graph records reusable engineering problems and their verified solutions.
 - [[id:0750164e-ceb8-4415-a660-0ea5f9c19b1f][Provider-neutral token analytics]]
 - [[id:llm-log-subscription-quota-observation][Subscription quota observation is not token accounting]]
 - [[id:4a6621dc-4d08-44ac-ad7c-d973ee12653c][Historical raw captures do not populate newer expert projections]]
+- [[id:llm-log-python-admission-backpressure][Python transport lacked provider-wide admission and bounded queue backpressure]]
 
 * Solutions
 - [[id:bb394c6a-af0c-4d87-8a06-85b188d3db53][Normalized token capture and analytics API]]
