@@ -264,6 +264,7 @@ class CaptureEvent:
     output_tokens: int | None = None
     total_tokens: int | None = None
     attribution: dict[str, str] = field(default_factory=dict)
+    outbound_profile: str | None = None
 
     @classmethod
     def from_bytes(
@@ -285,6 +286,7 @@ class CaptureEvent:
         latency_ms: int,
         intents: Sequence[str] = (),
         transport: str = "http",
+        outbound_profile: str | None = None,
     ) -> "CaptureEvent":
         input_tokens, output_tokens = token_usage(response_body)
         total_tokens = (
@@ -316,6 +318,7 @@ class CaptureEvent:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             attribution=_attribution(request_headers),
+            outbound_profile=outbound_profile,
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -356,7 +359,12 @@ class CaptureEvent:
             f"llm_attribution({_prolog_atom(self.event_id)}, {_intent_atom(key)}, {_prolog_atom(value)}).\n"
             for key, value in sorted(self.attribution.items())
         )
-        return fact + transport + usage + attribution + intents
+        outbound_profile = (
+            ""
+            if self.outbound_profile is None
+            else f"outbound_profile({_prolog_atom(self.event_id)}, {_prolog_atom(self.outbound_profile)}).\n"
+        )
+        return fact + transport + usage + attribution + outbound_profile + intents
 
 
 class RecorderActor:
