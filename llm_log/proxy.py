@@ -12,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
+from .expert_capture import extract_user_message, replay_capture_event
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame
 
 _HOP_BY_HOP = {
@@ -129,94 +130,22 @@ async def _enforce_expert_policy(
 
 
 _INGEST_TASKS_KEY = web.AppKey("expert-ingest-tasks", set)
-_USER_MESSAGE_LIMIT = 4000
-
-
-def _user_message_from_api_body(body: dict) -> str:
-    for message in reversed(body.get("messages") or []):
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            )
-    return ""
-
-
 def _extract_user_message(request_body: bytes) -> str:
-    """Extract the last user message from one captured request body.
+    """Compatibility wrapper around the canonical capture parser."""
+    return extract_user_message(request_body)
 
-    Handles JSON API bodies and newline-delimited WebSocket frame envelopes;
-    returns "" when no user text can be found.
-    """
-    text = request_body.decode("utf-8", errors="replace")
+
+async def _expert_ingest(expert_plane, event: CaptureEvent, _request_body: bytes) -> None:
     try:
-        body = json.loads(text)
-    except json.JSONDecodeError:
-        body = None
-    if isinstance(body, dict) and "messages" in body:
-        return _user_message_from_api_body(body)[:_USER_MESSAGE_LIMIT]
-    for line in text.splitlines():
-        try:
-            frame = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(frame, dict) and frame.get("type") == "text":
-            inner = frame.get("text")
-            if not isinstance(inner, str):
-                continue
-            try:
-                parsed = json.loads(inner)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return _user_message_from_api_body(parsed)[:_USER_MESSAGE_LIMIT]
-    return ""
-
-
-def _expert_base_payload(event: CaptureEvent) -> dict:
-    return {
-        "provider": event.provider,
-        "model": event.model or "unknown",
-        "transport": event.transport,
-        "started_at": event.started_at,
-        "completed_at": event.completed_at,
-        "request_sha256": event.request_sha256,
-        "response_sha256": event.response_sha256,
-    }
-
-
-async def _expert_ingest(expert_plane, event: CaptureEvent, request_body: bytes) -> None:
-    try:
-        payload = _expert_base_payload(event)
-        await expert_plane.observe_request(
-            event_id=event.event_id,
-            payload=payload,
-            session_id="proxy",
-            task_id="proxy",
+        await replay_capture_event(
+            expert_plane,
+            event.as_json(),
+            record_transport_evidence=True,
+            default_session_id="proxy",
+            default_task_id="proxy",
         )
-        message = _extract_user_message(request_body)
-        if message:
-            await expert_plane.classify_request(
-                event_id=event.event_id,
-                payload={
-                    **payload,
-                    "message": message,
-                    "user_message_id": "um-" + event.event_id[:8],
-                    "request_id": event.event_id,
-                    "client": "proxy",
-                },
-                session_id="proxy",
-                task_id="proxy",
-            )
     except Exception:
         return
-
 
 def _schedule_expert_ingest(
     app: web.Application,
