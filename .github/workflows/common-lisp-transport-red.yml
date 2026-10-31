@@ -12,6 +12,7 @@ on:
       - ".github/workflows/common-lisp-transport-red.yml"
   push:
     branches:
+      - feat/96-subscription-history
       - rage/10-expert-runtime-red
       - rage/12-request-classifier-red
       - rage/12-classifier-query-red

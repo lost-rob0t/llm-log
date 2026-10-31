@@ -8,7 +8,7 @@ on:
       - 'flake.*'
       - '.github/workflows/quota-telemetry.yml'
   push:
-    branches: [feat/79-provider-quota-telemetry]
+    branches: [feat/79-provider-quota-telemetry, feat/96-subscription-history]
   workflow_dispatch:
 permissions:
   contents: read
