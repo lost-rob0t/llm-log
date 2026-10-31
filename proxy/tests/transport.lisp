@@ -296,6 +296,59 @@ sockets from one test can never affect the next."
            (when ,upstream-var
              (stop-fixture-upstream ,upstream-var)))))))
 
+(deftest stop-proxy-waits-for-event-loop-cleanup
+  ;; Hold an unwind-protect cleanup open to make asynchronous termination
+  ;; deterministic: STOP-PROXY must not return until that cleanup finishes.
+  (let* ((started (sb-thread:make-semaphore))
+         (cleanup-started (sb-thread:make-semaphore))
+         (release-cleanup (sb-thread:make-semaphore))
+         (stopped (sb-thread:make-semaphore))
+         (cleaned nil)
+         (thread (bt:make-thread
+                  (lambda ()
+                    (unwind-protect
+                         (progn
+                           (sb-thread:signal-semaphore started)
+                           (sb-thread:wait-on-semaphore (sb-thread:make-semaphore)))
+                      (sb-thread:signal-semaphore cleanup-started)
+                      (sb-thread:wait-on-semaphore release-cleanup)
+                      (setf cleaned t)))))
+         (server (llm-log::make-proxy-server :thread thread))
+         (stopper nil))
+    (unwind-protect
+         (progn
+           (ok (sb-thread:wait-on-semaphore started :timeout 5))
+           (setf stopper
+                 (bt:make-thread
+                  (lambda ()
+                    (stop-proxy server)
+                    (sb-thread:signal-semaphore stopped))))
+           (ok (sb-thread:wait-on-semaphore cleanup-started :timeout 5))
+           (ok (null (sb-thread:wait-on-semaphore stopped :timeout 0.1)))
+           (sb-thread:signal-semaphore release-cleanup)
+           (ok (sb-thread:wait-on-semaphore stopped :timeout 5))
+           (ok cleaned)
+           (ok (not (bt:thread-alive-p thread)))
+           (ok (eq server (stop-proxy server))))
+      (sb-thread:signal-semaphore release-cleanup)
+      (when stopper
+        (sb-thread:join-thread stopper :timeout 5 :default nil))
+      (when (bt:thread-alive-p thread)
+        (stop-proxy server)))))
+
+(deftest fixture-proxies-can-restart-after-synchronous-stop
+  ;; Exercise real Woo/libev teardown repeatedly in one process. Every cycle
+  ;; must relinquish its signal watchers before the next loop starts.
+  (dotimes (cycle 5)
+    (let ((stopped-proxy nil))
+      (with-fixture-proxy (proxy upstream)
+        (setf stopped-proxy proxy)
+        (multiple-value-bind (status headers body)
+            (%client-request +fixture-proxy-port+ "GET" "/fixture/v1/models")
+          (declare (ignore headers body))
+          (ok (eql status 200))))
+      (ok (not (bt:thread-alive-p (proxy-server-thread stopped-proxy)))))))
+
 (deftest http-method-path-and-query-are-preserved
   (with-fixture-proxy (proxy upstream)
     (multiple-value-bind (status headers body)

@@ -1,0 +1,15 @@
+:PROPERTIES:
+:ID: llm-log-synchronous-woo-shutdown
+:END:
+#+title: Wait for Woo event-loop cleanup before restarting
+#+filetags: :llm-log:solution:transport:
+
+For [[id:llm-log-woo-signal-watcher-teardown][the native fixture teardown race]], stop-proxy requests event-loop thread
+termination and joins that thread. The SBCL join accepts the expected aborted
+thread result and has a bounded timeout; a still-live thread raises an error.
+Woo releases libev signal watchers in its event-loop unwind-protect cleanup.
+The public woo:stop only closes its listener and does not finish loop teardown.
+
+The native transport suite includes a semaphore-gated cleanup regression and
+repeated real Woo start/request/stop cycles. Runtime verification belongs to the
+hosted Nix native config/transport contract.

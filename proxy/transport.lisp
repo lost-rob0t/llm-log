@@ -297,9 +297,17 @@ octet vector or an input stream depending on the build."
     (make-proxy-server :thread thread :config config)))
 
 (defun stop-proxy (server)
-  "Stop a proxy started by START-PROXY. The event loop thread is destroyed;
-production deployments stop via process termination (systemd)."
+  "Stop a proxy started by START-PROXY and wait for Woo's cleanup."
   (let ((thread (proxy-server-thread server)))
     (when thread
-      (ignore-errors (bt:destroy-thread thread))))
+      (when (bt:thread-alive-p thread)
+        (bt:destroy-thread thread))
+      ;; Termination is asynchronous. Woo releases its process-wide libev
+      ;; signal watchers in unwind-protect, so returning before the thread
+      ;; exits lets the next proxy attach those signals to a different loop.
+      ;; The runtime already requires SBCL; :DEFAULT accepts the expected
+      ;; aborted-thread result without hiding a shutdown timeout.
+      (sb-thread:join-thread thread :timeout 10 :default nil)
+      (when (bt:thread-alive-p thread)
+        (error "Proxy event loop did not stop within 10 seconds"))))
   server)
