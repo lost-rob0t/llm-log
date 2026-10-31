@@ -7,13 +7,13 @@ This directory is the Common Lisp-owned expert-system runtime for llm-log.
 - Tek9 is the durable document/graph KB.
 - SWI-Prolog is the rule/inference engine.
 - Common Lisp owns lifecycle, typed schemas, bounded fact materialization, Prolog supervision, result validation, and persistence.
-- Python owns only proxy/capture transport plus the versioned client envelope in =llm_log/expert_protocol.py=.
+- Python owns proxy/capture transport, the versioned client envelope, and the loopback maintenance transport; it does not duplicate expert rules.
 
-The runtime is developed behind the black-box contract in =tests/test_expert_service_red.py=. Do not make the Python proxy a second rule engine and do not add an arbitrary Prolog goal operation.
+The runtime is developed behind black-box and integration contracts under =tests/= and =expert/tests/=. Do not make the Python proxy a second rule engine and do not add an arbitrary Prolog goal operation.
 
-* First executable contract
+* Executable contract
 
-The service surface for the substrate is:
+The expert service runs as:
 
 #+begin_example
 llm-log-expert serve --stdio [--data-dir PATH]
@@ -21,7 +21,37 @@ llm-log-expert serve --stdio [--data-dir PATH]
 
 with one JSON object per input/output line. One service process owns one Tek9 environment and one persistent supervised SWI-Prolog worker for its lifetime.
 
-Public operations remain closed. The current substrate implements =health=, =observe_request=, and the fixture-only =query_classification= path for =event_transport=. Untrusted strings are data, never executable Prolog terms.
+Public operations are finite and typed. Current operations include request observation/classification, bounded classification history, request/task usage accounting, outcome evidence/history/dataset queries, and health. Untrusted strings are data, never executable Prolog terms.
+
+* Live maintenance boundary
+
+When =llm-log serve= is configured with =--expert-service-bin=, that proxy process owns the expert child and may expose a separate maintenance listener on literal loopback only. The default is =127.0.0.1:8788=; =--expert-admin-port 0= disables it.
+
+The maintenance surface is deliberately smaller than the private stdio protocol:
+- =GET /health=;
+- =POST /query= for declared read-only expert operations only;
+- =POST /backfill-event= for one typed historical capture replay.
+
+Do not start a second =llm-log-expert= process against the live Tek9 directory for inspection or backfill.
+
+Operator commands use the loopback maintenance listener:
+
+#+begin_src sh
+llm-log expert backfill --source ~/.llm-proxy/data/events.jsonl
+
+llm-log expert query query_outcome_dataset \
+  --payload '{"outcome":"success","scope":"request","limit":64}'
+
+llm-log expert export-dataset \
+  --source ~/.llm-proxy/data/events.jsonl \
+  --output ./datasets/success.jsonl \
+  --outcome success \
+  --scope request
+#+end_src
+
+Historical replay reuses stable capture identities and is idempotent. Request-level provider token usage can be backfilled without fabricating task or pricing state. Provider transport evidence is opt-in and weak; HTTP success alone never means task success.
+
+Outcome dataset queries are cursor-paginated while each expert request remains bounded. Dataset export joins the provenance-complete expert result back to the exact immutable raw capture and writes a SHA-256 sidecar manifest.
 
 * Mutable state
 
@@ -51,4 +81,4 @@ No developer-local Quicklisp checkout is required and no mutable database state 
 
 * Validation state
 
-The executable/package contract is defined but must not be called GREEN until an environment with Nix, SBCL and SWI-Prolog executes it on the exact branch head. See =../research/LLM-LOG-RESEARCH-007-expert-service-transaction.org= for the current evidence boundary.
+Historical corpus backfill/query/export and the expert runtime are GREEN in the packaged GitHub environment at implementation head =b7c39ef293cf65762b90006c00f604714bddb63f=. See =../evidence/LLM-LOG-EVIDENCE-048-historical-corpus-backfill-green.org=.

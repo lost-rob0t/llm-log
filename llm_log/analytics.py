@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from aiohttp import web
+
+from .quotas import install_quota_routes
 
 _BUCKET_SECONDS = {"minute": 60, "hour": 3600, "day": 86400}
 
@@ -45,8 +48,8 @@ def _events(path: Path) -> Iterable[dict[str, Any]]:
         return
 
 
-def _selected(request: web.Request, path: Path) -> list[tuple[dict[str, Any], datetime]]:
-    start, end, provider, model = _filters(request)
+def _selected(filters: tuple, path: Path) -> list[tuple[dict[str, Any], datetime]]:
+    start, end, provider, model = filters
     selected = []
     for event in _events(path):
         try:
@@ -75,31 +78,73 @@ def _tokens(event: dict[str, Any]) -> tuple[int | None, int | None]:
     return incoming, outgoing
 
 
-def _totals(rows: Iterable[tuple[dict[str, Any], datetime]]) -> dict[str, int]:
+def _totals(rows: Iterable[tuple[dict[str, Any], datetime]], *, coverage: bool = False) -> dict[str, int]:
     request_count = usage_count = incoming = outgoing = 0
+    input_count = output_count = 0
     for event, _ in rows:
         request_count += 1
         event_input, event_output = _tokens(event)
         if event_input is not None or event_output is not None:
             usage_count += 1
+        input_count += event_input is not None
+        output_count += event_output is not None
         incoming += event_input or 0
         outgoing += event_output or 0
-    return {
+    totals = {
         "request_count": request_count,
         "requests_with_usage": usage_count,
         "input_tokens": incoming,
         "output_tokens": outgoing,
         "total_tokens": incoming + outgoing,
     }
+    if coverage:
+        totals.update(requests_with_input_usage=input_count, requests_with_output_usage=output_count)
+    return totals
+
+
+READ_GATE = web.AppKey("analytics-read-gate", asyncio.Semaphore)
+READ_TASKS = web.AppKey("analytics-read-tasks", set)
+
+
+def _coverage_description() -> str:
+    return "Optional per-field report counts; missing counters are not reported zeros."
+
+
+async def _read_selected(request: web.Request) -> list:
+    """At most two corpus scans; cancelled clients do not release live workers."""
+    filters = _filters(request)
+    path = request.app[EVENTS_PATH_KEY]
+    gate = request.app[READ_GATE]
+    if gate.locked():
+        raise web.HTTPServiceUnavailable(text="analytics readers busy", headers={"Retry-After": "1"})
+    await gate.acquire()
+
+    async def run():
+        try:
+            return await asyncio.to_thread(_selected, filters, path)
+        finally:
+            gate.release()
+
+    task = asyncio.create_task(run(), name="llm-log-corpus-read")
+    tasks = request.app[READ_TASKS]
+    tasks.add(task)
+
+    def completed(done):
+        tasks.discard(done)
+        if not done.cancelled():
+            done.exception()  # Retrieve even after a client disconnects.
+
+    task.add_done_callback(completed)
+    return await asyncio.shield(task)
 
 
 async def summary(request: web.Request) -> web.Response:
-    return web.json_response(_totals(_selected(request, request.app[EVENTS_PATH_KEY])))
+    return web.json_response(_totals(await _read_selected(request)))
 
 
 async def models(request: web.Request) -> web.Response:
     grouped: dict[tuple[str, str], list[tuple[dict[str, Any], datetime]]] = defaultdict(list)
-    for event, completed in _selected(request, request.app[EVENTS_PATH_KEY]):
+    for event, completed in await _read_selected(request):
         grouped[(str(event.get("provider") or "unknown"), str(event.get("model") or "unknown"))].append((event, completed))
     entries = [
         {"provider": provider, "model": model, **_totals(rows)}
@@ -112,9 +157,12 @@ async def timeline(request: web.Request) -> web.Response:
     granularity = request.query.get("granularity", "minute")
     if granularity not in _BUCKET_SECONDS:
         raise web.HTTPBadRequest(text="granularity must be minute, hour, or day")
+    coverage = request.query.get("coverage", "basic")
+    if coverage not in ("basic", "fields"):
+        raise web.HTTPBadRequest(text="coverage must be basic or fields")
     seconds = _BUCKET_SECONDS[granularity]
     grouped: dict[int, list[tuple[dict[str, Any], datetime]]] = defaultdict(list)
-    selected = _selected(request, request.app[EVENTS_PATH_KEY])
+    selected = await _read_selected(request)
     for event, completed in selected:
         epoch = int(completed.timestamp())
         grouped[epoch - epoch % seconds].append((event, completed))
@@ -122,11 +170,14 @@ async def timeline(request: web.Request) -> web.Response:
         {
             "start": datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
             "bucket_seconds": seconds,
-            **_totals(rows),
+            **_totals(rows, coverage=coverage == "fields"),
         }
         for epoch, rows in sorted(grouped.items())
     ]
-    return web.json_response({"granularity": granularity, "buckets": buckets})
+    result = {"granularity": granularity, "buckets": buckets}
+    if coverage == "fields":
+        result.update(coverage="fields", accounting="completed_requests")
+    return web.json_response(result)
 
 
 EVENTS_PATH_KEY = web.AppKey("analytics-events-path", Path)
@@ -142,12 +193,14 @@ def openapi_document() -> dict[str, Any]:
             ("model", {"type": "string"}),
         )
     ]
-    response = {"200": {"description": "Token analytics"}, "400": {"description": "Invalid query"}}
+    response = {"200": {"description": "Token analytics"}, "400": {"description": "Invalid query"}, "503": {"description": "Bounded corpus readers busy; retry later"}}
     paths = {
         "/api/v1/stats/summary": {"get": {"summary": "Aggregate token I/O totals", "parameters": query_parameters, "responses": response}},
         "/api/v1/stats/models": {"get": {"summary": "Token totals grouped by provider and model", "parameters": query_parameters, "responses": response}},
         "/api/v1/stats/timeline": {"get": {"summary": "Bucketed token I/O timeline", "parameters": [*query_parameters, {"name": "granularity", "in": "query", "schema": {"type": "string", "enum": list(_BUCKET_SECONDS), "default": "minute"}}], "responses": response}},
     }
+    paths["/api/v1/stats/timeline"]["get"]["parameters"].append({"name": "coverage", "in": "query", "description": _coverage_description(), "schema": {"type": "string", "enum": ["basic", "fields"], "default": "basic"}})
+    paths["/api/v1/quotas"] = {"get": {"summary": "Cached provider-reported subscription quotas (localhost only)", "responses": {"200": {"description": "Version 1 quota snapshot; percentages are used, not remaining"}, "403": {"description": "Local clients only"}}}}
     return {"openapi": "3.1.0", "info": {"title": "llm-log analytics API", "version": "1.0.0"}, "paths": paths}
 
 
@@ -164,8 +217,18 @@ async def docs(_request: web.Request) -> web.Response:
 
 def install_analytics_routes(app: web.Application, events_path: Path) -> None:
     app[EVENTS_PATH_KEY] = events_path
+    app[READ_GATE] = asyncio.Semaphore(2)
+    app[READ_TASKS] = set()
+
+    async def readers_lifecycle(_app):
+        yield
+        if app[READ_TASKS]:
+            await asyncio.gather(*tuple(app[READ_TASKS]), return_exceptions=True)
+
+    app.cleanup_ctx.append(readers_lifecycle)
     app.router.add_get("/api/v1/stats/summary", summary)
     app.router.add_get("/api/v1/stats/timeline", timeline)
     app.router.add_get("/api/v1/stats/models", models)
     app.router.add_get("/openapi.json", openapi)
     app.router.add_get("/docs", docs)
+    install_quota_routes(app)

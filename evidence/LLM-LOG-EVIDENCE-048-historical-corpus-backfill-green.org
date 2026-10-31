@@ -1,0 +1,30 @@
+#+title: LLM-LOG-EVIDENCE-048 — Historical corpus backfill/query/export GREEN
+#+filetags: :llm-log:evidence:green:expert:backfill:dataset:
+
+* Authority
+Design: [[../research/LLM-LOG-RESEARCH-053-historical-corpus-backfill-query-export.org][LLM-LOG-RESEARCH-053]]
+Parent issue: https://github.com/lost-rob0t/llm-log/issues/15
+PR: https://github.com/lost-rob0t/llm-log/pull/84
+Implementation head: =b7c39ef293cf65762b90006c00f604714bddb63f=
+
+* Executed verification
+GitHub Actions executed the exact implementation head.
+
+- Expert plane contracts run =34921527737=: GREEN.
+  - =common-lisp-expert-integration-contract=: GREEN; this executed the new taskless request-usage contract and the 257-example cursor-pagination contract through Common Lisp, Tek9, and SWI-Prolog.
+  - =python-expert-policy-contract=: GREEN; this included the new historical replay, loopback maintenance API, and CLI/checkpoint tests.
+  - =home-manager-expert-contract=: GREEN.
+- Analytics API run =34921527722=: full Python regression suite and adversarial analytics contract GREEN.
+- Quota telemetry exact-head contract run =34921527820=: GREEN.
+
+* Verified behavior
+- one live proxy-owned expert process remains the only owner of the mutable Tek9 environment;
+- the maintenance HTTP listener is literal-loopback-only and exposes bounded query/backfill operations rather than arbitrary Prolog goals;
+- historical =events.jsonl= replay reuses stable identities and projects request/classification state idempotently;
+- provider-reported historical usage can be persisted by request without fabricating task identity, pricing, or cost assertions;
+- weak transport evidence remains opt-in and cannot promote HTTP success to task success;
+- outcome dataset pagination crosses the old 256-candidate boundary without duplicate assertions or loss;
+- export can iterate the bounded cursor contract, join request examples back to immutable raw captures, and emit source/output SHA-256 provenance.
+
+* CI authority hardening
+The prior expert workflow only ran on historical =rage/*= push branches. PR #84 adds path-scoped =pull_request= coverage for expert-affecting changes and adds the new Python maintenance contracts to that lane. The exact implementation head therefore has authoritative Common Lisp/Tek9/SWI, Python, and Home Manager verification before merge.

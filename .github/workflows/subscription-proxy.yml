@@ -1,0 +1,36 @@
+name: subscription-proxy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "llm_log/**"
+      - "proxy/**"
+      - "tests/test_subscription_proxy.py"
+      - "flake.nix"
+      - ".github/workflows/subscription-proxy.yml"
+  pull_request:
+    paths:
+      - "llm_log/**"
+      - "proxy/**"
+      - "tests/test_subscription_proxy.py"
+      - "flake.nix"
+      - ".github/workflows/subscription-proxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  subscription-proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Python subscription/token attribution contract
+        run: nix build -L .#checks.x86_64-linux.subscription-proxy-contract
+      - name: Common Lisp proxy/config contract
+        run: nix build -L .#checks.x86_64-linux.llm-log-config-contract

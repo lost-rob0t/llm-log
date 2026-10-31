@@ -424,6 +424,28 @@ sockets from one test can never affect the next."
         (ok (eql status 200))
         (ok (equalp body payload))))))
 
+(deftest internal-attribution-headers-are-not-forwarded
+  (with-fixture-proxy (proxy upstream)
+    (multiple-value-bind (status headers body)
+        (%client-request +fixture-proxy-port+ "POST" "/fixture/v1/chat/completions"
+                         :headers '(("Authorization" . "Bearer provider-secret")
+                                    ("X-LLM-Log-Worker" . "opencode-16")
+                                    ("X-LLM-Log-Agent" . "builder")
+                                    ("X-LLM-Log-Session" . "ses-test"))
+                         :body (%ascii-octets "{}"))
+      (declare (ignore headers body))
+      (ok (eql status 200))
+      (let* ((request (first (fixture-server-requests upstream)))
+             (request-headers
+              (mapcar (lambda (entry)
+                        (format nil "~A: ~A" (car entry) (cdr entry)))
+                      (getf request :headers))))
+        (ok (equal (%head-header request-headers "Authorization")
+                   "Bearer provider-secret"))
+        (ok (null (%head-header request-headers "X-LLM-Log-Worker")))
+        (ok (null (%head-header request-headers "X-LLM-Log-Agent")))
+        (ok (null (%head-header request-headers "X-LLM-Log-Session")))))))
+
 (deftest unknown-provider-is-rejected
   (with-fixture-proxy (proxy upstream)
     (multiple-value-bind (status body)

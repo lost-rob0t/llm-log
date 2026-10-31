@@ -1,0 +1,31 @@
+:PROPERTIES:
+:ID: llm-log-accurate-timeline-coverage
+:END:
+#+title: Field coverage and bounded readers for the new Qtile graph
+
+* Contract
+The new Qtile grapher requests =coverage=fields= on
+=GET /api/v1/stats/timeline=. Default/basic responses remain unchanged.
+Opt-in responses add =coverage=fields=, =accounting=completed_requests=,
+=requests_with_input_usage= and =requests_with_output_usage= per bucket.
+A reported zero counts as coverage. An absent input or output counter does not.
+
+The consumer uses exact =start= and =bucket_seconds= with half-open query bounds.
+It requests complete UTC buckets, divides reported token totals by the actual
+bucket duration, keeps gaps, and marks partial subtotals instead of inventing
+missing counts. Completed-request token volume is not generation throughput or
+subscription consumption. Traffic bypassing llm-log is not visible.
+
+* Read ownership and overload
+Corpus reads run off the aiohttp event loop with at most two scan tasks.
+Additional analytics requests receive HTTP 503 and Retry-After 1. Cancelling
+an HTTP waiter does not release a still-running disk-read permit. App cleanup
+awaits active scan tasks. Quota snapshot reads remain independent.
+This still scans events.jsonl; it is not an indexed high-volume query engine or
+a bound on corpus size. Large-corpus indexing remains separate optimization.
+
+* Executed verification
+Five targeted tests cover per-field coverage, backwards-compatible defaults,
+invalid coverage modes, a real HTTP quota read during a blocked corpus scan,
+and two-reader saturation after client cancellation. Together with quota tests,
+19 local tests pass. Full exact-head CI is required after publication.

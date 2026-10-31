@@ -1,0 +1,136 @@
+#+title: LLM-LOG-RESEARCH-053 — Historical corpus backfill, expert query, and dataset export
+#+filetags: :llm-log:expert:dataset:backfill:tek9:aradr:
+
+* Authority
+Parent issue: https://github.com/lost-rob0t/llm-log/issues/15
+
+This slice turns the existing lossless =events.jsonl= corpus and bounded expert
+operations into an operator-facing maintenance/export path without adding a second
+rule engine or allowing a second process to open the live Tek9 database.
+
+* Analyze
+Current live proxy traffic is projected into request/classification expert state,
+but historical captures that predate the expert plane remain only in =events.jsonl=.
+The expert service already has outcome, classification and task queries, but its
+transport is private stdio owned by the proxy. Starting another expert process
+against the same mutable state directory would violate the single-owner runtime
+boundary.
+
+The existing =query_outcome_dataset= is suitable for bounded inspection but not a
+large export: result limit is 64 and the original candidate ceiling is 256 with no
+cursor. A training corpus must never silently stop at either bound.
+
+Provider token usage also needs a historical path. Raw capture has provider-reported
+usage even when no StarIntel/task identity or pricing snapshot exists. Replaying it
+through =account_task_usage= would invent task/cost context and is therefore rejected.
+
+* Design
+** One live expert owner
+The main Python service keeps ownership of the one long-lived Common Lisp expert
+child. When an expert child is configured, a separate maintenance HTTP listener is
+started on a literal loopback address only (default =127.0.0.1:8788=).
+
+The maintenance API exposes only:
+- =GET /health=
+- =POST /query= for a finite read-only operation allowlist
+- =POST /backfill-event= for one typed raw-capture replay
+
+It never accepts Prolog goals and cannot be bound to a non-loopback address.
+
+** Historical replay
+=llm-log expert backfill= streams the append-only JSONL corpus and reuses the same
+stable capture event IDs and classifier user-message IDs used by live ingest.
+Therefore exact replay is idempotent and contradictory historical data is surfaced
+as a conflict instead of creating a second identity.
+
+For every eligible capture:
+1. persist/reuse the immutable request projection;
+2. extract the final user message and derive/reuse classifier assertions when text is present;
+3. persist provider-reported request usage when token fields are present;
+4. optionally record weak provider-transport outcome evidence only when the operator explicitly requests it.
+
+HTTP 200 is never promoted to task success. Weak transport evidence continues to
+derive =unknown= under the existing Prolog outcome rules.
+
+The command writes an atomic source-scoped line/event checkpoint. It only advances
+over a contiguous successful prefix. With =--continue-on-error=, records after the
+first failure may be inspected/replayed but the checkpoint remains before the
+failure so the next run cannot silently skip it.
+
+** Request usage without fake task accounting
+Add declared =observe_usage= handling in Common Lisp. It stores the same immutable
+provider/model/token projection used by task accounting but permits =task-id=NIL=.
+The =usage-request-id= index is version-migrated so request-local usage remains
+bounded/queryable while =usage-task-id= naturally excludes taskless records.
+
+If a request already has one task-accounting usage projection, historical replay
+reuses it when provider/model metadata agree rather than creating a duplicate. A
+metadata mismatch or pre-existing duplicate usage is an integrity error.
+
+No pricing is inferred and no historical cost assertion is created.
+
+** Cursor-paginated outcome dataset
+Add secondary index =outcome-assertion-outcome-id= whose key is
+=<outcome>:<assertion-id>=. A durable one-time migration rebuilds it for existing
+outcome assertions.
+
+=query_outcome_dataset= gains optional =cursor=. Each call scans at most the existing
+hard candidate window and returns at most the existing 64-example limit. Results add
+=next_cursor= when =truncated=true=. Cursor advancement is based on the last returned
+match when a page itself is full, or the last scanned candidate when sparse filters
+require advancing to the next bounded candidate window.
+
+This preserves bounded materialization while allowing an exporter to cover more than
+256 matching assertions without a full database scan.
+
+** Auditable dataset export
+=llm-log expert export-dataset= iterates the cursor query until complete, then joins
+request-scoped examples back to the immutable raw capture by =scope_id/event_id=.
+Each JSONL record contains:
+- =schema_version=;
+- the provenance-complete =expert= example;
+- the exact raw =capture= object.
+
+The sidecar manifest records the exact expert query, source SHA-256, output SHA-256,
+example count and missing-capture count. Missing raw request captures are fatal by
+default; an explicit operator flag is required to permit them.
+
+This is the canonical auditable corpus export. SFT/DPO/tool-trajectory transforms are
+later projections over this export rather than authority for what counts as success.
+
+* CLI
+#+begin_src sh
+# Incrementally replay new raw captures into the already-running expert plane.
+llm-log expert backfill --source ~/.llm-proxy/data/events.jsonl
+
+# Ignore the checkpoint and verify the entire corpus is replay-safe.
+llm-log expert backfill --source ~/.llm-proxy/data/events.jsonl --from-start
+
+# Inspect successful expert examples without opening Tek9 directly.
+llm-log expert query query_outcome_dataset \
+  --payload '{"outcome":"success","scope":"request","limit":64}'
+
+# Export all matching successes plus exact raw captures and a hash manifest.
+llm-log expert export-dataset \
+  --source ~/.llm-proxy/data/events.jsonl \
+  --output ./datasets/success.jsonl \
+  --outcome success \
+  --scope request
+#+end_src
+
+* Invariants
+- =events.jsonl= remains immutable source data.
+- Common Lisp/Tek9/SWI-Prolog remain expert authority.
+- No arbitrary Prolog-goal maintenance endpoint exists.
+- No second process opens the live Tek9 directory.
+- Backfill never guesses missing token usage, task identity, pricing, success, or cost.
+- Existing stable IDs are reused; contradictory replay fails explicitly.
+- Dataset pagination remains bounded and must advance or error.
+- A truncated export without =next_cursor= is rejected rather than silently partial.
+
+* Verification
+The implementation adds Python contracts for raw-body decoding, stable replay IDs,
+usage projection, weak transport evidence, loopback-only maintenance/query policy and
+CLI/checkpoint parsing. Common Lisp integration contracts prove taskless request usage
+survives restart and joins dataset metadata, and prove cursor traversal crosses the
+historical 256-candidate ceiling without duplicates or loss.

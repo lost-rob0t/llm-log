@@ -133,6 +133,17 @@
           package = self.packages.${system}.default;
           expert-lib = expertLib;
 
+          # Subscription/provider proxy contract: provider-reported token I/O,
+          # worker/subagent attribution, credential redaction and local-only
+          # correlation headers.
+          subscription-proxy-contract = pkgs.runCommand "llm-log-subscription-proxy-contract" {
+            nativeBuildInputs = [ python ];
+          } ''
+            cd ${self}
+            python -m unittest tests.test_subscription_proxy -v
+            touch "$out"
+          '';
+
           # Migration-only historical evidence.  This remains Python-backed
           # until equivalent CL/Prolog black-box contracts replace it.
           expert-service-contract = pkgs.runCommand "llm-log-expert-service-contract" {

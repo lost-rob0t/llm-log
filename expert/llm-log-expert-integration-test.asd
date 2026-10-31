@@ -25,6 +25,8 @@
                              (:file "outcome-dataset-metadata-red")
                              (:file "outcome-dataset-classification-red")
                              (:file "outcome-dataset-task-cost-red")
+                             (:file "capture-usage-red")
+                             (:file "outcome-dataset-pagination-red")
                              (:file "task-outcome-breakdown-red")
                              (:file "task-outcome-retry-economics-red"))))
   :perform (asdf:test-op (op c)

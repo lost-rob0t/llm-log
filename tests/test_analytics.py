@@ -164,7 +164,17 @@ class AnalyticsApiTest(unittest.IsolatedAsyncioTestCase):
         status, payload = await self.get_json("/openapi.json")
         self.assertEqual(status, 200)
         self.assertEqual(payload, openapi_document())
-        self.assertEqual(set(payload["paths"]), {"/api/v1/stats/summary", "/api/v1/stats/models", "/api/v1/stats/timeline"})
+        self.assertEqual(set(payload["paths"]), {
+            "/api/v1/stats/summary", "/api/v1/stats/models",
+            "/api/v1/stats/timeline", "/api/v1/quotas",
+        })
+
+    async def test_quota_route_is_installed_with_analytics(self):
+        status, payload = await self.get_json("/api/v1/quotas")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual([item["id"] for item in payload["providers"]], ["zai", "gpt"])
+        self.assertTrue(all("windows" in item for item in payload["providers"]))
 
     async def test_malformed_jsonl_and_invalid_captured_timestamps_are_skipped(self):
         path = self.root / "events.jsonl"

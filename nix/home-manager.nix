@@ -102,72 +102,76 @@ in
       };
     };
 
-    quotas = {
-      enable = mkEnableOption "provider-reported subscription quota telemetry";
-      package = mkOption {
-        type = types.package;
-        default = self.packages.${system}.llm-log;
-        description = "Python package providing llm-log-quotas, independent of proxy runtime.";
-      };
-      codexPackage = mkOption {
-        type = types.package;
-        default = pkgs.codex;
-        description = "Codex App Server executable using the user's existing login.";
-      };
-      port = mkOption {
-        type = types.port;
-        default = 8788;
-        description = "Loopback-only read-only quota API port.";
-      };
-      refreshSeconds = mkOption {
-        type = types.ints.between 30 900;
-        default = 60;
-        description = "Provider refresh interval; failures use bounded backoff.";
-      };
-      cacheFile = mkOption {
-        type = types.str;
-        default = "${config.xdg.cacheHome}/llm-log/quotas.json";
-        description = "Sanitized atomic snapshot shared with Qtile; contains no credentials.";
-      };
-      zaiKeyFile = mkOption {
-        type = types.nullOr types.str;
-        default = null;
-        description = "Runtime z.AI key file. Use an absolute string, never a Nix path or inline secret.";
-      };
-      environmentFile = mkOption {
-        type = types.nullOr types.str;
-        default = null;
-        description = "Optional runtime environment file containing Z_AI_API_KEY; never copied to the store.";
-      };
-      codexHome = mkOption {
-        type = types.nullOr types.str;
-        default = null;
-        description = "Optional existing Codex login/config directory; null preserves Codex defaults.";
-      };
-    };
-
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
       description = "Additional command-line arguments passed to llm-log serve.";
     };
+
+    quotas = {
+      enable = mkEnableOption "independent provider-reported subscription quota telemetry";
+      package = mkOption {
+        type = types.package;
+        default = self.packages.${system}.llm-log;
+        description = "Python package providing llm-log-quotas, independent of the proxy package.";
+      };
+      codexPackage = mkOption {
+        type = types.package;
+        default = pkgs.codex;
+        description = "Codex App Server executable using an existing ChatGPT login.";
+      };
+      port = mkOption { type = types.port; default = 8788; };
+      refreshSeconds = mkOption { type = types.ints.between 30 3600; default = 60; };
+      cacheFile = mkOption {
+        type = types.str;
+        default = "${config.home.homeDirectory}/.cache/llm-log/quotas.json";
+        description = "Atomic sanitized snapshot path, containing no credentials.";
+      };
+      zaiKeyFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Runtime owner-only z.AI key file; use an absolute string, never a Nix path or inline secret.";
+      };
+      environmentFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional private runtime environment file; never copied into the Nix store.";
+      };
+      codexHome = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Existing Codex configuration directory; null preserves defaults.";
+      };
+    };
   };
 
-  config = mkIf cfg.enable {
-    home.packages = [ cfg.package ] ++ lib.optionals cfg.quotas.enable [ cfg.quotas.package ];
-    home.sessionVariables = mkIf cfg.quotas.enable {
-      LLM_LOG_QUOTA_CACHE = cfg.quotas.cacheFile;
-    };
-    assertions = lib.optionals cfg.quotas.enable [
-      {
-        assertion = cfg.quotas.port != cfg.port && cfg.quotas.port >= 1024;
-        message = "llm-log quota port must be unprivileged and distinct from the proxy port.";
-      }
-    ];
+  config = lib.mkMerge [ (mkIf cfg.enable {
+    home.packages = [ cfg.package ];
 
-    systemd.user.services.llm-log-quotas = mkIf cfg.quotas.enable {
+    systemd.user.services.llm-log = {
       Unit = {
-        Description = "Provider-reported z.AI and GPT subscription quotas";
+        Description = "Transparent LLM capture proxy";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+
+      Service = {
+        ExecStart = command;
+        Restart = "on-failure";
+        RestartSec = 2;
+      };
+
+      Install.WantedBy = [ "default.target" ];
+    };
+  }) (mkIf cfg.quotas.enable {
+    home.packages = [ cfg.quotas.package ];
+    assertions = [ {
+      assertion = cfg.quotas.port >= 1024 && (!cfg.enable || cfg.quotas.port != cfg.port);
+      message = "llm-log quota port must be unprivileged and distinct from the enabled proxy port.";
+    } ];
+    systemd.user.services.llm-log-quotas = {
+      Unit = {
+        Description = "Provider-reported z.AI and GPT Codex subscription quotas";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
       };
@@ -189,21 +193,5 @@ in
       };
       Install.WantedBy = [ "default.target" ];
     };
-
-    systemd.user.services.llm-log = {
-      Unit = {
-        Description = "Transparent LLM capture proxy";
-        After = [ "network-online.target" ];
-        Wants = [ "network-online.target" ];
-      };
-
-      Service = {
-        ExecStart = command;
-        Restart = "on-failure";
-        RestartSec = 2;
-      };
-
-      Install.WantedBy = [ "default.target" ];
-    };
-  };
+  }) ];
 }

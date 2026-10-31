@@ -1,0 +1,22 @@
+:PROPERTIES:
+:ID: llm-log-subscription-quota-observation
+:END:
+#+title: Subscription quota observation is not token accounting
+
+* Problem
+Qtile needs z.AI and GPT quota percentages, but captured input/output tokens
+cannot determine subscription capacity, model weighting, remaining allowance,
+reset boundaries, or traffic outside the proxy. Plan names are not capacity
+contracts. A missing quota must not appear as zero usage or unlimited.
+
+* Resolution
+[[id:llm-log-provider-quota-telemetry][Provider-reported quota telemetry]] adds a separate metadata-only snapshot API
+and retains each provider-reported meter, plan, period and reset boundary.
+Consumers render explicit missing/stale/expired states. GPT Codex account
+meters are not represented as all ChatGPT web/voice/model allowances.
+
+* Build regression
+The Nix sandbox does not provide /usr/bin/env. Executable test fixtures must
+use the running interpreter's absolute =sys.executable= path rather than an
+ambient =#!/usr/bin/env python3= shebang. Keep the real subprocess protocol test;
+do not skip it to get the package build green.
