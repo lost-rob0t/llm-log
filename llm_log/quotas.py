@@ -25,6 +25,7 @@ from aiohttp import web
 
 MAX_BYTES = 262144
 MAX_WINDOWS = 64
+MAX_DURATION = 366 * 86400
 LABELS = {"zai": "z.AI", "gpt": "GPT"}
 
 
@@ -84,7 +85,9 @@ def unavailable(provider_id: str, state: str = "unavailable") -> dict:
 
 
 def zai_snapshot(payload: dict, now: float) -> dict:
-    if not isinstance(payload, dict) or payload.get("success") is False:
+    if (not isinstance(payload, dict)
+            or ("success" in payload and payload["success"] is not True)
+            or ("code" in payload and (type(payload["code"]) is not int or payload["code"] != 200))):
         raise QuotaError("invalid_response")
     data = payload.get("data", payload)
     limits = data.get("limits") if isinstance(data, dict) else None
@@ -96,32 +99,42 @@ def zai_snapshot(payload: dict, now: float) -> dict:
         if not isinstance(row, dict):
             raise QuotaError("invalid_response")
         kind = row.get("type")
-        if kind not in ("TOKENS_LIMIT", "TIME_LIMIT"):
+        if kind not in ("TOKENS_LIMIT", "CREDIT_LIMIT", "TIME_LIMIT"):
             continue
         seconds, label = None, None
-        if kind == "TOKENS_LIMIT":
-            period = (number(row.get("unit")), number(row.get("number")))
-            if period == (3, 5) or ("unit" not in row and "number" not in row):
+        if kind in ("TOKENS_LIMIT", "CREDIT_LIMIT"):
+            unit = row.get("unit")
+            count = number(row.get("number"), low=1, high=MAX_DURATION)
+            multiplier = {1: 86400, 3: 3600, 5: 60, 6: 604800}.get(unit) if type(unit) is int else None
+            if kind == "TOKENS_LIMIT" and "unit" not in row and "number" not in row:
+                # Preserve the established legacy token-only wire contract.
                 seconds = 18000
-            elif period == (6, 1):
-                seconds = 604800
+            elif multiplier is not None and count is not None:
+                seconds = number(count * multiplier, low=1, high=MAX_DURATION)
         else:
             label = "MCP month"
         raw_reset = number(row.get("nextResetTime"), low=1)
         reset = raw_reset / 1000 if raw_reset is not None and raw_reset >= 1e11 else raw_reset
+        if seconds == 18000 and reset is not None and reset > now + seconds + 60:
+            reset = None
+        # Keep token IDs stable; credit meters are separate even at equal durations.
         slot = str(int(seconds)) if seconds is not None else f"{kind}:{index}"
-        if slot in seen:
+        identity = f"{kind}:{slot}"
+        if identity in seen:
             raise QuotaError("ambiguous_windows")
-        seen.add(slot)
-        windows.append(window("coding-plan", slot, row.get("percentage"), seconds,
+        seen.add(identity)
+        meter = "coding-credits" if kind == "CREDIT_LIMIT" else "coding-plan"
+        windows.append(window(meter, slot, row.get("percentage"), seconds,
                               reset, label=label))
     for seconds in (18000, 604800):
-        if str(seconds) not in seen:
+        if not any(row["window_seconds"] == seconds for row in windows):
             missing = window("coding-plan", str(seconds), None, seconds)
             missing["state"] = "unavailable"
             windows.append(missing)
     windows.sort(key=lambda item: (item["window_seconds"] or 1e15, item["id"]))
-    return provider("zai", windows, now, data.get("planType") or data.get("planName"))
+    plan = next((data.get(key) for key in ("planType", "planName", "plan", "plan_type", "packageName", "level")
+                 if isinstance(data.get(key), str) and data[key].strip()), None)
+    return provider("zai", windows, now, plan)
 
 
 def gpt_snapshot(payload: dict, account: dict, now: float) -> dict:
@@ -156,7 +169,7 @@ def gpt_snapshot(payload: dict, account: dict, now: float) -> dict:
 
 
 def read_key() -> str:
-    key = os.environ.get("ZAI_API_KEY", "")
+    key = os.environ.get("Z_AI_API_KEY") or os.environ.get("ZAI_API_KEY", "")
     filename = os.environ.get("LLM_LOG_ZAI_KEY_FILE")
     if filename:
         try:
@@ -208,15 +221,20 @@ async def read_codex_account(executable: str | None = None) -> dict:
     except OSError:
         raise QuotaError("codex_unavailable") from None
     assert process.stdin is not None and process.stdout is not None
+    consumed = 0
 
     async def send(message: dict) -> None:
         process.stdin.write(json.dumps(message).encode() + b"\n")
         await process.stdin.drain()
 
     async def request(method: str, identity: int, params: dict | None = None) -> dict:
+        nonlocal consumed
         await send({"id": identity, "method": method, "params": params or {}})
         for _ in range(128):
             line = await process.stdout.readline()
+            consumed += len(line)
+            if consumed > MAX_BYTES:
+                raise QuotaError("response_too_large")
             if not line:
                 raise QuotaError("codex_disconnected")
             message = json.loads(line)
@@ -257,11 +275,14 @@ async def read_codex_account(executable: str | None = None) -> dict:
 
 
 def atomic_snapshot(path: Path, payload: dict) -> None:
+    encoded = json.dumps(payload, allow_nan=False).encode("utf-8")
+    if len(encoded) > MAX_BYTES:
+        raise QuotaError("snapshot_too_large")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".quota-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, allow_nan=False)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -284,6 +305,7 @@ class QuotaActor:
         self.providers = {key: unavailable(key) for key in LABELS}
         self.next_due = {key: 0.0 for key in LABELS}
         self._lock = asyncio.Lock()
+        self.inbox: asyncio.Queue = asyncio.Queue(maxsize=len(LABELS))
 
     def snapshot(self) -> dict:
         now = self.clock()
@@ -301,10 +323,27 @@ class QuotaActor:
         async with self._lock:
             now = self.clock()
             due = [key for key in self.adapters if now >= self.next_due[key]]
-            async def bounded(key: str) -> dict:
-                return await asyncio.wait_for(self.adapters[key](), 20)
-            results = await asyncio.gather(*(bounded(key) for key in due), return_exceptions=True)
-            for key, result in zip(due, results):
+            async def bounded(key: str) -> None:
+                try:
+                    result = await asyncio.wait_for(self.adapters[key](), 20)
+                except Exception as error:
+                    result = error
+                await self.inbox.put((key, result))
+            # At most two producers, one result each. Only this owner applies them.
+            tasks = [asyncio.create_task(bounded(key)) for key in due]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                while not self.inbox.empty():
+                    self.inbox.get_nowait()
+                    self.inbox.task_done()
+                raise
+            for _ in due:
+                key, result = self.inbox.get_nowait()
+                self.inbox.task_done()
                 delay = self.interval
                 if isinstance(result, BaseException):
                     previous = self.providers[key]
@@ -320,7 +359,7 @@ class QuotaActor:
             if self.snapshot_path:
                 try:
                     await asyncio.to_thread(atomic_snapshot, self.snapshot_path, self.snapshot())
-                except OSError:
+                except (OSError, ValueError):
                     # Disk persistence is optional; the in-memory API remains available.
                     pass
 

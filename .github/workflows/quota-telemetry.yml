@@ -30,4 +30,21 @@ jobs:
       - name: Full Python regression suite (includes quota contracts)
         run: nix develop --command python -m unittest discover -s tests -v
       - name: Build delivered Python capture package
-        run: nix build -L .#llm-log
+        run: |
+          nix build -L .#llm-log
+          result/bin/llm-log-quotas --help
+      - name: Parse Home Manager module
+        run: nix-instantiate --parse nix/home-manager.nix >/dev/null
+      - name: Evaluate capture and independent quota Home Manager contracts
+        run: |
+          nix build -L --impure --expr '
+            let flake = builtins.getFlake (toString ./.);
+                pkgs = import flake.inputs.nixpkgs { system = "x86_64-linux"; };
+            in pkgs.linkFarm "llm-log-home-manager-contracts" [
+              { name = "expert"; path = import ./nix/tests/home-manager-expert.nix {
+                  self = flake; inherit pkgs; lib = pkgs.lib;
+              }; }
+              { name = "quotas"; path = import ./nix/tests/home-manager-quotas.nix {
+                  self = flake; inherit pkgs; lib = pkgs.lib;
+              }; }
+            ]'

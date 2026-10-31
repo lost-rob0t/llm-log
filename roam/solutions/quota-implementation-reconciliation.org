@@ -1,0 +1,40 @@
+:PROPERTIES:
+:ID: llm-log-quota-implementation-reconciliation
+:END:
+#+title: Reconcile quota service improvements without changing the consumer schema
+
+* Problem and compatibility
+Issue: [[id:llm-log-subscription-quota-observation][Subscription quota observation]]
+PR 82 and merged PR 80 independently implemented provider quotas. Replacing the
+merged module would remove imports used by the Python analytics service and
+change the version-1 response shape. Preserve =install_quota_routes=,
+=gpt_snapshot=, =zai_snapshot=, the provider list and =window_seconds= fields.
+
+* Reconciled behavior
+Coding credit windows have a separate =coding-credits= meter; token window IDs
+remain stable. z.AI numeric units 1/day, 3/hour, 5/minute and 6/week are bounded
+and type checked. Explicit unsuccessful status/code responses are rejected.
+The existing legacy token-only fallback and separately labelled MCP month
+remain supported. No token capture history is used to infer subscription caps.
+Source observation for unit/credit mapping:
+https://github.com/steipete/CodexBar/blob/d394565751ab6b3c27f0c9c1e7879647ac5d029d/Sources/CodexBarCore/Resources/Plugins/zai.js
+
+Provider tasks submit at most two bounded results to one snapshot owner.
+Codex streams and disk snapshots have total size limits. Cancellation drains
+pending results before a later refresh. API reads remain cached and local-only.
+
+* Independent service
+=python -m llm_log.quotas_service= exposes the existing API on loopback port
+8788. The =llm-log-quotas= package entrypoint may target the same module.
+=services.llm-log.quotas.enable= enables the independent Home Manager service
+even when the capture proxy is disabled. Credentials remain runtime file paths;
+the existing owner-only file checks apply. =Z_AI_API_KEY= and =ZAI_API_KEY= are
+accepted. Configure a cache path through =--cache= or =LLM_LOG_QUOTA_SNAPSHOT=.
+The standalone and capture services share a schema; enable provider polling in
+one service per account to avoid duplicate requests.
+
+* Validation scope
+Regression coverage exercises credit and token meters, rejected provider
+responses, malformed units, bounded persistence, cancelled refresh, and the
+standalone loopback API through fixtures. Live account verification and user
+Home Manager activation require separate deployment evidence.

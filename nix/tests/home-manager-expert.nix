@@ -14,6 +14,7 @@ let
     modules = [
       ({ lib, ... }: {
         options = {
+          assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
           home.homeDirectory = lib.mkOption { type = lib.types.str; };
           home.packages = lib.mkOption {
             type = lib.types.listOf lib.types.package;
@@ -21,7 +22,7 @@ let
           };
           xdg.dataHome = lib.mkOption { type = lib.types.str; };
           systemd.user.services = lib.mkOption {
-            type = lib.types.attrs;
+            type = lib.types.attrsOf (lib.types.submodule { freeformType = lib.types.attrs; });
             default = { };
           };
         };

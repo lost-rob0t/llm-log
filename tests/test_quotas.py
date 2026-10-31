@@ -10,8 +10,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from llm_log.quotas import (
     QuotaActor, QuotaError, gpt_snapshot, zai_snapshot, install_quota_routes,
-    read_codex_account, read_key,
+    read_codex_account, read_key, atomic_snapshot, MAX_BYTES, QUOTA_ACTOR,
 )
+from llm_log.quotas_service import build_quota_app
 
 NOW = 2_000_000_000
 
@@ -26,6 +27,51 @@ def gpt_payload(percent=31, plan="pro"):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_zai_credit_units_and_token_ids_are_preserved(self):
+        raw = {"success": True, "code": 200, "data": {"packageName": "Max", "limits": [
+            {"type": "CREDIT_LIMIT", "unit": 6, "number": 1, "percentage": 71},
+            {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "percentage": 29},
+            {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 12},
+            {"type": "TIME_LIMIT", "percentage": 4}]}}
+        result = zai_snapshot(raw, NOW)
+        self.assertEqual(result["plan"], "Max")
+        coding = [row for row in result["windows"] if row["window_seconds"]]
+        self.assertEqual(len(coding), 3)
+        self.assertEqual({row["id"] for row in coding},
+                         {"coding-plan:18000", "coding-credits:18000", "coding-credits:604800"})
+        self.assertEqual(result["windows"][-1]["label"], "MCP month")
+
+    def test_zai_period_codes_are_typed_and_bounded(self):
+        for unit, count, seconds in ((1, 2, 172800), (5, 30, 1800),
+                                      (True, 5, None), (3.0, 5, None), (6, 1000, None)):
+            result = zai_snapshot({"limits": [{"type": "CREDIT_LIMIT", "unit": unit,
+                                              "number": count, "percentage": 7}]}, NOW)
+            credit = next(row for row in result["windows"] if row["meter"] == "coding-credits")
+            self.assertEqual(credit["window_seconds"], seconds)
+
+    def test_explicit_provider_rejection_does_not_publish_usage(self):
+        for fields in ({"success": False}, {"success": 1}, {"code": 500}, {"code": "200"}):
+            with self.assertRaises(QuotaError):
+                zai_snapshot({**fields, "limits": [{"type": "TOKENS_LIMIT", "percentage": 0}]}, NOW)
+
+    def test_implausible_five_hour_reset_remains_unknown(self):
+        result = zai_snapshot({"limits": [{"type": "TOKENS_LIMIT", "unit": 3, "number": 5,
+                                           "percentage": 42, "nextResetTime": (NOW + 36000) * 1000}]}, NOW)
+        self.assertIsNone(result["windows"][0]["resets_at"])
+        self.assertEqual(result["windows"][0]["used_percent"], 42)
+
+    def test_official_environment_alias(self):
+        with patch.dict("os.environ", {"Z_AI_API_KEY": "fixture-value"}, clear=True):
+            self.assertEqual(read_key(), "fixture-value")
+
+    def test_oversized_snapshot_does_not_replace_last_good_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quota.json"
+            atomic_snapshot(path, {"schema_version": 1})
+            with self.assertRaises(QuotaError):
+                atomic_snapshot(path, {"oversized": "x" * MAX_BYTES})
+            self.assertEqual(json.loads(path.read_text()), {"schema_version": 1})
+
     def test_zai_windows_use_period_fields_not_list_order(self):
         raw = {"data": {"limits": [
             {"type": "TOKENS_LIMIT", "unit": 6, "number": 1,
@@ -94,6 +140,44 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ActorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_standalone_service_preserves_capture_schema_and_cached_reads(self):
+        app = build_quota_app()
+        actor = app[QUOTA_ACTOR]
+        calls = []
+        async def good():
+            calls.append(1)
+            return gpt_snapshot(gpt_payload(), {}, NOW)
+        actor.adapters = {"gpt": good}
+        async with TestClient(TestServer(app)) as client:
+            await asyncio.wait_for(actor.refresh(), 1)
+            before = len(calls)
+            response = await client.get('/api/v1/quotas')
+            data = await response.json()
+            self.assertEqual(response.status, 200)
+            self.assertIsInstance(data['providers'], list)
+            self.assertIn('window_seconds', data['providers'][1]['windows'][0])
+            self.assertEqual(len(calls), before)
+            self.assertEqual(actor.inbox.maxsize, 2)
+            self.assertTrue(actor.inbox.empty())
+
+    async def test_cancelled_refresh_does_not_leave_a_queued_old_result(self):
+        entered = asyncio.Event()
+        async def blocked():
+            entered.set()
+            await asyncio.Event().wait()
+        async def good():
+            return gpt_snapshot(gpt_payload(), {}, NOW)
+        actor = QuotaActor({'zai': good, 'gpt': blocked}, clock=lambda: NOW)
+        task = asyncio.create_task(actor.refresh())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(actor.inbox.empty())
+        actor.adapters = {'gpt': good}
+        await asyncio.wait_for(actor.refresh(), 1)
+        self.assertEqual(actor.snapshot()['providers'][1]['state'], 'ok')
+
     async def test_http_is_cached_loopback_only_and_no_refresh_on_reads(self):
         calls = []
         async def adapter():
