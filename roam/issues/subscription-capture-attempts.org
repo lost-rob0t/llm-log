@@ -8,6 +8,10 @@ Subscription route aliases alone do not establish rich usage, secret-safe
 persistence, trusted local attribution, or safe exhaustion fallback. Quota snapshots
 are a separate metadata service, not captured traffic.
 
+Fallback credentials differ from logical inbound headers. An opaque target
+credential echoed by a response can bypass pattern-only redaction unless the
+capture receives the credentials used by every actual attempt.
+
 [[id:llm-log-safe-subscription-capture][Capture configured subscription traffic with explicit attempt provenance]]
 implements the bounded capture slice. Broader stateful protocol conversion and
 durable budget/exhaustion coordination remain in #95.

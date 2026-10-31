@@ -26,4 +26,5 @@ subscription_logical_accounting(final_response_usage, attempts_separate).
 subscription_fallback(openrouter, mapped_chat_completions_precommit_only).
 subscription_fallback_loop_guard(via, 'llm-log-fallback').
 subscription_body_hash(redacted_bytes, retention_independent).
+subscription_redaction_context(actual_attempt_credentials, never_serialized).
 subscription_missing_usage(unknown, no_estimate).

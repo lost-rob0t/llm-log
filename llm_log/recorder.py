@@ -404,6 +404,7 @@ class CaptureEvent:
         attempts: Sequence[Mapping[str, Any]] = (),
         final_provider: str | None = None,
         attribution: Mapping[str, str] | None = None,
+        redaction_secrets: Sequence[str] = (),
     ) -> "CaptureEvent":
         input_tokens, output_tokens = token_usage(response_body)
         rich_usage = provider_usage(response_body)
@@ -418,6 +419,9 @@ class CaptureEvent:
             )
         secrets = credential_values([dict(request_headers), dict(response_headers),
                                      request_body, response_body, query, upstream])
+        # Retry credentials are absent from the logical request's headers.
+        # Use them only for redaction; never serialize their outbound headers.
+        secrets.update(redaction_secrets)
         request_body = redact_bytes(redact_known(request_body, secrets))
         response_body = redact_bytes(redact_known(response_body, secrets))
         upstream, path, query = (redact_known(value, secrets) for value in (upstream, path, query))

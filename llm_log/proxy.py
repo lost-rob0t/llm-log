@@ -633,6 +633,7 @@ def build_app(
         attempt_url = upstream_url
         attempt_headers = _request_headers(request.headers)
         attempt_body = request_body
+        redaction_secrets = set()
         attempt_model = model
         retry_reason = "circuit_open" if using_fallback else ineligible_reason
         try:
@@ -644,6 +645,7 @@ def build_app(
                     attempt_body, attempt_headers, attempt_model = fallback
                     attempt_headers = {**attempt_headers, "Via": ", ".join(filter(None, (via, FALLBACK_VIA_MARKER)))}
                 attempt_started = _now()
+                redaction_secrets.update(credential_values(attempt_headers))
                 async with session.request(request.method, attempt_url, headers=attempt_headers,
                                            data=attempt_body, allow_redirects=False) as upstream_response:
                     response_status = upstream_response.status
@@ -727,6 +729,7 @@ def build_app(
             attribution=attribution,
             attempts=attempts,
             final_provider=final_provider,
+            redaction_secrets=redaction_secrets,
         )
         await recorder.record(event)
         _schedule_expert_ingest(request.app, expert_plane, event, request_body)

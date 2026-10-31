@@ -84,6 +84,7 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.status = 429
         self.source_body = b'{"error":{"code":"insufficient_quota"}}'
         self.target_body = b'{"usage":{"prompt_tokens":7,"completion_tokens":3},"choices":[]}'
+        self.target_headers = {}
         app = web.Application()
         app.router.add_route('*', '/{tail:.*}', self.upstream)
         self.server = TestServer(app)
@@ -114,7 +115,7 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             return socket
         self.hits.append((request.path, dict(request.headers), await request.read()))
         if request.path.startswith('/target/'):
-            return web.Response(body=self.target_body, content_type='application/json')
+            return web.Response(body=self.target_body, headers=self.target_headers, content_type='application/json')
         if self.disconnect:
             response = web.StreamResponse(status=200, headers={"Content-Length": "9999"})
             await response.prepare(request)
@@ -170,6 +171,24 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.status = 429
         self.assertEqual((await self.post(path='/backend-api/codex/responses'))[0], 429)
         self.assertEqual(len(self.hits), 2)
+
+    async def test_fallback_credential_echoes_are_redacted_only_in_persisted_copies(self):
+        await self.start()
+        self.target_headers = {'X-Request-Id': 'target-secret'}
+        bodies = (b'{"error":"target-secret"}',
+                  b'{"error":"target\\u002dsecret"}',
+                  b'data: {"error":"target\\u002dsecret"}\n\ndata: [DONE]\n\n')
+        for body in bodies:
+            self.target_body = body
+            self.assertEqual(await self.post(), (200, body))
+        for event in await self.events():
+            self.assertNotIn('target-secret', json.dumps(event))
+            self.assertNotIn('target-secret', json.dumps(event['provider_metadata']))
+            self.assertNotIn('target-secret', json.dumps(event['attempts']))
+            self.assertNotIn('secret', event['response_body']['text'])
+            self.assertIn('<redacted>', event['response_body']['text'])
+        for filename in ('events.jsonl', 'events.pl'):
+            self.assertNotIn('target-secret', (self.root / filename).read_text())
 
     async def test_circuit_is_account_scoped(self):
         await self.start()

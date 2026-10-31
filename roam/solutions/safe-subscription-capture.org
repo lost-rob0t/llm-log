@@ -21,6 +21,12 @@ isolated target credentials and preserved provider constraints, and never conver
 unsupported stateful protocols. One event owns an ordered attempt list; logical
 stats use final response usage, and the expert receives final-provider usage once.
 
+Each HTTP attempt contributes its actual credential values to the capture-only
+redaction context. Logical inbound headers retain their meaning; outbound retry
+headers and the redaction context are never serialized. Synthetic JSON, escaped
+JSON and SSE echo fixtures verify unchanged forwarding and sanitized response
+bodies, attempt/provider metadata, JSONL and Prolog persistence.
+
 See [[file:../../research/LLM-LOG-RESEARCH-054-subscription-capture-history.org][operating contract and remaining #95 scope]].
 Synthetic transport, routing, privacy, history, mining, query and expert tests
 provide reproducible evidence without real credentials or private sessions.
