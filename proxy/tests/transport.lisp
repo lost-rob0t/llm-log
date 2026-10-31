@@ -431,7 +431,9 @@ sockets from one test can never affect the next."
                          :headers '(("Authorization" . "Bearer provider-secret")
                                     ("X-LLM-Log-Worker" . "opencode-16")
                                     ("X-LLM-Log-Agent" . "builder")
-                                    ("X-LLM-Log-Session" . "ses-test"))
+                                    ("X-LLM-Log-Session" . "ses-test")
+                                    ("X-LLM-Log-Service-Token" . "synthetic-local-secret")
+                                    ("X-LLM-Log-Unknown-Local" . "local-only"))
                          :body (%ascii-octets "{}"))
       (declare (ignore headers body))
       (ok (eql status 200))
@@ -444,7 +446,9 @@ sockets from one test can never affect the next."
                    "Bearer provider-secret"))
         (ok (null (%head-header request-headers "X-LLM-Log-Worker")))
         (ok (null (%head-header request-headers "X-LLM-Log-Agent")))
-        (ok (null (%head-header request-headers "X-LLM-Log-Session")))))))
+        (ok (null (%head-header request-headers "X-LLM-Log-Session")))
+        (ok (null (%head-header request-headers "X-LLM-Log-Service-Token")))
+        (ok (null (%head-header request-headers "X-LLM-Log-Unknown-Local")))))))
 
 (deftest unknown-provider-is-rejected
   (with-fixture-proxy (proxy upstream)

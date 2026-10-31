@@ -12,6 +12,8 @@ class SubscriptionProxyTests(unittest.TestCase):
     def test_subscription_routes_are_builtin(self) -> None:
         self.assertEqual(_DEFAULT_UPSTREAMS["chatgpt"], "https://chatgpt.com")
         self.assertEqual(_DEFAULT_UPSTREAMS["zai-coding"], "https://api.z.ai")
+        self.assertEqual(_DEFAULT_UPSTREAMS["codex"], "https://chatgpt.com/backend-api/codex")
+        self.assertEqual(_DEFAULT_UPSTREAMS["zai-coding-plan"], "https://api.z.ai/api/coding/paas/v4")
 
     def test_internal_attribution_headers_are_recorded_but_not_forwarded(self) -> None:
         headers = {

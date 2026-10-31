@@ -29,7 +29,9 @@
     ("openrouter" . "https://openrouter.ai")
     ("anthropic" . "https://api.anthropic.com")
     ("chatgpt" . "https://chatgpt.com")
-    ("zai-coding" . "https://api.z.ai"))
+    ("zai-coding" . "https://api.z.ai")
+    ("codex" . "https://chatgpt.com/backend-api/codex")
+    ("zai-coding-plan" . "https://api.z.ai/api/coding/paas/v4"))
   "Built-in provider-prefix to upstream base-url registry.
 
 The reusable default never hardcodes a consumer's personal data path;

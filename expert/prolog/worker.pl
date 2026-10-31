@@ -4,7 +4,7 @@
 worker_protocol_version(1).
 classifier_rule_version("request.classifier/v1").
 task_cost_rule_version("task.cost/v1").
-outcome_rule_version("outcome.decision/v1").
+outcome_rule_version("outcome.decision/v2").
 
 main :-
     set_stream(user_output, buffer(line)),
@@ -65,7 +65,8 @@ dispatch_operation("task_cost", RequestId, Data, Reply) :-
 dispatch_operation("outcome_decision", RequestId, Data, Reply) :-
     !,
     (   valid_outcome_data(Data, Evidence, EvidenceIds)
-    ->  outcome_decision(Evidence, Outcome, RuleId),
+    ->  get_dict(scope, Data, Scope),
+        scoped_outcome_decision(Scope, Evidence, Outcome, RuleId),
         outcome_rule_version(RuleVersion),
         Reply = _{status:ok,request_id:RequestId,operation:"outcome_decision",rule_version:RuleVersion,
                   result:_{outcome:Outcome,rule_id:RuleId,expert_version:"outcome-expert/1",evidence_ids:EvidenceIds}}
@@ -126,7 +127,61 @@ outcome_decision(Evidence, "partial", "outcome.authoritative_partial") :-
 outcome_decision(Evidence, "success", "outcome.authoritative_success") :-
     outcome_evidence(Evidence, Type, "authoritative", "success"),
     memberchk(Type, ["test_result", "tool_result", "manual_label"]), !.
-outcome_decision(_Evidence, "unknown", "outcome.insufficient_evidence").
+% Explicit authoritative decisions retain precedence over mined observations.
+% Transport and individual tool failures describe requests, not whole tasks.
+scoped_outcome_decision(_Scope, Evidence, Outcome, RuleId) :-
+    outcome_decision(Evidence, Outcome, RuleId), !.
+scoped_outcome_decision("request", Evidence, Outcome, RuleId) :-
+    request_failure(Evidence, Outcome, RuleId), !.
+scoped_outcome_decision(_Scope, _Evidence, "unknown", "outcome.insufficient_evidence").
+
+observed_outcome(Evidence, Type, Value) :-
+    outcome_evidence(Evidence, Type, Authority, Value),
+    memberchk(Authority, ["normal", "authoritative"]).
+
+request_failure(Evidence, "timeout", "outcome.observed_timeout") :-
+    observed_outcome(Evidence, "task_state", "timeout").
+request_failure(Evidence, "cancelled", "outcome.observed_cancelled") :-
+    observed_outcome(Evidence, "task_state", "cancelled").
+request_failure(Evidence, "partial", "outcome.response_truncated") :-
+    observed_outcome(Evidence, "task_state", "truncated").
+request_failure(Evidence, "partial", "outcome.response_aborted") :-
+    observed_outcome(Evidence, "task_state", "aborted").
+request_failure(Evidence, "failure", "outcome.repeated_tool_error") :-
+    member(First, Evidence), member(Second, Evidence),
+    get_dict(evidence_type, First, "tool_result"),
+    get_dict(evidence_type, Second, "tool_result"),
+    get_dict(authority, First, A), memberchk(A, ["normal", "authoritative"]),
+    get_dict(authority, Second, B), memberchk(B, ["normal", "authoritative"]),
+    get_dict(observed_value, First, "failure"),
+    get_dict(observed_value, Second, "failure"),
+    get_dict(source_id, First, SourceA), string(SourceA), SourceA \= "",
+    get_dict(source_id, Second, SourceB), string(SourceB), SourceB \= "",
+    SourceA \= SourceB.
+request_failure(Evidence, "failure", "outcome.observed_tool_failure") :-
+    observed_outcome(Evidence, "tool_result", "failure").
+request_failure(Evidence, "failure", "outcome.observed_test_failure") :-
+    observed_outcome(Evidence, "test_result", "failure").
+request_failure(Evidence, "failure", "outcome.provider_quota_exhausted") :-
+    observed_outcome(Evidence, "provider_transport", "quota_exceeded").
+request_failure(Evidence, "failure", "outcome.provider_authentication_error") :-
+    observed_outcome(Evidence, "provider_transport", "authentication_error").
+request_failure(Evidence, "failure", "outcome.provider_access_denied") :-
+    observed_outcome(Evidence, "provider_transport", "permission_denied").
+request_failure(Evidence, "failure", "outcome.provider_rate_limit") :-
+    observed_outcome(Evidence, "provider_transport", "rate_limit_exceeded").
+
+request_failure(Evidence, "failure", "outcome.provider_authentication_error") :-
+    outcome_evidence(Evidence, "provider_transport", _, 401).
+request_failure(Evidence, "failure", "outcome.provider_access_denied") :-
+    outcome_evidence(Evidence, "provider_transport", _, 403).
+request_failure(Evidence, "failure", "outcome.provider_rate_or_quota_limit") :-
+    outcome_evidence(Evidence, "provider_transport", _, 429).
+request_failure(Evidence, "failure", "outcome.provider_server_error") :-
+    outcome_evidence(Evidence, "provider_transport", _, Status),
+    integer(Status), Status >= 500, Status =< 599.
+request_failure(Evidence, "failure", "outcome.provider_error") :-
+    observed_outcome(Evidence, "provider_transport", "error").
 
 valid_classifier_data(Data, Message, MessageId, SourceRequestId) :-
     get_dict(message, Data, Message), string(Message),

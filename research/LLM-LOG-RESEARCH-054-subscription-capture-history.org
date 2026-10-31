@@ -1,0 +1,102 @@
+#+title: Subscription capture, attempt accounting, and exported history mining
+#+startup: overview
+
+* Runtime and client configuration
+The current runtime boundary in =AGENTS.md= applies: Python =llm_log/= owns
+captures and analytics, Common Lisp =proxy/= forwards without capture, and the
+Common Lisp/Tek9 expert owns derived state with SWI-Prolog outcome decisions.
+Use the Python package =.#llm-log= for the capture features below. Selecting the
+separate forwarding-only package does not enable recording.
+
+Start an explicitly configured client-facing recorder:
+#+begin_src sh
+python -m llm_log.cli serve --log-dir ./data --retention metadata
+#+end_src
+=full= retains redacted bodies; =metadata= omits request/response/frame content
+while retaining usage, safe attribution, hashes and routing evidence. Hashes
+identify redacted full body bytes, even when those bytes are omitted. Wire bytes
+are forwarded independently. Missing provider counters remain null. Legacy
+=total_tokens= derives input+output only when both are known and no provider total
+exists; =reported_total_tokens= distinguishes explicitly reported totals.
+Cached input/write and reasoning counters are components, never added again.
+
+| Route base | Upstream base | Client suffix |
+|------------+---------------+---------------|
+| http://127.0.0.1:8787/codex | https://chatgpt.com/backend-api/codex | /responses |
+| http://127.0.0.1:8787/zai-coding-plan | https://api.z.ai/api/coding/paas/v4 | /chat/completions |
+
+Existing =chatgpt= and =zai-coding= host-root aliases remain supported. The caller
+must use its supported base-URL configuration and normal subscription auth flow.
+Codex OAuth is forwarded as subscription OAuth; it is never transformed into a
+Platform API key. Account/residency/protocol headers pass through. No private
+credential files are discovered, no credentials are configured by this change,
+and fixtures cannot prove live subscription acceptance.
+
+* Attribution and inspection
+All =X-LLM-Log-*= headers are stripped before provider egress, including unknown
+fields. Headers cannot establish company identity. An operator may supply fixed
+attribution via =--trusted-attribution= (a JSON object) and a service token variable
+name via =--attribution-token-env=. A matching =X-LLM-Log-Service-Token= permits
+bounded worker/agent/session/task/correlation/causation/plan claims. Fixed operator
+values take precedence; caller-supplied company claims are ignored. Without this
+configuration, untrusted claims are absent from normalized attribution.
+
+=GET /api/v1/requests?worker=builder&task=task-42= exposes projected request metadata
+and ordered attempts, excluding retained bodies and arbitrary nested source fields.
+The stats endpoints accept these filters plus =final_provider=, =company=, =agent=,
+=session=, =correlation_id=, =causation_id= and =plan=. Stats count one logical row
+and its final response usage. Earlier attempt usage is inspectable separately and
+is not added into final-response token totals. Null cost means unknown cost.
+
+* Opt-in exhaustion fallback
+Fallback is disabled without =--fallback-config=. This synthetic policy shape
+references an operator-managed environment variable; it contains no key:
+#+begin_src json
+{"models":{"zai-coding-plan:source-model":"vendor/target-model"},"credential_env":"LLM_LOG_OPENROUTER_KEY","cooldown_seconds":60,"provider_policy":{"quantizations":["fp16"]}}
+#+end_src
+The target is the configured =openrouter= route. Only explicitly mapped OpenAI
+chat-completions shapes are eligible. Typed 402 credit and 429 quota/capacity
+errors permit fallback before downstream response headers are prepared. Generic
+403/400/network/5xx errors do not trigger exhaustion fallback. No request is
+replayed after downstream commit, including partial SSE failures. A bounded
+account/provider/model circuit suppresses exhausted direct calls until cooldown.
+
+Fallback uses only the environment-referenced target credential and rebuilt
+headers; source bearer/account/cookie credentials cannot cross that boundary.
+Caller provider constraints are preserved; conflicting configured constraints
+block fallback. Budget hooks run only when fallback is actually needed, and
+fail closed on denial/error. Via marks fallback requests to suppress loops through
+nested proxies without leaking the reserved local metadata namespace.
+
+* Scope limits
+Codex Responses and Anthropic native requests are transparently captured but are
+not converted into OpenRouter chat requests. Unsupported shapes retain their
+original error, rather than silently changing semantics. No stateful Responses
+conversion, durable exhaustion event store, quota preflight integration, or
+transactional spend ledger is supplied. The budget hook is an authorization hook.
+Attempt facts include known usage/metadata, commit state, terminal class and policy
+version; provider cost remains unknown when not explicitly reported. These limits
+leave the broader #95 routing project open.
+
+* Explicit history imports and existing expert replay
+Stop other corpus writers before importing an exported file. Importer locks
+serialize importers, not unrelated live recorders. No history stores are searched.
+#+begin_src sh
+python -m llm_log.cli import-history ./opencode-export.json --format opencode --corpus ./data
+python -m llm_log.cli import-history ./codex-export.jsonl --format codex --corpus ./data
+python -m llm_log.cli expert backfill --source ./data/events.jsonl
+python -m llm_log.cli mine-failures --source ./data/events.jsonl
+#+end_src
+The last command prints deterministic evidence envelopes. To replay evidence
+through the existing Common Lisp expert owner, add =--expert-service-bin= and
+=--expert-data-dir= for an offline expert store with no concurrent owner. The
+ordinary =expert backfill= command instead uses the running maintenance listener.
+Do not start two expert owners over one store.
+
+Imports retain hashed source/session/record provenance, skip already imported IDs,
+and report identity conflicts or invalid source positions without echoing content.
+OpenCode explicit per-message usage is retained; Codex cumulative session usage is
+not assigned to individual responses. Historical HTTP status and overall task
+outcomes remain unknown. Mining uses explicit tool/status/error/finish fields,
+never failure-like prose. Request failures do not establish task failure. Existing
+expert authority and outcome supersession remain in force.

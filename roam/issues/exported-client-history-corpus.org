@@ -1,0 +1,19 @@
+:PROPERTIES:
+:ID:       llm-log-exported-client-history-corpus
+:END:
+#+title: Exported client histories need the ordinary capture corpus
+#+filetags: :llm-log:issue:history:backfill:
+
+* Problem
+Explicitly exported OpenCode sessions and Codex rollout JSONL contain conversational
+and tool evidence that is absent from proxy captures. A separate history database
+would bypass recorder serialization and the established expert ingestion contracts.
+
+* Required behavior
+Normalize explicit exports, redact credentials before persistence, retain hashed
+session/record/source provenance, and resume repeated imports without duplicating
+captures. Missing usage and transport/task outcomes remain unknown. Invalid input
+must produce source-position diagnostics without echoing private source content.
+
+* Resolution
+[[id:llm-log-exported-client-history-ingestion][Normalize explicit histories through RecorderActor and existing expert backfill]].

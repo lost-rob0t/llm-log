@@ -20,6 +20,8 @@ def decode_captured_body(body: Any) -> bytes:
     if not isinstance(body, Mapping):
         raise ValueError("captured body must be an object")
     encoding = body.get("encoding")
+    if encoding == "omitted":
+        return b""
     if encoding == "utf-8":
         text = body.get("text")
         if not isinstance(text, str):
@@ -124,10 +126,15 @@ def expert_usage_payload(event: Mapping[str, Any]) -> dict[str, Any] | None:
         )
         if event.get(name) is not None
     }
+    if "cached_input_tokens" not in token_fields and event.get("cache_read_input_tokens") is not None:
+        token_fields["cached_input_tokens"] = event["cache_read_input_tokens"]
     if not token_fields:
         return None
-    provider = _required_string(event, "provider")
+    provider = event.get("final_provider") or _required_string(event, "provider")
     model = event.get("model")
+    attempts = event.get("attempts")
+    if isinstance(attempts, list) and attempts and isinstance(attempts[-1], Mapping):
+        model = attempts[-1].get("model") or model
     transport = event.get("transport")
     return {
         "usage_id": f"capture-usage:{event_id}",

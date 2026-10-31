@@ -121,7 +121,8 @@ relayable inbound HEADERS and BODY."
                    (format nil "Host: ~A~C~C" host-header #\Return #\Linefeed))
                   stream)
   (maphash (lambda (name value)
-             (unless (%header-name-p name +hop-by-hop-request-headers+)
+             (unless (or (%header-name-p name +hop-by-hop-request-headers+)
+                         (uiop:string-prefix-p "x-llm-log-" (string-downcase name)))
                (write-sequence (%utf8-octets
                                 (format nil "~A: ~A~C~C" name value
                                         #\Return #\Linefeed))

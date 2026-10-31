@@ -6,14 +6,14 @@ on:
     paths:
       - "llm_log/**"
       - "proxy/**"
-      - "tests/test_subscription_proxy.py"
+      - "tests/**"
       - "flake.nix"
       - ".github/workflows/subscription-proxy.yml"
   pull_request:
     paths:
       - "llm_log/**"
       - "proxy/**"
-      - "tests/test_subscription_proxy.py"
+      - "tests/**"
       - "flake.nix"
       - ".github/workflows/subscription-proxy.yml"
   workflow_dispatch:

@@ -53,7 +53,7 @@
              (rove:ok
               (equal "outcome.authoritative_user_rejection"
                      (jsown:val-safe result "rule_id")))
-             (rove:ok (equal "outcome.decision/v1"
+             (rove:ok (equal "outcome.decision/v2"
                              (jsown:val-safe result "rule_version")))
              (rove:ok
               (equal '("ev-transport-200" "ev-user-rejected")
@@ -103,7 +103,7 @@
              (rove:ok
               (equal "outcome.authoritative_user_rejection"
                      (getf assertion :rule-id)))
-             (rove:ok (equal "outcome.decision/v1"
+             (rove:ok (equal "outcome.decision/v2"
                              (getf assertion :rule-version)))
              (rove:ok
               (equal '("ev-transport-200" "ev-user-rejected")

@@ -1,0 +1,13 @@
+:PROPERTIES:
+:ID:       llm-log-subscription-capture-attempts
+:END:
+#+title: Subscription routes need safe capture and logical attempt correlation
+#+filetags: :llm-log:issue:subscription:
+
+Subscription route aliases alone do not establish rich usage, secret-safe
+persistence, trusted local attribution, or safe exhaustion fallback. Quota snapshots
+are a separate metadata service, not captured traffic.
+
+[[id:llm-log-safe-subscription-capture][Capture configured subscription traffic with explicit attempt provenance]]
+implements the bounded capture slice. Broader stateful protocol conversion and
+durable budget/exhaustion coordination remain in #95.
