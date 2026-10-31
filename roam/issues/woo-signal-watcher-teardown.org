@@ -1,0 +1,12 @@
+:PROPERTIES:
+:ID: llm-log-woo-signal-watcher-teardown
+:END:
+#+title: Asynchronous Woo teardown races the next event loop
+#+filetags: :llm-log:issue:transport:
+
+Sequential native proxy fixtures can abort in libev with "a signal must not be
+attached to two different loops". Changing ports does not isolate process-wide
+signal watcher ownership. Destroying a Bordeaux thread requests termination but
+does not wait for Woo's unwind-protect cleanup to release its signal watchers.
+
+Resolution: [[id:llm-log-synchronous-woo-shutdown][Wait for the Woo thread to finish cleanup before returning from stop-proxy]].

@@ -9,8 +9,14 @@ never substitutes. Remote GitHub state beats stale assumptions, and the exact
 branch head must pass its executable gates before anything merges.
 
 * Document map
+The current capture ownership in =AGENTS.md= and the explicit subscription/history
+contract in 054 govern this bounded extension of the existing Python capture
+runtime. The older migration snapshot below does not establish capture support in
+the forwarding-only Common Lisp package.
+
 | Document | Title | Status |
 |---+---+---|
+| [[file:LLM-LOG-RESEARCH-054-subscription-capture-history.org][054]] | Subscription capture, attempt accounting, and exported history mining | IMPLEMENTED; live acceptance unverified |
 | [[file:LLM-LOG-RESEARCH-001-capture-proxy-symbolic-corpus.org][001]] | Capture proxy + symbolic corpus (ARADR-001) | APPROVED (superseded where Python is assigned runtime ownership) |
 | [[file:LLM-LOG-RESEARCH-004-symbolic-expert-plane.org][004]] | ARADR-004: symbolic expert plane | APPROVED |
 | [[file:LLM-LOG-RESEARCH-005-persistent-prolog-supervisor.org][005]] | Persistent SWI-Prolog supervisor | APPROVED |

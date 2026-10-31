@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,8 +11,11 @@ from typing import Any, Iterable
 from aiohttp import web
 
 from .quotas import install_quota_routes
+from .privacy import bounded_identifier, redact_value
+from .recorder import provider_metadata, _COUNTER_FIELDS, _COUNTER_GROUPS, _COUNTER_DIMENSIONS
 
 _BUCKET_SECONDS = {"minute": 60, "hour": 3600, "day": 86400}
+_ATTRIBUTION_FILTERS = ("company", "worker", "agent", "session", "task", "correlation_id", "causation_id", "plan")
 
 
 def _timestamp(value: str, name: str) -> datetime:
@@ -31,7 +35,8 @@ def _filters(request: web.Request) -> tuple[datetime | None, datetime | None, st
         raise web.HTTPBadRequest(text="start must be before end")
     provider = request.query.get("provider") or None
     model = request.query.get("model") or None
-    return start, end, provider, model
+    attribution = {key: request.query[key] for key in _ATTRIBUTION_FILTERS if key in request.query}
+    return start, end, provider, model, attribution, request.query.get("final_provider")
 
 
 def _events(path: Path) -> Iterable[dict[str, Any]]:
@@ -49,7 +54,7 @@ def _events(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def _selected(filters: tuple, path: Path) -> list[tuple[dict[str, Any], datetime]]:
-    start, end, provider, model = filters
+    start, end, provider, model, attribution, final_provider = filters
     selected = []
     for event in _events(path):
         try:
@@ -63,6 +68,11 @@ def _selected(filters: tuple, path: Path) -> list[tuple[dict[str, Any], datetime
         if provider is not None and event.get("provider") != provider:
             continue
         if model is not None and event.get("model") != model:
+            continue
+        claims = event.get("attribution")
+        if attribution and (not isinstance(claims, dict) or any(claims.get(k) != v for k, v in attribution.items())):
+            continue
+        if final_provider is not None and event.get("final_provider", event.get("provider")) != final_provider:
             continue
         selected.append((event, completed))
     return selected
@@ -142,6 +152,83 @@ async def summary(request: web.Request) -> web.Response:
     return web.json_response(_totals(await _read_selected(request)))
 
 
+async def requests(request: web.Request) -> web.Response:
+    """Inspect logical requests and attempts without returning retained content."""
+    try:
+        limit = int(request.query.get("limit", "100"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="limit must be an integer") from None
+    if not 1 <= limit <= 1000:
+        raise web.HTTPBadRequest(text="limit must be between 1 and 1000")
+    fields = ("event_id", "provider", "final_provider", "model", "started_at", "completed_at",
+              "response_status", "transport", "attribution", "input_tokens", "output_tokens",
+              "total_tokens", "reported_total_tokens", "cache_read_input_tokens",
+              "cache_creation_input_tokens", "reasoning_tokens", "provider_metadata", "attempts",
+              "history", "redaction_version")
+    rows = await _read_selected(request)
+    event_id = request.query.get("event_id")
+    if event_id:
+        rows = [(event, timestamp) for event, timestamp in rows if event.get("event_id") == event_id]
+    selected = [_request_view(event, fields) for event, _ in rows[-limit:]]
+    return web.json_response({"requests": selected, "limit": limit})
+
+
+def _request_view(event: dict, fields: tuple) -> dict:
+    selected = {key: event[key] for key in fields if key in event
+                and (event[key] is None or isinstance(event[key], (str, int, float, bool)))}
+    claims = event.get("attribution")
+    if isinstance(claims, dict):
+        selected["attribution"] = {key: value for key, value in claims.items()
+                                   if key in {*_ATTRIBUTION_FILTERS, "trust"} and bounded_identifier(value)}
+    selected["provider_metadata"] = _metadata_view(event.get("provider_metadata"))
+    attempts = event.get("attempts")
+    if isinstance(attempts, list):
+        allowed = {"attempt_number", "provider", "model", "status", "reason", "input_tokens", "output_tokens",
+                   "total_tokens", "reported_total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+                   "reasoning_tokens", "started_at", "completed_at", "downstream_committed", "terminal_class",
+                   "policy_version", "rule_version", "cost"}
+        selected["attempts"] = []
+        for attempt in attempts[:16]:
+            if isinstance(attempt, dict):
+                safe = {key: value for key, value in attempt.items() if key in allowed
+                        and (value is None or isinstance(value, (str, int, float, bool)))}
+                reasons = {None, "credits_exhausted", "quota_exhausted", "capacity_exhausted", "circuit_open",
+                           "transport_error", "midstream_failure", "provider_policy_conflict"}
+                if safe.get("reason") not in reasons:
+                    safe["reason"] = "unknown"
+                safe["provider_metadata"] = _metadata_view(attempt.get("provider_metadata"))
+                cost = attempt.get("cost")
+                if isinstance(cost, dict):
+                    amount = cost.get("amount")
+                    if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount >= 0 and math.isfinite(amount):
+                        safe["cost"] = {"amount": amount, "currency": None, "source": "usage.cost"}
+                selected["attempts"].append(safe)
+    history = event.get("history")
+    if isinstance(history, dict):
+        allowed = {"format", "adapter_version", "session_sha256", "record_sha256", "record_index",
+                   "normalized_sha256", "redaction", "outcome", "source_sha256"}
+        selected["history"] = {key: value for key, value in history.items() if key in allowed
+                               and isinstance(value, (str, int))}
+    return redact_value(selected)
+
+
+def _metadata_view(metadata) -> dict:
+    if not isinstance(metadata, dict):
+        return {}
+    safe = provider_metadata({key: value for key, value in metadata.items() if isinstance(value, str)}, b"")
+    for key in ("id", "request_id", "response_id"):
+        if bounded_identifier(metadata.get(key)):
+            safe[key] = metadata[key]
+    # Quota counter projections contain numeric counters only, never source objects.
+    for key, value in metadata.items():
+        parts = key.split(".")
+        valid = (1 <= len(parts) <= 5 and parts[0] in _COUNTER_GROUPS
+                 and all(part in _COUNTER_FIELDS | _COUNTER_DIMENSIONS or part in {str(index) for index in range(16)} for part in parts[1:]))
+        if valid and isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 10**18 and math.isfinite(value):
+            safe[key] = value
+    return safe
+
+
 async def models(request: web.Request) -> web.Response:
     grouped: dict[tuple[str, str], list[tuple[dict[str, Any], datetime]]] = defaultdict(list)
     for event, completed in await _read_selected(request):
@@ -191,10 +278,13 @@ def openapi_document() -> dict[str, Any]:
             ("end", {"type": "string", "format": "date-time"}),
             ("provider", {"type": "string"}),
             ("model", {"type": "string"}),
+            ("final_provider", {"type": "string"}),
+            *((key, {"type": "string"}) for key in _ATTRIBUTION_FILTERS),
         )
     ]
     response = {"200": {"description": "Token analytics"}, "400": {"description": "Invalid query"}, "503": {"description": "Bounded corpus readers busy; retry later"}}
     paths = {
+        "/api/v1/requests": {"get": {"summary": "Inspect logical requests and ordered attempts without retained content", "parameters": [*query_parameters, {"name": "event_id", "in": "query", "schema": {"type": "string"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100}}], "responses": response}},
         "/api/v1/stats/summary": {"get": {"summary": "Aggregate token I/O totals", "parameters": query_parameters, "responses": response}},
         "/api/v1/stats/models": {"get": {"summary": "Token totals grouped by provider and model", "parameters": query_parameters, "responses": response}},
         "/api/v1/stats/timeline": {"get": {"summary": "Bucketed token I/O timeline", "parameters": [*query_parameters, {"name": "granularity", "in": "query", "schema": {"type": "string", "enum": list(_BUCKET_SECONDS), "default": "minute"}}], "responses": response}},
@@ -227,6 +317,7 @@ def install_analytics_routes(app: web.Application, events_path: Path) -> None:
 
     app.cleanup_ctx.append(readers_lifecycle)
     app.router.add_get("/api/v1/stats/summary", summary)
+    app.router.add_get("/api/v1/requests", requests)
     app.router.add_get("/api/v1/stats/timeline", timeline)
     app.router.add_get("/api/v1/stats/models", models)
     app.router.add_get("/openapi.json", openapi)

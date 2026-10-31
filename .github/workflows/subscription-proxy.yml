@@ -2,18 +2,18 @@ name: subscription-proxy
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/96-subscription-history]
     paths:
       - "llm_log/**"
       - "proxy/**"
-      - "tests/test_subscription_proxy.py"
+      - "tests/**"
       - "flake.nix"
       - ".github/workflows/subscription-proxy.yml"
   pull_request:
     paths:
       - "llm_log/**"
       - "proxy/**"
-      - "tests/test_subscription_proxy.py"
+      - "tests/**"
       - "flake.nix"
       - ".github/workflows/subscription-proxy.yml"
   workflow_dispatch:
@@ -27,6 +27,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checked-out head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}

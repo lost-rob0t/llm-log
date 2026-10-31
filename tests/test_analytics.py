@@ -166,7 +166,7 @@ class AnalyticsApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload, openapi_document())
         self.assertEqual(set(payload["paths"]), {
             "/api/v1/stats/summary", "/api/v1/stats/models",
-            "/api/v1/stats/timeline", "/api/v1/quotas",
+            "/api/v1/stats/timeline", "/api/v1/quotas", "/api/v1/requests",
         })
 
     async def test_quota_route_is_installed_with_analytics(self):

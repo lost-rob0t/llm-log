@@ -1,0 +1,38 @@
+:PROPERTIES:
+:ID:       llm-log-conservative-session-failure-mining
+:END:
+#+title: Mine explicit response evidence through the existing expert owner
+#+filetags: :llm-log:solution:expert:
+
+* Resolves
+- [[id:llm-log-explicit-session-failure-evidence][Session failures need structured evidence and request scope]]
+
+* Invariants
+=llm_log.session_mining= accepts caller-supplied normalized capture mappings. It
+does not discover or read private agent histories. Only structured response
+fields and explicit HTTP statuses produce evidence; prose, plain HTTP success,
+and missing completion fields remain unknown.
+
+Evidence uses the existing scalar outcome schema with deterministic IDs,
+observation timestamps, and source IDs locating the capture's JSON field or
+stream line. The miner emits =record_outcome_evidence= envelopes; the Common Lisp
+expert remains the durable owner and Prolog remains the outcome authority.
+Callers ingest request metadata through the existing capture replay contract
+before replaying mined evidence. The 64-item expert evidence bound is enforced
+explicitly rather than silently truncating observations.
+
+=outcome.decision/v2= preserves authoritative outcome precedence and derives new
+observed failures only for request scope. Explicit tool/test failure, nonzero
+tool exit codes, provider authentication/access/rate-or-quota/server errors,
+and explicit cancelled/timeout/aborted/truncated states have distinct rule
+provenance. Distinct failing tool sources can establish repeated tool error.
+HTTP 403 establishes access denial; HTTP 429 alone does not distinguish rate
+limiting from quota exhaustion. An explicit quota error code can establish the
+more specific quota rule. No observed request failure establishes task failure.
+
+* Verification
+Synthetic tests in =tests/test_session_mining.py= exercise extraction, negative
+cases, stable provenance, bounded evidence, and the existing ingestion contract.
+=tests/test_failure_rules.py= executes the real SWI-Prolog worker, including
+mined evidence and authoritative precedence. Full Common Lisp persistence and
+packaged runtime validation remain the repository's integration/CI boundary.

@@ -1,0 +1,32 @@
+:PROPERTIES:
+:ID:       llm-log-safe-subscription-capture
+:END:
+#+title: Capture configured subscription traffic with explicit attempt provenance
+#+filetags: :llm-log:solution:subscription:
+
+* Resolves
+[[id:llm-log-subscription-capture-attempts][Subscription routes need safe capture and logical attempt correlation]]
+
+* Invariants
+Python captures only explicitly configured caller traffic; Common Lisp forwarding
+alone does not populate the corpus. Subscription auth/protocol headers survive
+forwarding, while persisted copies and expert messages use shared credential
+redaction. Metadata retention omits prompt/completion/frame content independently
+of token accounting. Missing counters/cost remain unknown.
+
+Attribution is server-configured or service-authenticated; clients cannot establish
+company identity. The complete local header namespace is stripped before egress.
+Explicit mapped exhaustion fallback is legal only before downstream commit, carries
+isolated target credentials and preserved provider constraints, and never converts
+unsupported stateful protocols. One event owns an ordered attempt list; logical
+stats use final response usage, and the expert receives final-provider usage once.
+
+Each HTTP attempt contributes its actual credential values to the capture-only
+redaction context. Logical inbound headers retain their meaning; outbound retry
+headers and the redaction context are never serialized. Synthetic JSON, escaped
+JSON and SSE echo fixtures verify unchanged forwarding and sanitized response
+bodies, attempt/provider metadata, JSONL and Prolog persistence.
+
+See [[file:../../research/LLM-LOG-RESEARCH-054-subscription-capture-history.org][operating contract and remaining #95 scope]].
+Synthetic transport, routing, privacy, history, mining, query and expert tests
+provide reproducible evidence without real credentials or private sessions.

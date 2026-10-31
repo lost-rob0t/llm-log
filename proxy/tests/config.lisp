@@ -25,7 +25,9 @@
     (ok (equal (upstream-base-url config "openrouter") "https://openrouter.ai"))
     (ok (equal (upstream-base-url config "anthropic") "https://api.anthropic.com"))
     (ok (equal (upstream-base-url config "chatgpt") "https://chatgpt.com"))
-    (ok (equal (upstream-base-url config "zai-coding") "https://api.z.ai"))))
+    (ok (equal (upstream-base-url config "zai-coding") "https://api.z.ai"))
+    (ok (equal (upstream-base-url config "codex") "https://chatgpt.com/backend-api/codex"))
+    (ok (equal (upstream-base-url config "zai-coding-plan") "https://api.z.ai/api/coding/paas/v4"))))
 
 (deftest defaults-are-home-localhost-8787
   (let ((config (resolve-config :config-file nil)))

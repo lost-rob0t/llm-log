@@ -1,0 +1,14 @@
+:PROPERTIES:
+:ID:       llm-log-explicit-session-failure-evidence
+:END:
+#+title: Session failures need structured evidence and request scope
+#+filetags: :llm-log:issue:expert:
+
+Normalized history and raw captures can contain explicit tool failures, provider
+errors, and aborted or token-limited responses without producing expert outcome
+evidence. Mining arbitrary transcript prose or treating missing completion fields
+as failure would fabricate outcomes. Individual tool and transport observations
+also cannot establish the outcome of the whole task or session.
+
+* Implemented resolution
+- [[id:llm-log-conservative-session-failure-mining][Mine explicit response evidence through the existing expert owner]]

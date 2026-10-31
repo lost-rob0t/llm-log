@@ -1,0 +1,37 @@
+:PROPERTIES:
+:ID:       llm-log-exported-client-history-ingestion
+:END:
+#+title: Normalize explicit histories through RecorderActor and existing expert backfill
+#+filetags: :llm-log:solution:history:backfill:
+
+* Resolves
+[[id:llm-log-exported-client-history-corpus][Exported client histories need the ordinary capture corpus]]
+
+* Solution
+=llm_log.history= accepts explicit OpenCode JSON exports with =info.id= and
+=messages=, or Codex JSONL with =session_meta.payload.id=. It never discovers client
+storage. Shared =privacy.redact_value= runs before constructing capture bodies.
+=HistoryCaptureEvent= extends =CaptureEvent= with hashed session, record and source
+provenance. All appends pass through =RecorderActor= into =events.jsonl= and
+=events.pl=; =expert_capture.replay_capture_event= consumes these events unchanged.
+
+Stable UUIDs derive from the source kind, session identity, and message identity.
+Codex rows lacking IDs use redacted content plus repeated-content occurrence;
+whitespace and unrelated metadata do not change identity. Reimports skip matching
+IDs, report conflicting body hashes, and refuse to append to a malformed corpus.
+An advisory lock serializes importers. Stop other corpus writers before import;
+the importer does not claim to coordinate unrelated recorder processes.
+
+* Evidence semantics
+- OpenCode per-message input/output counters are retained when nonnegative integers.
+- Codex cumulative token-count records are ignored rather than assigned to requests.
+- =transport=history= and =response_status=0= represent absent HTTP evidence.
+- Tool state and explicit error/status/exit fields survive normalization and redaction.
+- No task success is inferred from assistant prose or transport state.
+- Failure reports contain codes and record positions or hashed event IDs, never raw lines.
+
+* Verification
+Synthetic tests in =tests/test_history.py= cover redaction, provenance, existing
+expert replay, restart idempotence, conflict/corruption handling, importer locking,
+missing timestamps/session IDs, stable Codex identity and unknown usage. Verification
+uses synthetic temporary corpora exclusively.

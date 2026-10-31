@@ -12,6 +12,7 @@ Canonical documentation is Org-mode under [`research/`](research/):
 - [`research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org`](research/LLM-LOG-RESEARCH-013-cl-proxy-runtime-architecture.org) — Common Lisp proxy runtime architecture reference
 - [`research/LLM-LOG-RESEARCH-014-configuration-and-operations.org`](research/LLM-LOG-RESEARCH-014-configuration-and-operations.org) — configuration and operations guide
 - [`research/LLM-LOG-RESEARCH-015-testing-and-verification.org`](research/LLM-LOG-RESEARCH-015-testing-and-verification.org) — testing and verification guide
+- [`research/LLM-LOG-RESEARCH-054-subscription-capture-history.org`](research/LLM-LOG-RESEARCH-054-subscription-capture-history.org) — subscription capture, safe fallback, privacy, and exported history mining
 
 The Common Lisp runtime lives in `proxy/`; the expert plane in `expert/`.
 
@@ -48,8 +49,12 @@ Default upstream prefixes:
 | `http://127.0.0.1:8787/openai/v1` | `https://api.openai.com/v1` |
 | `http://127.0.0.1:8787/openrouter/api/v1` | `https://openrouter.ai/api/v1` |
 | `http://127.0.0.1:8787/anthropic` | `https://api.anthropic.com` |
+| `http://127.0.0.1:8787/codex` | `https://chatgpt.com/backend-api/codex` |
+| `http://127.0.0.1:8787/zai-coding-plan` | `https://api.z.ai/api/coding/paas/v4` |
 
 Keep using the provider's normal API-key mechanism in the client. The proxy does not own or store the key.
+
+Subscription clients retain their supported subscription authentication flow and account/protocol headers. Use the Python capture package for recording; the separate Common Lisp forwarding runtime does not persist captures. `--retention metadata` omits prompt, completion, and frame content while retaining usage and safe request metadata. See the operational guide above for authenticated attribution, opt-in fallback, and explicit history imports.
 
 Custom/local endpoints are explicit:
 
@@ -77,6 +82,7 @@ The capture service exposes a provider-neutral, read-only analytics API on the s
 | `GET /api/v1/stats/summary` | total requests, usage coverage, and aggregate token I/O |
 | `GET /api/v1/stats/timeline?granularity=minute` | exact minute/hour/day buckets for graphs |
 | `GET /api/v1/stats/models` | token totals grouped by provider and model |
+| `GET /api/v1/requests?worker=builder&task=task-42` | logical requests and ordered attempts, excluding retained bodies |
 | `GET /openapi.json` | OpenAPI 3.1 contract |
 | `GET /docs` | Swagger UI |
 
