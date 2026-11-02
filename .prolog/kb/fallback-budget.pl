@@ -1,0 +1,10 @@
+fallback_budget_runtime(python).
+fallback_budget_authority(local_sqlite_operator_pool).
+fallback_budget_identity(capture_event_id, ordered_attempt_number).
+fallback_budget_invariant(reservation_and_dispatch_commit_before_paid_io).
+fallback_budget_invariant(unknown_or_incomplete_outcome_retains_hold).
+fallback_budget_invariant(dispatched_reservation_cannot_release).
+fallback_budget_invariant(actual_overspend_records_deficit).
+fallback_budget_invariant(no_automatic_orphan_reclamation).
+fallback_budget_test('tests/test_budget.py', independent_process_and_crash_recovery).
+fallback_budget_test('tests/test_routing.py', mock_provider_paid_call_boundary).

@@ -202,6 +202,21 @@ def _request_view(event: dict, fields: tuple) -> dict:
                     amount = cost.get("amount")
                     if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount >= 0 and math.isfinite(amount):
                         safe["cost"] = {"amount": amount, "currency": None, "source": "usage.cost"}
+                budget = attempt.get("budget")
+                if isinstance(budget, dict):
+                    projected = {}
+                    if budget.get("state") in {"reserved", "dispatched", "settled", "uncertain", "released", "accounting_error"}:
+                        projected["state"] = budget['state']
+                    for key in ("reserved_units", "actual_units"):
+                        value = budget.get(key)
+                        if value is None or (isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**63):
+                            projected[key] = value
+                    currency = budget.get("currency")
+                    if isinstance(currency, str) and len(currency) == 3 and currency.isascii() and currency.isalpha() and currency == currency.upper():
+                        projected["currency"] = currency
+                    if budget.get("uncertainty") in {None, "unknown_cost", "unsupported_currency", "invalid_cost", "incomplete_response", "settlement_not_confirmed", "outcome_unknown"}:
+                        projected["uncertainty"] = budget.get("uncertainty")
+                    safe["budget"] = projected
                 selected["attempts"].append(safe)
     history = event.get("history")
     if isinstance(history, dict):

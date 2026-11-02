@@ -18,7 +18,7 @@ class RequestQueryTests(unittest.IsolatedAsyncioTestCase):
                            attribution={'worker': 'build', 'task': 'task-1'}, input_tokens=10,
                            output_tokens=4, request_body={'text': 'private prompt'},
                            attempts=[{'attempt_number': 1, 'provider': 'chatgpt', 'status': 429, 'request_body': 'private-canary', 'reason': 'private-canary', 'provider_metadata': {'arbitrary': 'private-canary'}},
-                                     {'attempt_number': 2, 'provider': 'openrouter', 'status': 200}]),
+                                     {'attempt_number': 2, 'provider': 'openrouter', 'status': 200, 'budget': {'state': 'uncertain', 'reserved_units': 200000, 'actual_units': None, 'currency': 'USD', 'uncertainty': 'unknown_cost', 'path': 'private-canary', 'error': 'private-canary', 'account': 'private-canary'}}]),
                       dict(event_id='logical-2', provider='zai-coding', model='glm',
                            completed_at='2026-10-31T00:00:01Z', attribution={'worker': 'other'},
                            input_tokens=None, output_tokens=None)]
@@ -36,7 +36,14 @@ class RequestQueryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(result['requests'][0]['attempts']), 2)
                 self.assertNotIn('request_body', result['requests'][0])
                 self.assertNotIn('private-canary', json.dumps(result))
+                self.assertEqual(result['requests'][0]['attempts'][1]['budget'], dict(state='uncertain', reserved_units=200000, actual_units=None, currency='USD', uncertainty='unknown_cost'))
                 response = await client.get('/api/v1/requests?event_id=logical-2')
                 self.assertEqual((await response.json())['requests'][0]['input_tokens'], None)
                 for value in ('0', '1001', 'oops'):
                     self.assertEqual((await client.get('/api/v1/requests?limit=' + value)).status, 400)
+
+    async def test_budget_query_filters_untrusted_strings_and_invalid_units(self):
+        from llm_log.analytics import _request_view
+        event = dict(attempts=[dict(budget=dict(state='private-canary', currency='private-canary',
+                     uncertainty='private-canary', reserved_units=True, actual_units=-1))])
+        self.assertEqual(_request_view(event, ())['attempts'][0]['budget'], {})

@@ -13,6 +13,7 @@ from typing import Mapping, Protocol
 
 from aiohttp import ClientSession, ClientTimeout, DummyCookieJar, WSMsgType, web
 
+from .budget import DurableFallbackBudget
 from .analytics import install_analytics_routes
 from .expert_adapter import SubprocessExpertPlane
 from .recorder import CaptureEvent, RecorderActor, WebSocketFrame, token_usage, provider_usage, provider_metadata
@@ -479,7 +480,7 @@ def _reported_cost(body: bytes) -> dict | None:
                 if isinstance(cost, (int, float)) and not isinstance(cost, bool):
                     try:
                         if math.isfinite(cost) and cost >= 0:
-                            costs.append(cost)
+                            costs.append((cost, usage.get("currency") if isinstance(usage.get("currency"), str) else None))
                     except OverflowError:
                         pass
             for child in value.values():
@@ -490,7 +491,7 @@ def _reported_cost(body: bytes) -> dict | None:
 
     for document in documents:
         visit(document)
-    return {"amount": costs[-1], "currency": None, "source": "usage.cost"} if costs else None
+    return {"amount": costs[-1][0], "currency": costs[-1][1], "source": "usage.cost"} if costs else None
 
 
 def _attempt_record(*, number: int, provider: str, model: str | None, status: int,
@@ -596,6 +597,11 @@ def build_app(
             )
 
         request_body = await request.read()
+        event_id = str(uuid.uuid4())
+        budget_attempt = None
+        budget_complete = False
+        budget = (fallback_policy.budget_hook if fallback_policy is not None and
+                  isinstance(fallback_policy.budget_hook, DurableFallbackBudget) else None)
         started_at = _now()
         started = time.perf_counter()
         classify_task = asyncio.create_task(_classify(classifier, request_body))
@@ -628,7 +634,8 @@ def build_app(
                               fallback_policy.circuit_open(scope, provider, model))
         if using_fallback:
             fallback = fallback_policy.request(provider=provider, method=request.method,
-                                               path="/" + tail, body=request_body, account=scope)
+                                               path="/" + tail, body=request_body, account=scope,
+                                               event_id=event_id, attempt=len(attempts) + 1)
             using_fallback = fallback is not None
         attempt_url = upstream_url
         attempt_headers = _request_headers(request.headers)
@@ -645,6 +652,13 @@ def build_app(
                     attempt_body, attempt_headers, attempt_model = fallback
                     attempt_headers = {**attempt_headers, "Via": ", ".join(filter(None, (via, FALLBACK_VIA_MARKER)))}
                 attempt_started = _now()
+                if using_fallback and budget is not None:
+                    budget_attempt = len(attempts) + 1
+                    # Commit dispatch permission before any potentially paid I/O.
+                    # An uncertain previous dispatch is never sent again.
+                    if not budget.dispatch(event_id, budget_attempt):
+                        budget_attempt = None
+                        raise RuntimeError("fallback dispatch denied")
                 redaction_secrets.update(credential_values(attempt_headers))
                 async with session.request(request.method, attempt_url, headers=attempt_headers,
                                            data=attempt_body, allow_redirects=False) as upstream_response:
@@ -665,7 +679,8 @@ def build_app(
                                   if len(buffered) <= 65536 and upstream_response.content.at_eof() else None)
                         if reason is not None:
                             fallback = fallback_policy.request(provider=provider, method=request.method,
-                                                               path="/" + tail, body=request_body, account=scope)
+                                                               path="/" + tail, body=request_body, account=scope,
+                                                               event_id=event_id, attempt=len(attempts) + 2)
                         if reason is not None and fallback is not None:
                             attempts.append(_attempt_record(number=len(attempts) + 1, provider=provider,
                                 model=model, status=response_status, reason=reason.value, body=buffered,
@@ -685,6 +700,7 @@ def build_app(
                         response_body.extend(chunk)
                         await downstream.write(chunk)
                     await downstream.write_eof()
+                    budget_complete = True
                     attempts.append(_attempt_record(number=len(attempts) + 1, provider=final_provider,
                         model=attempt_model, status=response_status, reason=retry_reason, body=bytes(response_body),
                         headers=response_headers, started_at=attempt_started, committed=True,
@@ -707,11 +723,25 @@ def build_app(
                 response_body = bytearray(b"upstream request failed")
                 downstream = web.Response(status=502, text="upstream request failed")
 
+        finally:
+            if budget is not None and budget_attempt is not None:
+                try:
+                    row = budget.settle(event_id, budget_attempt, _reported_cost(bytes(response_body)),
+                                        complete=budget_complete)
+                    evidence = {"state": row['state'], "reserved_units": row['held'],
+                                "actual_units": row['actual'], "currency": budget.currency,
+                                "uncertainty": row['uncertainty']}
+                except Exception:
+                    # Durable dispatched hold survives accounting failure/restart.
+                    evidence = {"state": "accounting_error", "uncertainty": "settlement_not_confirmed"}
+                if attempts:
+                    attempts[-1]['budget'] = evidence
+
         intents = await classify_task
         completed_at = _now()
         latency_ms = round((time.perf_counter() - started) * 1000)
         event = CaptureEvent.from_bytes(
-            event_id=str(uuid.uuid4()),
+            event_id=event_id,
             provider=provider,
             upstream=final_upstream,
             method=request.method,

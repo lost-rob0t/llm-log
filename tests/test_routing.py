@@ -8,10 +8,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aiohttp import ClientSession, ClientPayloadError, WSServerHandshakeError, web
+from aiohttp import ClientSession, ClientConnectionError, ClientPayloadError, WSServerHandshakeError, web
 from aiohttp.test_utils import TestServer
 
 from llm_log.proxy import build_app, _reported_cost, _request_headers, _websocket_request_headers
+from llm_log.budget import DurableFallbackBudget
 from llm_log.recorder import RecorderActor
 from llm_log.routing import Exhaustion, FallbackPolicy, ProviderPolicyConflict, classify_exhaustion
 
@@ -85,6 +86,7 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.source_body = b'{"error":{"code":"insufficient_quota"}}'
         self.target_body = b'{"usage":{"prompt_tokens":7,"completion_tokens":3},"choices":[]}'
         self.target_headers = {}
+        self.target_disconnect = False
         app = web.Application()
         app.router.add_route('*', '/{tail:.*}', self.upstream)
         self.server = TestServer(app)
@@ -115,6 +117,12 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             return socket
         self.hits.append((request.path, dict(request.headers), await request.read()))
         if request.path.startswith('/target/'):
+            if self.target_disconnect:
+                response = web.StreamResponse(status=200, headers={"Content-Length": "9999"})
+                await response.prepare(request)
+                await response.write(b'partial')
+                request.transport.close()
+                return response
             return web.Response(body=self.target_body, headers=self.target_headers, content_type='application/json')
         if self.disconnect:
             response = web.StreamResponse(status=200, headers={"Content-Length": "9999"})
@@ -318,3 +326,102 @@ class RoutingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         event = (await self.events())[0]
         self.assertFalse(event['attempts'][0]['downstream_committed'])
         self.assertEqual(event['attempts'][0]['terminal_class'], 'transport_failure')
+
+    def install_budget(self, *, limit='1', reservation='.2'):
+        self.policy.budget_hook = DurableFallbackBudget(self.root / 'budget.sqlite',
+                                                       limit=limit, reservation=reservation, currency='USD')
+        return self.policy.budget_hook
+
+    async def test_durable_budget_denied_has_zero_paid_requests(self):
+        await self.start()
+        budget = self.install_budget(limit='.1')
+        self.assertEqual((await self.post())[0], 429)
+        self.assertEqual([p for p, _, _ in self.hits], ['/source/v1/chat/completions'])
+        self.assertEqual(budget.summary()['held_units'], 0)
+
+    async def test_durable_budget_concurrency_across_rotating_accounts(self):
+        await self.start()
+        budget = self.install_budget(limit='.4')
+        statuses = await asyncio.gather(*(self.post(account=str(i)) for i in range(12)))
+        self.assertEqual(sum(status == 200 for status, _ in statuses), 2)
+        self.assertEqual(sum(p.startswith('/target/') for p, _, _ in self.hits), 2)
+        self.assertEqual(budget.summary()['held_units'], 400000)
+
+    async def test_durable_settlement_matches_event_attempt_and_known_currency(self):
+        await self.start()
+        budget = self.install_budget()
+        self.target_body = b'{"usage":{"cost":0.123456,"currency":"USD"}}'
+        self.assertEqual((await self.post())[0], 200)
+        event = (await self.events())[0]
+        attempt = event['attempts'][-1]
+        row = budget.inspect(event['event_id'], attempt['attempt_number'])
+        self.assertEqual(row['state'], 'settled')
+        self.assertEqual(attempt['budget']['actual_units'], 123456)
+        self.assertEqual(attempt['budget']['currency'], 'USD')
+        self.assertEqual(budget.summary()['spent_units'], 123456)
+
+    async def test_unknown_cost_and_currency_hold_even_after_restart(self):
+        await self.start()
+        budget = self.install_budget()
+        self.target_body = b'{"usage":{"cost":0.1}}'
+        await self.post()
+        event = (await self.events())[0]
+        self.assertEqual(event['attempts'][-1]['budget']['uncertainty'], 'unsupported_currency')
+        reopened = self.install_budget()
+        self.assertEqual(reopened.summary()['held_units'], 200000)
+        self.assertFalse(reopened.dispatch(event['event_id'], 2))
+
+    async def test_durable_transport_uncertainty_never_releases(self):
+        await self.start()
+        budget = self.install_budget()
+        self.target_disconnect = True
+        with self.assertRaises(ClientPayloadError):
+            await self.post()
+        await asyncio.sleep(.01)
+        event = (await self.events())[0]
+        self.assertEqual(event['attempts'][-1]['budget']['uncertainty'], 'incomplete_response')
+        self.assertEqual(budget.summary()['held_units'], 200000)
+        self.assertFalse(budget.dispatch(event['event_id'], 2))
+
+    async def test_failed_reservation_or_dispatch_write_sends_no_paid_call(self):
+        await self.start()
+        budget = self.install_budget()
+        with patch.object(budget, 'reserve', side_effect=OSError('mock disk failure')):
+            self.assertEqual((await self.post())[0], 429)
+        with patch.object(budget, 'dispatch', side_effect=OSError('mock disk failure')):
+            self.assertEqual((await self.post())[0], 502)
+        self.assertEqual(sum(p.startswith('/target/') for p, _, _ in self.hits), 0)
+        self.assertEqual(budget.summary()['held_units'], 200000)
+
+    async def test_settlement_failure_retains_durable_dispatch_without_replay(self):
+        await self.start()
+        budget = self.install_budget()
+        self.target_body = b'{"usage":{"cost":0.1,"currency":"USD"}}'
+        with patch.object(budget, 'settle', side_effect=OSError('mock disk failure')):
+            self.assertEqual((await self.post())[0], 200)
+        event = (await self.events())[0]
+        self.assertEqual(event['attempts'][-1]['budget']['state'], 'accounting_error')
+        recovered = self.install_budget()
+        self.assertEqual(recovered.inspect(event['event_id'], 2)['state'], 'dispatched')
+        self.assertFalse(recovered.dispatch(event['event_id'], 2))
+        self.assertEqual(recovered.summary()['held_units'], 200000)
+        self.assertEqual(sum(p.startswith('/target/') for p, _, _ in self.hits), 1)
+
+    async def test_cancellation_immediately_after_dispatch_retains_hold(self):
+        await self.start()
+        budget = self.install_budget()
+        dispatch = budget.dispatch
+        keys = []
+        def cancel_after_commit(event_id, attempt):
+            keys.append((event_id, attempt))
+            self.assertTrue(dispatch(event_id, attempt))
+            raise asyncio.CancelledError()
+        with patch.object(budget, 'dispatch', side_effect=cancel_after_commit):
+            with self.assertRaises(ClientConnectionError):
+                await asyncio.wait_for(self.post(), 3)
+        self.assertEqual(len(keys), 1)
+        row = budget.inspect(*keys[0])
+        self.assertEqual(row['state'], 'uncertain')
+        self.assertEqual(row['uncertainty'], 'incomplete_response')
+        self.assertEqual(budget.summary()['held_units'], 200000)
+        self.assertEqual(sum(p.startswith('/target/') for p, _, _ in self.hits), 0)

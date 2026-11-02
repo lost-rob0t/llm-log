@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 
 from aiohttp import web
@@ -79,6 +80,14 @@ def parser() -> argparse.ArgumentParser:
         help="loopback expert maintenance port; 0 disables it",
     )
 
+    budget = sub.add_parser("budget", help="inspect or explicitly reconcile a local fallback ledger")
+    budget.add_argument("policy", type=Path)
+    budget.add_argument("action", choices=("summary", "inspect", "release", "settle"))
+    budget.add_argument("--event-id")
+    budget.add_argument("--attempt", type=int)
+    budget.add_argument("--amount", help="provider-confirmed actual cost for settlement")
+    budget.add_argument("--currency", help="explicit currency for settlement")
+
     history = sub.add_parser("import-history", help="import an explicitly exported OpenCode/Codex history into a stopped corpus")
     history.add_argument("source", type=Path)
     history.add_argument("--format", required=True, choices=("opencode", "codex"))
@@ -97,9 +106,9 @@ def _fallback_config(path: Path | None):
         return None
     from .routing import FallbackPolicy
     value = json.loads(path.read_text(encoding="utf-8"))
-    allowed = {"models", "credential_env", "cooldown_seconds", "provider_policy"}
+    allowed = {"models", "credential_env", "cooldown_seconds", "provider_policy", "budget"}
     if not isinstance(value, dict) or set(value) - allowed:
-        raise ValueError("fallback config must contain only models, credential_env, cooldown_seconds, provider_policy")
+        raise ValueError("fallback config must contain only models, credential_env, cooldown_seconds, provider_policy, budget")
     rows = value.get("models")
     if not isinstance(rows, dict) or not rows:
         raise ValueError("fallback config needs explicit provider:model mappings")
@@ -109,9 +118,50 @@ def _fallback_config(path: Path | None):
         if not sep or not provider or not model or not isinstance(target, str) or not target:
             raise ValueError("fallback models must map provider:model to an explicit target model")
         mappings[(provider, model)] = target
+    budget = None
+    if "budget" in value:
+        from .budget import DurableFallbackBudget
+        options = value['budget']
+        if not isinstance(options, dict) or set(options) != {"path", "limit", "reservation", "currency"}:
+            raise ValueError("budget requires path, limit, reservation, currency")
+        budget_path = Path(options['path'])
+        if not budget_path.is_absolute():
+            budget_path = path.parent / budget_path
+        budget = DurableFallbackBudget(budget_path, limit=options['limit'],
+                                       reservation=options['reservation'], currency=options['currency'])
     return FallbackPolicy(model_map=mappings, credential_env=value.get("credential_env", ""),
                           cooldown_seconds=value.get("cooldown_seconds", 60),
-                          provider_policy=value.get("provider_policy"))
+                          provider_policy=value.get("provider_policy"), budget_hook=budget)
+
+
+def _run_budget(args: argparse.Namespace) -> dict:
+    # Recovery must never create a fresh allowance due to a mistyped path.
+    value = json.loads(args.policy.read_text(encoding="utf-8"))
+    options = value.get('budget') if isinstance(value, dict) else None
+    if not isinstance(options, dict) or not isinstance(options.get('path'), str):
+        raise ValueError("policy needs an existing durable budget")
+    path = Path(options['path'])
+    if not path.is_absolute():
+        path = args.policy.parent / path
+    if not path.is_file():
+        raise ValueError("budget ledger must already exist")
+    budget = _fallback_config(args.policy).budget_hook
+    if args.action == 'summary':
+        return budget.summary()
+    if not args.event_id or args.attempt is None or args.attempt < 1:
+        raise ValueError("event ID and positive attempt required")
+    if args.action == 'release':
+        row = budget.release(args.event_id, args.attempt)
+    elif args.action == 'settle':
+        if args.amount is None or args.currency is None:
+            raise ValueError("provider-confirmed amount and currency required")
+        row = budget.settle(args.event_id, args.attempt,
+                            dict(amount=args.amount, currency=args.currency))
+    else:
+        row = budget.inspect(args.event_id, args.attempt)
+    if row is None:
+        return {"found": False}
+    return {key: row[key] for key in ('event_id', 'attempt', 'state', 'held', 'actual', 'uncertainty')}
 
 
 def _serve(args: argparse.Namespace) -> None:
@@ -148,6 +198,12 @@ def _serve(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parser().parse_args()
+    if args.command == "budget":
+        try:
+            print(json.dumps(_run_budget(args), sort_keys=True))
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise SystemExit("budget operation failed: " + type(exc).__name__) from None
+        return
     if args.command == "serve":
         _serve(args)
         return

@@ -2,7 +2,7 @@ name: subscription-proxy
 
 on:
   push:
-    branches: [main, feat/96-subscription-history]
+    branches: [main, feat/96-subscription-history, feat/durable-fallback-budget]
     paths:
       - "llm_log/**"
       - "proxy/**"

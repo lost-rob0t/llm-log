@@ -1,0 +1,17 @@
+:PROPERTIES:
+:ID: llm-log-transactional-fallback-reservations
+:END:
+#+title: Transactional fallback reservations
+
+Resolve [[id:llm-log-durable-fallback-budget][paid fallback admission]] in the existing Python
+FallbackPolicy budget_hook, keyed by capture event ID and ordered attempt number.
+A shared local SQLite operator pool serializes admission and grants dispatch once.
+Matching-currency complete provider costs settle; unknown and incomplete outcomes
+retain holds across restart. Actual overspend is recorded and blocks admission.
+No owner timeout reclaims holds. Explicit unsent release fences dispatch; dispatched
+holds require provider-evidence settlement. Account changes never reset the pool.
+
+Mock-provider and independent-process tests cover paid-call denial, write failures,
+concurrent admission, dispatch idempotence, actual settlement, and abrupt process
+exit before dispatch, after dispatch, and after settlement commit. These tests do
+not establish provider-side exactly-once execution or a strict provider price cap.

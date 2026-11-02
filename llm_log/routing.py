@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Mapping
 
+from .budget import DurableFallbackBudget
+
 
 FALLBACK_VIA_MARKER = "1.1 llm-log-fallback"
 
@@ -62,7 +64,7 @@ class FallbackPolicy:
     target_path: str = "api/v1/chat/completions"
     cooldown_seconds: float = 60.0
     provider_policy: Mapping | None = None
-    budget_hook: Callable[[str, str, str], bool] | None = None
+    budget_hook: Callable[[str, str, str], bool] | DurableFallbackBudget | None = None
     policy_version: str = "1"
     max_circuits: int = 4096
     _circuits: dict[tuple[str, str, str], float] = field(default_factory=dict, init=False, repr=False)
@@ -90,7 +92,8 @@ class FallbackPolicy:
         self._circuits[key] = now + self.cooldown_seconds
 
     def request(self, *, provider: str, method: str, path: str, body: bytes,
-                account: str, check_budget: bool = True) -> tuple[bytes, dict[str, str], str] | None:
+                account: str, check_budget: bool = True,
+                event_id: str | None = None, attempt: int | None = None) -> tuple[bytes, dict[str, str], str] | None:
         if provider == self.target_provider or method != "POST" or not path.rstrip("/").endswith("/chat/completions"):
             return None
         try:
@@ -128,7 +131,11 @@ class FallbackPolicy:
                 return None
             if self.budget_hook is not None:
                 try:
-                    if not self.budget_hook(account, provider, mapped):
+                    if isinstance(self.budget_hook, DurableFallbackBudget):
+                        if event_id is None or attempt is None or not self.budget_hook.reserve(
+                                event_id, attempt, account, self.target_provider, mapped):
+                            return None
+                    elif not self.budget_hook(account, provider, mapped):
                         return None
                 except Exception:
                     return None
