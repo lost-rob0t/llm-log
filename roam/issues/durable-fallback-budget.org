@@ -1,0 +1,9 @@
+:PROPERTIES:
+:ID: llm-log-durable-fallback-budget
+:END:
+#+title: Paid fallback needs durable admission and uncertain-outcome accounting
+
+A boolean admission hook cannot reserve a shared allowance across processes or
+preserve pending charges after a crash. Missing provider cost must remain unknown.
+
+Resolution: [[id:llm-log-transactional-fallback-reservations][Transactional fallback reservations]].

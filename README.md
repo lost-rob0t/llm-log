@@ -108,3 +108,76 @@ This captures traffic from software you deliberately point at the proxy: gptel, 
 ## Next ARADR directions
 
 Later slices can derive fine-tuning datasets, mine repeated failure paths, grow Prolog expert rules, add semantic retrieval, route by symbolic intent, and optionally inject search/tool results before forwarding. Those are intentionally outside ARADR-001.
+
+### Durable Python fallback budgets
+
+The Python `serve --fallback-config policy.json` routing policy accepts an optional
+`budget` object. Without it, the existing optional boolean hook behavior is unchanged.
+Example (operator policy, no credentials in this file):
+
+```json
+{
+  "models": {"source:m": "vendor/model"},
+  "credential_env": "OPENROUTER_API_KEY",
+  "budget": {
+    "path": "fallback-budget.sqlite",
+    "limit": "10.000000",
+    "reservation": "0.200000",
+    "currency": "USD"
+  }
+}
+```
+
+The ledger path is relative to the policy file; its parent must exist. All proxy
+processes sharing this operator allowance must use the same local SQLite file.
+Account credentials only attribute reservations; rotating them does not create a
+new allowance. This is a single lifetime operator pool, with no automatic reset,
+provider quota tracking, or tenant billing. Reopening requires identical currency,
+limit and per-attempt reservation. Keep the database and SQLite journal together
+on durable local storage. Do not delete or replace the ledger to recover a crash.
+
+Each fallback reserves the configured amount before obtaining a unique durable
+dispatch permission, keyed by the capture event ID and ordered attempt number.
+Admission and dispatch write failures send no paid request. Retries with that key
+cannot dispatch twice. A new client HTTP request receives a new event ID and is a
+new logical request; arbitrary client idempotency headers do not enable replay or
+bypass the pool. This does not provide provider-side exactly-once execution.
+
+Only a fully received response with a finite nonnegative `usage.cost` and explicit
+matching `usage.currency` settles automatically. Missing currency stays unknown;
+USD is never inferred from the provider name. Known actual charges round upward
+to integer micro-units; captures preserve the original reported cost. Actual cost
+above the reservation is recorded in full and may produce a deficit that blocks
+future admission. The configured reservation is an allowance, not a guaranteed
+provider price ceiling, so concurrent actual charges can exceed the pool.
+
+Unknown cost, unsupported currency, partial streams, cancellation, network errors,
+and failed settlement writes retain the reservation. `attempts[].budget` records
+settlement state, reserved/actual micro-units, currency and uncertainty when capture
+completes. SQLite remains authoritative if the process crashes before capture.
+No TTL or restart automatically reclaims holds or resends a dispatched attempt.
+
+Operator recovery uses `llm_log.budget.DurableFallbackBudget` with the same config:
+`summary()` shows spent, held, available and deficit micro-units; `inspect(event_id,
+attempt)` shows the reservation. `release(event_id, attempt)` is idempotent only
+for never-dispatched reservations and atomically fences any later dispatch by an
+old owner. Dispatched/uncertain rows cannot release. Reconcile them only with
+provider evidence using `settle(event_id, attempt, {"amount": "0.123", "currency":
+"USD"})`; a provider-confirmed zero charge is an explicit zero settlement.
+Repeating the same actual is safe; conflicting actuals are rejected. Crash-orphaned
+pre-dispatch reservations also remain held until this explicit recovery. No
+operator HTTP recovery endpoint, automatic reconciliation, or new expert-plane
+usage authority is introduced.
+
+Local recovery command examples (the ledger must already exist):
+
+```sh
+llm-log budget policy.json summary
+llm-log budget policy.json inspect --event-id EVENT_UUID --attempt 2
+llm-log budget policy.json release --event-id UNSENT_EVENT_UUID --attempt 2
+llm-log budget policy.json settle --event-id EVENT_UUID --attempt 2 --amount 0.123 --currency USD
+```
+
+Request inspection through `GET /api/v1/requests?event_id=EVENT_UUID` exposes only
+bounded budget state, micro-unit totals, currency, and uncertainty codes alongside
+the existing event/attempt IDs. It never returns the ledger path or account hash.
